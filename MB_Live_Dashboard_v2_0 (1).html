@@ -866,11 +866,17 @@ function handleFile(file) {
       const newTx = [];
       for(let i = 1; i < rows.length; i++) {
         const r = rows[i];
-        // Skip truly empty rows — but allow X=0 or Y=0 as valid coordinates
-        if(r[1] == null || r[1] === '' || r[2] == null || r[2] === '') continue;
+        // Skip truly empty rows — must have at least time data in col A
+        if(!r || r.length === 0) continue;
+        const hasTime = (r[0] != null && r[0] !== '');
+        if(!hasTime) continue;
+
         const xRaw = r[1];
         const yRaw = r[2];
-        const isNA = (String(xRaw).includes('#N/A') || String(yRaw).includes('#N/A') || String(xRaw).toLowerCase() === 'n/a' || String(yRaw).toLowerCase() === 'n/a');
+        // Detect missing, empty, or #N/A coordinates → "No Location" picks
+        const xMissing = (xRaw == null || xRaw === '' || String(xRaw).includes('#N/A') || String(xRaw).toLowerCase() === 'n/a');
+        const yMissing = (yRaw == null || yRaw === '' || String(yRaw).includes('#N/A') || String(yRaw).toLowerCase() === 'n/a');
+        const isNA = xMissing || yMissing;
         const x = parseFloat(xRaw);
         const y = parseFloat(yRaw);
         if(!isNA && (isNaN(x) || isNaN(y))) continue;
