@@ -1122,8 +1122,9 @@ function handleFile(file) {
         const hasExplicitNA = xTxt.includes('#n/a') || yTxt.includes('#n/a');
         const hasInvalidCoords = !xLooksNumeric || !yLooksNumeric;
 
-        // Classify records as No Location when coordinates are invalid/missing and Units Picked > 1
-        const isNA = hasExplicitNA || (hasInvalidCoords && units > 1);
+        // Classify records as No Location whenever coordinates are invalid/missing.
+        // This prevents rows from being dropped when coordinate cells are blank, text, or #N/A.
+        const isNA = hasExplicitNA || hasInvalidCoords;
 
         const x = xLooksNumeric ? parseFloat(xTxtRaw) : NaN;
         const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
