@@ -2191,6 +2191,8 @@ function buildStaffing() {
   const tbl = document.getElementById('staff-detail-table');
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
   let h = `<thead><tr><th>Zone</th><th>UPH</th><th>Window Units</th><th>Required Headcount</th><th>Associates Assigned</th><th>Avg Start</th><th>Avg End</th></tr></thead><tbody>`;
+  entries.forEach(([z]) => {
+    const c = ZCOL[z] || '#94a3b8';
     const uph = UPH[z]||150;
     const units = windowZones[z]?.units || 0;
     const calc = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
