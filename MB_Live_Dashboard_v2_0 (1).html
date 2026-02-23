@@ -306,6 +306,55 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   padding:6px 10px;
   font-family:'IBM Plex Mono', monospace;
 }
+  
+.shift-tabs {
+  display:flex;
+  gap:8px;
+  width:100%;
+}
+.shift-tab-btn {
+  flex:1;
+  border:1px solid var(--border2);
+  border-radius:6px;
+  background:var(--surf3);
+  color:var(--text2);
+  font-size:11px;
+  font-weight:700;
+  padding:8px 10px;
+  cursor:pointer;
+  font-family:'Syne', sans-serif;
+  text-transform:uppercase;
+  letter-spacing:0.06em;
+}
+.shift-tab-btn.active {
+  color:var(--blue);
+  border-color:var(--blue);
+  background:rgba(59,130,246,0.12);
+}
+.shift-time-grid {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(200px,1fr));
+  gap:10px;
+  width:100%;
+}
+.shift-time-card {
+  border:1px solid var(--border2);
+  border-radius:8px;
+  padding:10px;
+  background:rgba(15,26,46,0.6);
+  display:grid;
+  gap:8px;
+}
+.shift-time-card.active {
+  border-color:var(--blue);
+  background:rgba(59,130,246,0.08);
+}
+.shift-time-label {
+  font-size:10px;
+  color:var(--text2);
+  text-transform:uppercase;
+  letter-spacing:0.08em;
+}
 .mini-note { font-size:10px; color:var(--text3); font-family:'IBM Plex Mono', monospace; }
 .summary-row { display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin-bottom:12px; }
 .summary-pill { background:var(--surf3); border:1px solid var(--border2); border-radius:8px; padding:10px; }
@@ -692,23 +741,33 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       Minimum 1 picker per zone where activity exists. Low-volume zones share a picker on Shift 2.
     </p>
     <div class="plan-controls">
-      <div class="plan-field">
-        <label>Shift</label>
-        <select id="staff-shift" onchange="syncShiftInputs('staff'); buildStaffing()">
-          <option value="s1">1st Shift (06:00–14:00)</option>
-          <option value="s2">2nd Shift (14:00–22:00)</option>
-          <option value="s3">3rd Shift (22:00–06:00)</option>
-        </select>
+      <div class="shift-tabs">
+        <button type="button" class="shift-tab-btn active" id="staff-tab-s1" onclick="setStaffShift('s1')">1st Shift</button>
+        <button type="button" class="shift-tab-btn" id="staff-tab-s2" onclick="setStaffShift('s2')">2nd Shift</button>
+        <button type="button" class="shift-tab-btn" id="staff-tab-s3" onclick="setStaffShift('s3')">3rd Shift</button>
       </div>
-      <div class="plan-field">
-        <label>Start Time</label>
-        <input id="staff-start" type="time" value="06:00" onchange="buildStaffing()">
+     <input id="staff-shift" type="hidden" value="s1">
+      <div class="shift-time-grid">
+        <div class="shift-time-card active" id="staff-config-s1">
+          <div class="shift-time-label">1st Shift</div>
+          <div class="plan-field"><label>Start Time</label><input id="staff-s1-start" type="time" value="06:00" onchange="buildStaffing()"></div>
+          <div class="plan-field"><label>End Time</label><input id="staff-s1-end" type="time" value="14:00" onchange="buildStaffing()"></div>
+          <div class="plan-field"><label>Actual Headcount</label><input id="staff-s1-actual" type="number" min="0" step="1" value="0" oninput="buildStaffing()"></div>
+        </div>
+        <div class="shift-time-card" id="staff-config-s2">
+          <div class="shift-time-label">2nd Shift</div>
+          <div class="plan-field"><label>Start Time</label><input id="staff-s2-start" type="time" value="14:00" onchange="buildStaffing()"></div>
+          <div class="plan-field"><label>End Time</label><input id="staff-s2-end" type="time" value="22:00" onchange="buildStaffing()"></div>
+          <div class="plan-field"><label>Actual Headcount</label><input id="staff-s2-actual" type="number" min="0" step="1" value="0" oninput="buildStaffing()"></div>
+        </div>
+        <div class="shift-time-card" id="staff-config-s3">
+          <div class="shift-time-label">3rd Shift</div>
+          <div class="plan-field"><label>Start Time</label><input id="staff-s3-start" type="time" value="22:00" onchange="buildStaffing()"></div>
+          <div class="plan-field"><label>End Time</label><input id="staff-s3-end" type="time" value="06:00" onchange="buildStaffing()"></div>
+          <div class="plan-field"><label>Actual Headcount</label><input id="staff-s3-actual" type="number" min="0" step="1" value="0" oninput="buildStaffing()"></div>
+        </div>
       </div>
-      <div class="plan-field">
-        <label>End Time</label>
-        <input id="staff-end" type="time" value="14:00" onchange="buildStaffing()">
-      </div>
-      <div class="mini-note">Associates are auto-arranged by highest unit zone within selected time window.</div>
+     <div class="mini-note">Required Headcount = Σ(zone units ÷ (zone UPH × shift hours)), rounded up per zone. Compare against Actual Headcount for selected shift.</div>
     </div>
   </div>
 
@@ -899,6 +958,25 @@ function syncShiftInputs(prefix) {
   if(endEl) endEl.value = `${String(s.end % 24).padStart(2,'0')}:00`;
 }
 
+  
+  function getStaffShiftConfig(key) {
+  const base = SHIFT_WINDOWS[key] || SHIFT_WINDOWS.s1;
+  const start = parseTimeInputToHour(document.getElementById(`staff-${key}-start`)?.value, base.start);
+  const end = parseTimeInputToHour(document.getElementById(`staff-${key}-end`)?.value, base.end % 24);
+  const actual = Math.max(0, Number(document.getElementById(`staff-${key}-actual`)?.value || 0));
+  return { key, base, start, end, actual };
+}
+
+function setStaffShift(key) {
+  const shiftInput = document.getElementById('staff-shift');
+  if(shiftInput) shiftInput.value = key;
+  ['s1','s2','s3'].forEach(k => {
+    document.getElementById(`staff-tab-${k}`)?.classList.toggle('active', k === key);
+    document.getElementById(`staff-config-${k}`)?.classList.toggle('active', k === key);
+  });
+  buildStaffing();
+}
+  
 function getWindowZoneData(start, end) {
   const buckets = {};
   Object.keys(zoneStats).forEach(z => buckets[z] = {units:0, pickers:new Set()});
@@ -2052,7 +2130,8 @@ function buildBoundsTable() {
 // ═══════════════════════════════════════════════
 function buildStaffing() {
   const order = ['ZONE 1','Paint','ZONE 2','ZONE 5','ZONE 3','Wolf gordon','Big Rack','ZONE 4','Nora','Promo','Samplize','No Location'];
-  const { start, end, base } = getShiftRange('staff', 's1');
+  const selectedShiftKey = document.getElementById('staff-shift')?.value || 's1';
+  const { start, end, base, actual } = getStaffShiftConfig(selectedShiftKey);
   const hours = (end <= start ? (end + 24 - start) : (end - start)) || 8;
   const windowZones = getWindowZoneData(start, end);
   const associatesByZone = getAssociatesByZone(start, end);
@@ -2083,7 +2162,10 @@ function buildStaffing() {
   });
   
   document.getElementById('s1-body').innerHTML = body;
-  document.getElementById('s1-hc').textContent = `${totalSel} pickers`;
+  const hcDelta = actual - totalSel;
+  const hcStatus = hcDelta >= 0 ? `+${hcDelta} over` : `${Math.abs(hcDelta)} under`;
+  document.getElementById('s1-hc').textContent = `${totalSel} req / ${actual} act`;
+  document.getElementById('s1-hc').style.color = hcDelta >= 0 ? 'var(--green)' : 'var(--amber)';
 
   const s1 = STEADY;
   const s1Tot = Object.values(s1).reduce((t,v)=>t+(v.s1||0),0);
@@ -2103,14 +2185,12 @@ function buildStaffing() {
       <div class="summary-pill"><span class="mini-note">1st Shift (base)</span><b>${s1Tot}</b></div>
       <div class="summary-pill"><span class="mini-note">2nd Shift (base)</span><b>${s2Tot}</b></div>
       <div class="summary-pill"><span class="mini-note">3rd Shift (modeled)</span><b>${s3Tot}</b></div>
-      <div class="summary-pill"><span class="mini-note">Selected window</span><b>${totalSel}</b></div>`;
+      <div class="summary-pill"><span class="mini-note">Required Headcount (${base.label})</span><b>${totalSel}</b><span class="mini-note">Actual ${actual} · ${hcStatus}</span></div>`;
   }
   
   const tbl = document.getElementById('staff-detail-table');
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
-  let h = `<thead><tr><th>Zone</th><th>UPH</th><th>Window Units</th><th>Calc Pickers</th><th>Associates Assigned</th><th>Avg Start</th><th>Avg End</th></tr></thead><tbody>`;
-  entries.forEach(([z]) => {
-    const c = ZONE_COLORS[z]||'#64748b';
+  let h = `<thead><tr><th>Zone</th><th>UPH</th><th>Window Units</th><th>Required Headcount</th><th>Associates Assigned</th><th>Avg Start</th><th>Avg End</th></tr></thead><tbody>`;
     const uph = UPH[z]||150;
     const units = windowZones[z]?.units || 0;
     const calc = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
