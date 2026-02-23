@@ -1102,23 +1102,32 @@ function handleFile(file) {
         if(typeof v === 'object' && v.v != null) return String(v.v);
         return String(v);
       };
+      const isStrictNumeric = (txt) => /^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test((txt || '').trim());
+
       for(let i = 1; i < rows.length; i++) {
-          const r = rows[i] || [];
+             const r = rows[i] || [];
         const xRaw = r[1];
         const yRaw = r[2];
-        const xTxt = cellToText(xRaw).trim().toLowerCase();
-        const yTxt = cellToText(yRaw).trim().toLowerCase();
-
-       // Only treat rows as "No Location" when X or Y explicitly contains #N/A
-        const isNA = xTxt.includes('#n/a') || yTxt.includes('#n/a')
-        
-        const x = parseFloat(cellToText(xRaw));
-        const y = parseFloat(cellToText(yRaw));
-        if(!isNA && (isNaN(x) || isNaN(y))) continue;
+        const xTxtRaw = cellToText(xRaw).trim();
+        const yTxtRaw = cellToText(yRaw).trim();
+        const xTxt = xTxtRaw.toLowerCase();
+        const yTxt = yTxtRaw.toLowerCase();
 
         // Units: use value from col D; default to 1 only if column is absent
         const rawUnits = r[3];
         const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
+ 
+        const xLooksNumeric = isStrictNumeric(xTxtRaw);
+        const yLooksNumeric = isStrictNumeric(yTxtRaw);
+        const hasExplicitNA = xTxt.includes('#n/a') || yTxt.includes('#n/a');
+        const hasInvalidCoords = !xLooksNumeric || !yLooksNumeric;
+
+        // Classify records as No Location when coordinates are invalid/missing and Units Picked > 1
+        const isNA = hasExplicitNA || (hasInvalidCoords && units > 1);
+
+        const x = xLooksNumeric ? parseFloat(xTxtRaw) : NaN;
+        const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
+        if(!isNA && (isNaN(x) || isNaN(y))) continue;
 
         // Parse hour AND minute from col A
         let hour = 0, minute = 0;
@@ -2647,13 +2656,38 @@ function buildPickerHourlySeries(rows) {
   const opHours = getOperationalHourRange();
   const unitsByOpHour = Object.fromEntries(opHours.map(h => [h, 0]));
   const inactiveByOpHour = Object.fromEntries(opHours.map(h => [h, 0]));
+  const activeByOpHour = Object.fromEntries(opHours.map(h => [h, 0]));
+  const uphByOpHour = Object.fromEntries(opHours.map(h => [h, null]));
 
-  if(!rows.length) return { opHours, unitsByOpHour, inactiveByOpHour };
+  i if(!rows.length) return { opHours, unitsByOpHour, inactiveByOpHour, activeByOpHour, uphByOpHour };
 
   const sortedRows = rows.slice().sort((a,b)=> normalizeOperationalMinute(a.hour, a.minute) - normalizeOperationalMinute(b.hour, b.minute));
   sortedRows.forEach(r => {
     const opHour = r.hour < 6 ? r.hour + 24 : r.hour;
     if(unitsByOpHour[opHour] != null) unitsByOpHour[opHour] += (r.units || 0);
+  });
+ 
+  const rowsByOpHour = {};
+  sortedRows.forEach(r => {
+    const opHour = r.hour < 6 ? r.hour + 24 : r.hour;
+    if(!rowsByOpHour[opHour]) rowsByOpHour[opHour] = [];
+    rowsByOpHour[opHour].push({
+      txMin: normalizeOperationalMinute(r.hour, r.minute),
+      zone: r.zone || 'No Location',
+      units: r.units || 0
+    });
+  });
+
+  Object.entries(rowsByOpHour).forEach(([hourKey, hourRows]) => {
+    const opHour = parseInt(hourKey);
+    const contrib = computeZoneRunContributions(hourRows);
+    let active = 0;
+    Object.values(contrib).forEach(v => { active += (v.activeMinutes || 0); });
+    activeByOpHour[opHour] = active;
+    if(active > 0) {
+      const activeHours = Math.max(Math.round(active) / 60, 0.01);
+      uphByOpHour[opHour] = Math.round((unitsByOpHour[opHour] || 0) / activeHours);
+    }
   });
 
   for(let i = 1; i < sortedRows.length; i++) {
@@ -2677,7 +2711,7 @@ function buildPickerHourlySeries(rows) {
     }
   }
 
-  return { opHours, unitsByOpHour, inactiveByOpHour };
+   return { opHours, unitsByOpHour, inactiveByOpHour, activeByOpHour, uphByOpHour };
 }
 
 function buildInactiveLeaderboard() {
@@ -2984,7 +3018,7 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
     return;
   }
 
-  const { opHours, unitsByOpHour, inactiveByOpHour } = series;
+  const { opHours, unitsByOpHour, inactiveByOpHour, uphByOpHour } = series;
   const maxUnits = Math.max(...opHours.map(h => unitsByOpHour[h] || 0), 1);
   const maxInactiveHours = Math.max(...opHours.map(h => (inactiveByOpHour[h] || 0) / 60), 1);
 
@@ -3013,9 +3047,26 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
     ctx.fillStyle = 'rgba(59,130,246,0.78)';
     ctx.fillRect(unitsX, H - padB - unitsHeight, barW, unitsHeight);
 
+    // UPH value above units bar (hour-by-hour)
+    const hourUPH = uphByOpHour && uphByOpHour[opHour] != null ? uphByOpHour[opHour] : null;
+    if(hourUPH != null) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = 'bold 8px IBM Plex Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(hourUPH), unitsX + barW / 2, Math.max(padT + 8, H - padB - unitsHeight - 4));
+    }
+
     // Inactive hours bar
     ctx.fillStyle = 'rgba(239,68,68,0.82)';
     ctx.fillRect(inactiveX, H - padB - inactiveHeight, barW, inactiveHeight);
+
+    // Idle hours label on top of inactive bar
+    if(inactiveHours > 0) {
+      ctx.fillStyle = '#fca5a5';
+      ctx.font = 'bold 8px IBM Plex Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${inactiveHours.toFixed(1)}h`, inactiveX + barW / 2, Math.max(padT + 8, H - padB - inactiveHeight - 4));
+    }
 
     ctx.fillStyle = '#64748b';
     ctx.font = '9px IBM Plex Mono';
@@ -3030,6 +3081,8 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
   ctx.fillText(`■ Units (max ${Math.round(maxUnits)})`, padL, 10);
   ctx.fillStyle = '#ef4444';
   ctx.fillText(`■ Inactive hrs (max ${maxInactiveHours.toFixed(2)})`, padL + 105, 10);
+   ctx.fillStyle = '#f59e0b';
+  ctx.fillText('■ Hourly UPH', padL + 255, 10);
 }
 
 
