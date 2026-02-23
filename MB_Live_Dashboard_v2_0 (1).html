@@ -1099,18 +1099,21 @@ function handleFile(file) {
         return String(v);
       };
       for(let i = 1; i < rows.length; i++) {
-        const r = rows[i];
-        // Skip truly empty rows — but allow X=0 or Y=0 as valid coordinates
-        if(r[1] == null || r[1] === '' || r[2] == null || r[2] === '') continue;
+          const r = rows[i] || [];
         const xRaw = r[1];
         const yRaw = r[2];
         const xTxt = cellToText(xRaw).trim().toLowerCase();
         const yTxt = cellToText(yRaw).trim().toLowerCase();
+
+        // Treat missing / invalid location coordinates as "No Location" picks
+        const isMissingLoc = xTxt === '' || yTxt === '';
         const isNA = (
+           isMissingLoc ||
           xTxt.includes('#n/a') || yTxt.includes('#n/a') ||
           xTxt === 'n/a' || yTxt === 'n/a' ||
           xTxt === '#value!' || yTxt === '#value!'
         );
+        
         const x = parseFloat(cellToText(xRaw));
         const y = parseFloat(cellToText(yRaw));
         if(!isNA && (isNaN(x) || isNaN(y))) continue;
@@ -1265,11 +1268,9 @@ function buildAllData() {
     zs[zoneKey].hourlyUnits[r.hour] = (zs[zoneKey].hourlyUnits[r.hour] || 0) + r.units;
     hs[r.hour] = (hs[r.hour] || 0) + r.units;
 
-    const uid = (r.userId && r.userId !== 'Unknown') ? r.userId : null;
-    if (uid) {
-      if (!pickerAllTx[uid]) pickerAllTx[uid] = [];
-      pickerAllTx[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone: zoneKey, units: r.units });
-    }
+     const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
+    if (!pickerAllTx[uid]) pickerAllTx[uid] = [];
+    pickerAllTx[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone: zoneKey, units: r.units });
   }
 
   // Step 2 — per-picker zone-run analysis → accumulate activeMinutes, inactiveMinutes & picker sets per zone
@@ -1846,7 +1847,7 @@ function buildOvTable() {
     const s2Cell = selectedHour === null ? `<td class="mono">${(d.s2||0).toLocaleString()}</td>` : '';
 
     h += `<tr>
-      <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:6px;height:6px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span></td>
+      <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:6px;height:6px;border-radius:50%;background:${c};display:inline-block"></span>${z === 'No Location' ? 'No Location Zone' : z}</span></td>
       <td class="mono">${uph}</td>
       ${actualCell}
       <td class="mono">${dispUnits.toLocaleString()}</td>
@@ -1986,6 +1987,7 @@ function buildFilteredGrid() {
   const gm = {};
   for(const r of txData) {
     if(r.hour < heatH1 || r.hour > heatH2) continue;
+      if(r.isNA) continue;
     const gx = Math.round(r.x / RES) * RES;
     const gy = Math.round(r.y / RES) * RES;
     const key = gx + '_' + gy + '_' + r.zone;
