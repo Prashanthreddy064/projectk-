@@ -1105,14 +1105,8 @@ function handleFile(file) {
         const xTxt = cellToText(xRaw).trim().toLowerCase();
         const yTxt = cellToText(yRaw).trim().toLowerCase();
 
-        // Treat missing / invalid location coordinates as "No Location" picks
-        const isMissingLoc = xTxt === '' || yTxt === '';
-        const isNA = (
-           isMissingLoc ||
-          xTxt.includes('#n/a') || yTxt.includes('#n/a') ||
-          xTxt === 'n/a' || yTxt === 'n/a' ||
-          xTxt === '#value!' || yTxt === '#value!'
-        );
+       // Only treat rows as "No Location" when X or Y explicitly contains #N/A
+        const isNA = xTxt.includes('#n/a') || yTxt.includes('#n/a')
         
         const x = parseFloat(cellToText(xRaw));
         const y = parseFloat(cellToText(yRaw));
