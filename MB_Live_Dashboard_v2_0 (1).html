@@ -1104,17 +1104,45 @@ function handleFile(file) {
       };
       const isStrictNumeric = (txt) => /^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test((txt || '').trim());
 
-      for(let i = 1; i < rows.length; i++) {
-             const r = rows[i] || [];
-        const xRaw = r[1];
-        const yRaw = r[2];
+       const normalizeHeader = (value) => cellToText(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+      const findFirstMatch = (headers, patterns) => headers.findIndex(h => patterns.some(p => h === p || h.startsWith(p + ' ') || h.endsWith(' ' + p) || h.includes(' ' + p + ' ')));
+
+      // Support "complete dashboard" exports by locating the actual header row/columns
+      // instead of assuming A–E are always Time, X, Y, Units, User ID.
+      let headerRowIdx = 0;
+      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4;
+      for(let i = 0; i < Math.min(rows.length, 30); i++) {
+        const hdr = (rows[i] || []).map(normalizeHeader);
+        const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'time']);
+        const xIdx = findFirstMatch(hdr, ['x coordinate', 'x coord', 'x']);
+        const yIdx = findFirstMatch(hdr, ['y coordinate', 'y coord', 'y']);
+        const unitsIdx = findFirstMatch(hdr, ['units', 'qty', 'quantity']);
+        if(txIdx >= 0 && xIdx >= 0 && yIdx >= 0 && unitsIdx >= 0) {
+          headerRowIdx = i;
+          colTime = txIdx;
+          colX = xIdx;
+          colY = yIdx;
+          colUnits = unitsIdx;
+          const userIdx = findFirstMatch(hdr, ['user id', 'userid', 'user']);
+          if(userIdx >= 0) colUser = userIdx;
+          break;
+        }
+      }
+
+      for(let i = headerRowIdx + 1; i < rows.length; i++) {
+        const r = rows[i] || [];
+        const xRaw = r[colX];
+        const yRaw = r[colY];
+        const tRaw = r[colTime];
+        const unitsRaw = r[colUnits];
+        if([xRaw, yRaw, tRaw, unitsRaw].every(v => cellToText(v).trim() === '')) continue;
         const xTxtRaw = cellToText(xRaw).trim();
         const yTxtRaw = cellToText(yRaw).trim();
         const xTxt = xTxtRaw.toLowerCase();
         const yTxt = yTxtRaw.toLowerCase();
 
         // Units: use value from col D; default to 1 only if column is absent
-        const rawUnits = r[3];
+         const rawUnits = r[colUnits];
         const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
  
         const xLooksNumeric = isStrictNumeric(xTxtRaw);
@@ -1132,7 +1160,7 @@ function handleFile(file) {
 
         // Parse hour AND minute from col A
         let hour = 0, minute = 0;
-        const t = r[0];
+       const t = r[colTime];
         if(typeof t === 'number') {
           const frac = ((t % 1) + 1) % 1;
           hour = Math.floor(frac * 24);
@@ -1142,7 +1170,7 @@ function handleFile(file) {
           if(m) { hour = parseInt(m[1]); minute = parseInt(m[2]); }
         }
         // User ID from col E
-        const userId = (r[4] != null && r[4] !== '') ? String(r[4]).trim() : 'Unknown';
+        onst userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
         newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA});
       }
       setProgress(80);
@@ -1164,7 +1192,8 @@ function assignZonesAndBuild(rows, filename) {
       const r = rows[i];
       r.zone = r.isNA ? 'No Location' : nearestZone(r.x, r.y);
     }
-    setProgress(80 + (i / rows.length) * 15);
+    const pctDone = rows.length ? (i / rows.length) : 1;
+    setProgress(80 + pctDone * 15);
     if(i < rows.length) {
       setTimeout(processChunk, 0);
     } else {
@@ -2203,7 +2232,7 @@ function buildStaffing() {
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
   let h = `<thead><tr><th>Zone</th><th>UPH</th><th>Window Units</th><th>Required Headcount</th><th>Associates Assigned</th><th>Avg Start</th><th>Avg End</th></tr></thead><tbody>`;
   entries.forEach(([z]) => {
-    const c = ZCOL[z] || '#94a3b8';
+      const c = ZONE_COLORS[z] || '#94a3b8';
     const uph = UPH[z]||150;
     const units = windowZones[z]?.units || 0;
     const calc = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
@@ -2660,7 +2689,7 @@ function buildPickerHourlySeries(rows) {
   const activeByOpHour = Object.fromEntries(opHours.map(h => [h, 0]));
   const uphByOpHour = Object.fromEntries(opHours.map(h => [h, null]));
 
-  i if(!rows.length) return { opHours, unitsByOpHour, inactiveByOpHour, activeByOpHour, uphByOpHour };
+ if(!rows.length) return { opHours, unitsByOpHour, inactiveByOpHour, activeByOpHour, uphByOpHour };
 
   const sortedRows = rows.slice().sort((a,b)=> normalizeOperationalMinute(a.hour, a.minute) - normalizeOperationalMinute(b.hour, b.minute));
   sortedRows.forEach(r => {
