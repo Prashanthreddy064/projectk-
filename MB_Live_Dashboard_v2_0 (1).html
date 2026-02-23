@@ -281,6 +281,35 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
 /* ─── STAFFING ────────────────────────────── */
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  
+.plan-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0 14px;
+}
+.plan-field { display:flex; flex-direction:column; gap:5px; }
+.plan-field label {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: 'IBM Plex Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.plan-field select, .plan-field input {
+  background:#0f1a2e;
+  border:1px solid #1e293b;
+  border-radius:6px;
+  color:var(--text);
+  font-size:12px;
+  padding:6px 10px;
+  font-family:'IBM Plex Mono', monospace;
+}
+.mini-note { font-size:10px; color:var(--text3); font-family:'IBM Plex Mono', monospace; }
+.summary-row { display:grid; grid-template-columns: repeat(4,1fr); gap:10px; margin-bottom:12px; }
+.summary-pill { background:var(--surf3); border:1px solid var(--border2); border-radius:8px; padding:10px; }
+.summary-pill b { display:block; font-size:18px; font-family:'IBM Plex Mono', monospace; color:var(--cyan); }
 
 .shift-box {
   background: var(--surf2);
@@ -662,28 +691,55 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       Shift 1 (06:00–14:00) carries ~40% of daily volume · Shift 2 (14:00–22:00) carries ~57%.<br>
       Minimum 1 picker per zone where activity exists. Low-volume zones share a picker on Shift 2.
     </p>
+    <div class="plan-controls">
+      <div class="plan-field">
+        <label>Shift</label>
+        <select id="staff-shift" onchange="syncShiftInputs('staff'); buildStaffing()">
+          <option value="s1">1st Shift (06:00–14:00)</option>
+          <option value="s2">2nd Shift (14:00–22:00)</option>
+          <option value="s3">3rd Shift (22:00–06:00)</option>
+        </select>
+      </div>
+      <div class="plan-field">
+        <label>Start Time</label>
+        <input id="staff-start" type="time" value="06:00" onchange="buildStaffing()">
+      </div>
+      <div class="plan-field">
+        <label>End Time</label>
+        <input id="staff-end" type="time" value="14:00" onchange="buildStaffing()">
+      </div>
+      <div class="mini-note">Associates are auto-arranged by highest unit zone within selected time window.</div>
+    </div>
   </div>
+
+  <div class="summary-row" id="staff-summary"></div>
 
   <div class="two-col">
     <div class="shift-box">
       <div class="shift-hdr">
-        <div><div class="shift-name">🌅 Shift 1 — First Shift</div><div class="shift-time">06:00 – 14:00 · 8 hours</div></div>
+         <div><div class="shift-name" id="selected-shift-title">🌅 Shift 1 — First Shift</div><div class="shift-time" id="selected-shift-time">06:00 – 14:00 · 8 hours</div></div>
         <div class="shift-total" id="s1-hc">—</div>
       </div>
       <div class="shift-body" id="s1-body"></div>
     </div>
     <div class="shift-box">
       <div class="shift-hdr">
-        <div><div class="shift-name">🌆 Shift 2 — Second Shift</div><div class="shift-time">14:00 – 22:00 · 8 hours</div></div>
+         <div><div class="shift-name">🧩 Shift Change Layout (1st + 2nd)</div><div class="shift-time">Overlap staging and shared floor use</div></div>
         <div class="shift-total" id="s2-hc">—</div>
       </div>
-      <div class="shift-body" id="s2-body"></div>
+      <div class="shift-body" id="s2-body" style="padding:12px;"></div>
     </div>
   </div>
 
   <div class="card">
     <div class="card-title">Picker Calculation Detail</div>
     <table id="staff-detail-table"></table>
+  </div>
+  
+  <div class="map-wrap">
+    <div class="card-title">Zone Flow Map — Associate Movement</div>
+    <p style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:12px;">Shows standing position, start/end points by zone, and movement direction for selected shift.</p>
+    <canvas id="flow-canvas"></canvas>
   </div>
 </div>
 
@@ -695,6 +751,25 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       S1 carries structural headcount premium throughout ramp. Efficiency assumptions: Wk1=70% · Wk2=85% · Steady=100% of UPH target.<br>
       S1 always larger than S2 · Cross-training completes by end of Week 2 · Full zone coverage from Day 1.
     </p>
+    <div class="plan-controls">
+      <div class="plan-field">
+        <label>Ramp Shift</label>
+        <select id="ramp-shift" onchange="syncShiftInputs('ramp'); buildRamp()">
+          <option value="s1">1st Shift (06:00–14:00)</option>
+          <option value="s2">2nd Shift (14:00–22:00)</option>
+          <option value="s3">3rd Shift (22:00–06:00)</option>
+        </select>
+      </div>
+      <div class="plan-field">
+        <label>Start Time</label>
+        <input id="ramp-start" type="time" value="06:00" onchange="buildRamp()">
+      </div>
+      <div class="plan-field">
+        <label>End Time</label>
+        <input id="ramp-end" type="time" value="14:00" onchange="buildRamp()">
+      </div>
+      <div class="mini-note" id="ramp-volume-note"></div>
+    </div>
     <table class="ramp-tbl">
       <thead>
         <tr>
@@ -769,6 +844,11 @@ const STEADY = {
   'Big Rack':{s1:1,s2:2},'ZONE 4':{s1:1,s2:1},'Nora':{s1:1,s2:1},
   'Promo':{s1:1,s2:1},'Samplize':{s1:1,s2:1}
 };
+  const SHIFT_WINDOWS = {
+  s1:{label:'1st Shift',start:6,end:14,emoji:'🌅'},
+  s2:{label:'2nd Shift',start:14,end:22,emoji:'🌆'},
+  s3:{label:'3rd Shift',start:22,end:30,emoji:'🌙'}
+};
 
 // ═══════════════════════════════════════════════
 // STATE
@@ -781,6 +861,76 @@ let dataSource = 'default';   // 'default' | 'dropped'
 let heatH1 = 6;         // clock slider start hour
 let heatH2 = 22;        // clock slider end hour
 let droppedFileName = '';
+
+  function parseTimeInputToHour(v, fallbackHour) {
+  if(!v || typeof v !== 'string' || !v.includes(':')) return fallbackHour;
+  const [h,m] = v.split(':').map(Number);
+  if(Number.isNaN(h) || Number.isNaN(m)) return fallbackHour;
+  return h + (m / 60);
+}
+
+function normalizeOpsHour(hour) {
+  return hour < 6 ? hour + 24 : hour;
+}
+
+function isInWindow(hour, start, end) {
+  const h = normalizeOpsHour(hour);
+  let s = start;
+  let e = end <= start ? end + 24 : end;
+  if(s < 6) s += 24;
+  if(h < s) return h + 24 >= s && h + 24 < e;
+  return h >= s && h < e;
+}
+
+function getShiftRange(prefix, defaultKey='s1') {
+  const key = document.getElementById(`${prefix}-shift`)?.value || defaultKey;
+  const base = SHIFT_WINDOWS[key] || SHIFT_WINDOWS.s1;
+  const start = parseTimeInputToHour(document.getElementById(`${prefix}-start`)?.value, base.start);
+  const end = parseTimeInputToHour(document.getElementById(`${prefix}-end`)?.value, base.end % 24);
+  return {key,start,end,base};
+}
+
+function syncShiftInputs(prefix) {
+  const key = document.getElementById(`${prefix}-shift`)?.value || 's1';
+  const s = SHIFT_WINDOWS[key] || SHIFT_WINDOWS.s1;
+  const startEl = document.getElementById(`${prefix}-start`);
+  const endEl = document.getElementById(`${prefix}-end`);
+  if(startEl) startEl.value = `${String(s.start % 24).padStart(2,'0')}:00`;
+  if(endEl) endEl.value = `${String(s.end % 24).padStart(2,'0')}:00`;
+}
+
+function getWindowZoneData(start, end) {
+  const buckets = {};
+  Object.keys(zoneStats).forEach(z => buckets[z] = {units:0, pickers:new Set()});
+  txData.forEach(r => {
+    if(!isInWindow(r.hour, start, end)) return;
+    if(!buckets[r.zone]) buckets[r.zone] = {units:0, pickers:new Set()};
+    buckets[r.zone].units += r.units;
+    if(r.userId) buckets[r.zone].pickers.add(r.userId);
+  });
+  return buckets;
+}
+
+function getAssociatesByZone(start, end) {
+  const byUser = {};
+  txData.forEach(r => {
+    if(!isInWindow(r.hour, start, end)) return;
+    const id = r.userId || 'Unknown';
+    if(!byUser[id]) byUser[id] = {zones:{}, first:Infinity, last:-Infinity};
+    byUser[id].zones[r.zone] = (byUser[id].zones[r.zone] || 0) + r.units;
+    const t = normalizeOpsHour(r.hour) + (r.minute || 0) / 60;
+    byUser[id].first = Math.min(byUser[id].first, t);
+    byUser[id].last = Math.max(byUser[id].last, t);
+  });
+  const zoneMap = {};
+  Object.entries(byUser).forEach(([id, d]) => {
+    const primary = Object.entries(d.zones).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'No Location';
+    if(!zoneMap[primary]) zoneMap[primary] = [];
+    zoneMap[primary].push({id,start:d.first,end:d.last});
+  });
+  Object.values(zoneMap).forEach(arr => arr.sort((a,b)=>a.start-b.start));
+  return zoneMap;
+}
 
 // Default hourly totals from Feb 09-10 2026 combined
 const DEFAULT_HOURLY = {0:58,6:667,7:1138,8:3815,9:7855,10:6655,11:5616,12:6495,13:6006,14:7974,15:10594,16:10082,17:8387,18:6987,19:4838,20:5767,21:5223,22:2975,23:1337};
@@ -864,15 +1014,27 @@ function handleFile(file) {
       setProgress(60);
       
       const newTx = [];
+      const cellToText = v => {
+        if(v == null) return '';
+        if(typeof v === 'object' && v.w) return String(v.w);
+        if(typeof v === 'object' && v.v != null) return String(v.v);
+        return String(v);
+      };
       for(let i = 1; i < rows.length; i++) {
         const r = rows[i];
         // Skip truly empty rows — but allow X=0 or Y=0 as valid coordinates
         if(r[1] == null || r[1] === '' || r[2] == null || r[2] === '') continue;
         const xRaw = r[1];
         const yRaw = r[2];
-        const isNA = (String(xRaw).includes('#N/A') || String(yRaw).includes('#N/A') || String(xRaw).toLowerCase() === 'n/a' || String(yRaw).toLowerCase() === 'n/a');
-        const x = parseFloat(xRaw);
-        const y = parseFloat(yRaw);
+        const xTxt = cellToText(xRaw).trim().toLowerCase();
+        const yTxt = cellToText(yRaw).trim().toLowerCase();
+        const isNA = (
+          xTxt.includes('#n/a') || yTxt.includes('#n/a') ||
+          xTxt === 'n/a' || yTxt === 'n/a' ||
+          xTxt === '#value!' || yTxt === '#value!'
+        );
+        const x = parseFloat(cellToText(xRaw));
+        const y = parseFloat(cellToText(yRaw));
         if(!isNA && (isNaN(x) || isNaN(y))) continue;
 
         // Units: use value from col D; default to 1 only if column is absent
@@ -1889,102 +2051,186 @@ function buildBoundsTable() {
 // STAFFING
 // ═══════════════════════════════════════════════
 function buildStaffing() {
-  const order = ['ZONE 1','Paint','ZONE 2','ZONE 5','ZONE 3','Wolf gordon','Big Rack','ZONE 4','Nora','Promo','Samplize'];
-  let s1t=0, s2t=0, s1h='', s2h='';
-  
+  const order = ['ZONE 1','Paint','ZONE 2','ZONE 5','ZONE 3','Wolf gordon','Big Rack','ZONE 4','Nora','Promo','Samplize','No Location'];
+  const { start, end, base } = getShiftRange('staff', 's1');
+  const hours = (end <= start ? (end + 24 - start) : (end - start)) || 8;
+  const windowZones = getWindowZoneData(start, end);
+  const associatesByZone = getAssociatesByZone(start, end);
+
+  const selectedTitle = document.getElementById('selected-shift-title');
+  const selectedTime = document.getElementById('selected-shift-time');
+  if(selectedTitle) selectedTitle.textContent = `${base.emoji} ${base.label} — Dynamic Staffing`;
+  if(selectedTime) selectedTime.textContent = `${String(Math.floor(start)%24).padStart(2,'0')}:${String(Math.round((start%1)*60)).padStart(2,'0')} – ${String(Math.floor(end)%24).padStart(2,'0')}:${String(Math.round((end%1)*60)).padStart(2,'0')} · ${hours.toFixed(1)} hours`;
+
+  let totalSel = 0;
+  let body = '';
   order.forEach(z => {
     const c = ZONE_COLORS[z]||'#64748b';
-    const st = STEADY[z]||{s1:1,s2:1};
-    s1t+=st.s1; s2t+=st.s2;
-    const s1d = Array(st.s1).fill(`<div class="pdot" style="background:${c}"></div>`).join('');
-    const s2d = Array(st.s2).fill(`<div class="pdot" style="background:${c}"></div>`).join('');
-    const row = (dots, cnt) => `<div class="prow">
+    const units = (windowZones[z]?.units || 0);
+    const uph = UPH[z] || 150;
+    const need = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
+    totalSel += need;
+    const associates = associatesByZone[z] || [];
+    const dots = Array(Math.min(need,16)).fill(`<div class="pdot" style="background:${c}"></div>`).join('');
+    body += `<div class="prow">
       <div class="pzone-name"><span style="width:7px;height:7px;border-radius:2px;background:${c};display:inline-block;flex-shrink:0"></span>${z}</div>
-      <div class="pcount-wrap"><div class="pdots">${dots}</div><div class="pnum" style="color:${c}">${cnt}</div></div>
+      <div class="pcount-wrap">
+        <div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;min-width:100px;text-align:right;">${Math.round(units)}u · ${associates.length} assoc</div>
+        <div class="pdots">${dots}</div>
+        <div class="pnum" style="color:${c}">${need}</div>
+      </div>
     </div>`;
-    s1h += row(s1d, st.s1);
-    s2h += row(s2d, st.s2);
   });
   
-  document.getElementById('s1-body').innerHTML = s1h;
-  document.getElementById('s2-body').innerHTML = s2h;
-  document.getElementById('s1-hc').textContent = s1t + ' pickers';
-  document.getElementById('s2-hc').textContent = s2t + ' pickers';
+  document.getElementById('s1-body').innerHTML = body;
+  document.getElementById('s1-hc').textContent = `${totalSel} pickers`;
+
+  const s1 = STEADY;
+  const s1Tot = Object.values(s1).reduce((t,v)=>t+(v.s1||0),0);
+  const s2Tot = Object.values(s1).reduce((t,v)=>t+(v.s2||0),0);
+  const overlapHtml = `<div style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;">
+    <div style="margin-bottom:8px;"><b style="color:#93c5fd">Combined transition headcount:</b> <span style="color:#fcd34d">${s1Tot + s2Tot}</span> associates</div>
+    <canvas id="transition-canvas"></canvas>
+    <div style="margin-top:8px;color:var(--text3);">Layout map highlights shared aisles and staggered entry lanes for 1st/2nd shift overlap.</div>
+  </div>`;
+  document.getElementById('s2-body').innerHTML = overlapHtml;
+  document.getElementById('s2-hc').textContent = `${s1Tot + s2Tot} total`;
+
+  const summary = document.getElementById('staff-summary');
+  const s3Tot = Object.values(STEADY).reduce((t,v)=>t+Math.max(1,Math.round((v.s1+v.s2)/3)),0);
+  if(summary) {
+    summary.innerHTML = `
+      <div class="summary-pill"><span class="mini-note">1st Shift (base)</span><b>${s1Tot}</b></div>
+      <div class="summary-pill"><span class="mini-note">2nd Shift (base)</span><b>${s2Tot}</b></div>
+      <div class="summary-pill"><span class="mini-note">3rd Shift (modeled)</span><b>${s3Tot}</b></div>
+      <div class="summary-pill"><span class="mini-note">Selected window</span><b>${totalSel}</b></div>`;
+  }
   
-  // Detail table
   const tbl = document.getElementById('staff-detail-table');
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
-  let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Daily Units</th><th>S1 Units</th><th>S2 Units</th><th>S1 Calc</th><th>S2 Calc</th><th>S1 Scheduled</th><th>S2 Scheduled</th></tr></thead><tbody>`;
-  entries.forEach(([z,d]) => {
+  let h = `<thead><tr><th>Zone</th><th>UPH</th><th>Window Units</th><th>Calc Pickers</th><th>Associates Assigned</th><th>Avg Start</th><th>Avg End</th></tr></thead><tbody>`;
+  entries.forEach(([z]) => {
     const c = ZONE_COLORS[z]||'#64748b';
     const uph = UPH[z]||150;
-    const daily = d.units;
-    const s1c = (d.s1/(uph*8)).toFixed(2);
-    const s2c = (d.s2/(uph*8)).toFixed(2);
-    const st = STEADY[z]||{s1:1,s2:1};
+    const units = windowZones[z]?.units || 0;
+    const calc = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
+    const assoc = associatesByZone[z] || [];
+    const avgStart = assoc.length ? assoc.reduce((s,a)=>s+a.start,0)/assoc.length : null;
+    const avgEnd = assoc.length ? assoc.reduce((s,a)=>s+a.end,0)/assoc.length : null;
+    const tfmt = v => v == null ? '—' : `${String(Math.floor(v)%24).padStart(2,'0')}:${String(Math.round((v%1)*60)).padStart(2,'0')}`;
     h += `<tr>
       <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span></td>
-      <td class="mono">${uph}</td>
-      <td class="mono">${Math.round(daily).toLocaleString()}</td>
-      <td class="mono">${Math.round(d.s1).toLocaleString()}</td>
-      <td class="mono">${Math.round(d.s2).toLocaleString()}</td>
-      <td class="mono" style="color:var(--text3)">${s1c}</td>
-      <td class="mono" style="color:var(--text3)">${s2c}</td>
-      <td class="mono" style="color:${c};font-weight:700">${st.s1}</td>
-      <td class="mono" style="color:${c};font-weight:700">${st.s2}</td>
+      <td class="mono">${uph}</td><td class="mono">${Math.round(units).toLocaleString()}</td>
+      <td class="mono" style="color:${c};font-weight:700">${calc}</td>
+      <td class="mono">${assoc.length}</td>
+      <td class="mono">${tfmt(avgStart)}</td>
+      <td class="mono">${tfmt(avgEnd)}</td>
     </tr>`;
   });
   tbl.innerHTML = h + '</tbody>';
+  
+  drawZoneFlowMap(windowZones, start, end);
+  drawTransitionLayoutMap(s1Tot, s2Tot);
+}
+
+function drawZoneFlowMap(windowZones, start, end) {
+  const canvas = document.getElementById('flow-canvas');
+  if(!canvas) return;
+  const W = canvas.width = canvas.clientWidth || 980;
+  const H = canvas.height = 340;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#040609'; ctx.fillRect(0,0,W,H);
+  const zones = Object.entries(ZONE_BOUNDS).sort((a,b)=>(windowZones[b[0]]?.units||0)-(windowZones[a[0]]?.units||0)).slice(0,8);
+  const spacing = W / (zones.length + 1);
+  const y = H/2;
+  zones.forEach(([z], i) => {
+    const x = spacing*(i+1);
+    const c = ZONE_COLORS[z] || '#64748b';
+    ctx.fillStyle = c + '33';
+    ctx.strokeStyle = c;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.roundRect(x-42,y-26,84,52,8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#e2e8f0'; ctx.font = '11px Syne'; ctx.textAlign='center';
+    ctx.fillText(z, x, y-2);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '10px IBM Plex Mono';
+    ctx.fillText(`Start ${(Math.floor(start)%24).toString().padStart(2,'0')}:00`, x, y+12);
+    ctx.fillText(`End ${(Math.floor(end)%24).toString().padStart(2,'0')}:00`, x, y+24);
+    ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y-34, 4, 0, Math.PI*2); ctx.fill();
+    if(i < zones.length - 1) {
+      const nx = spacing*(i+2);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(x+45,y); ctx.lineTo(nx-45,y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(nx-51,y-4); ctx.lineTo(nx-45,y); ctx.lineTo(nx-51,y+4); ctx.fillStyle='#38bdf8'; ctx.fill();
+    }
+  });
+  ctx.fillStyle='#64748b'; ctx.font='10px IBM Plex Mono'; ctx.textAlign='left';
+  ctx.fillText('Standing positions shown as nodes; arrows indicate movement direction between zones by volume rank.', 12, H-12);
+}
+
+function drawTransitionLayoutMap(s1Tot, s2Tot) {
+  const canvas = document.getElementById('transition-canvas');
+  if(!canvas) return;
+  const W = canvas.width = canvas.clientWidth || 420;
+  const H = canvas.height = 200;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#040609'; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle = '#1e293b';
+  for(let i=0;i<6;i++) { ctx.strokeRect(20+i*65, 36, 50, 130); }
+  ctx.fillStyle='#3b82f6AA'; ctx.fillRect(24,40,180,58);
+  ctx.fillStyle='#f59e0bAA'; ctx.fillRect(210,40,180,58);
+  ctx.fillStyle='#22c55e99'; ctx.fillRect(24,106,366,56);
+  ctx.fillStyle='#bfdbfe'; ctx.font='10px IBM Plex Mono';
+  ctx.fillText(`1st Shift staging (${s1Tot})`, 32, 72);
+  ctx.fillStyle='#fde68a'; ctx.fillText(`2nd Shift staging (${s2Tot})`, 220, 72);
+  ctx.fillStyle='#86efac'; ctx.fillText(`Shared flow lane (${s1Tot+s2Tot} combined)`, 32, 138);
 }
 
 // ═══════════════════════════════════════════════
 // RAMP PLAN
 // ═══════════════════════════════════════════════
 function buildRamp() {
-  const RAMP = {
-    'ZONE 1':      {uph:140,w1:{s1:7,s2:4},w2:{s1:6,s2:5},ws:{s1:5,s2:7}},
-    'Paint':       {uph:300,w1:{s1:6,s2:3},w2:{s1:5,s2:4},ws:{s1:4,s2:5}},
-    'ZONE 2':      {uph:130,w1:{s1:4,s2:2},w2:{s1:3,s2:2},ws:{s1:2,s2:3}},
-    'ZONE 5':      {uph:150,w1:{s1:4,s2:2},w2:{s1:3,s2:2},ws:{s1:2,s2:3}},
-    'ZONE 3':      {uph:130,w1:{s1:3,s2:2},w2:{s1:2,s2:2},ws:{s1:2,s2:2}},
-    'Wolf gordon': {uph:200,w1:{s1:2,s2:1},w2:{s1:2,s2:1},ws:{s1:1,s2:2}},
-    'Big Rack':    {uph:100,w1:{s1:2,s2:1},w2:{s1:2,s2:1},ws:{s1:1,s2:2}},
-    'ZONE 4':      {uph:140,w1:{s1:2,s2:1},w2:{s1:1,s2:1},ws:{s1:1,s2:1}},
-    'Nora':        {uph:200,w1:{s1:2,s2:1},w2:{s1:1,s2:1},ws:{s1:1,s2:1}},
-    'Promo':       {uph:200,w1:{s1:1,s2:1},w2:{s1:1,s2:1},ws:{s1:1,s2:1}},
-    'Samplize':    {uph:200,w1:{s1:1,s2:1},w2:{s1:1,s2:1},ws:{s1:1,s2:1}},
-  };
-  
-  const body = document.getElementById('ramp-body');
+  const { start, end, key } = getShiftRange('ramp', 's1');
+  const hours = (end <= start ? (end + 24 - start) : (end - start)) || 8;
+  const wz = getWindowZoneData(start, end);
+  const efficiency = {w1:0.7,w2:0.85,ws:1};
+  const order = ['ZONE 1','Paint','ZONE 2','ZONE 5','ZONE 3','Wolf gordon','Big Rack','ZONE 4','Nora','Promo','Samplize','No Location'];
   let tot = {w1s1:0,w1s2:0,w2s1:0,w2s2:0,wss1:0,wss2:0};
+  const body = document.getElementById('ramp-body');
   let h = '';
-  Object.entries(RAMP).forEach(([z,d]) => {
+  
+  order.forEach(z => {
     const c = ZONE_COLORS[z]||'#64748b';
-    // Use live zone data if available, otherwise fall back to 0
-    const liveZ = zoneStats[z] || {units:0, s1:0, s2:0};
-    const dailyUnits = Math.round(liveZ.units);
-    const s1Units = Math.round(liveZ.s1 || 0);
-    const s2Units = Math.round(liveZ.s2 || 0);
-    // Calculate pickers from live data: units / (UPH × 8hrs), rounded up
-    const s1Calc = s1Units > 0 ? Math.ceil(s1Units / (d.uph * 8)) : '-';
-    const s2Calc = s2Units > 0 ? Math.ceil(s2Units / (d.uph * 8)) : '-';
-    tot.w1s1+=d.w1.s1; tot.w1s2+=d.w1.s2;
-    tot.w2s1+=d.w2.s1; tot.w2s2+=d.w2.s2;
-    tot.wss1+=d.ws.s1; tot.wss2+=d.ws.s2;
+     const uph = UPH[z] || 150;
+    const units = Math.round(wz[z]?.units || 0);
+    const calc = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
+    const split = key === 's1' ? {s1: Math.max(calc,1), s2: Math.max(0,Math.round(calc*0.7))}
+      : key === 's2' ? {s1: Math.max(0,Math.round(calc*0.8)), s2: Math.max(calc,1)}
+      : {s1: Math.max(0,Math.round(calc*0.6)), s2: Math.max(0,Math.round(calc*0.6))};
+    const wk = {
+      w1:{s1: Math.ceil(split.s1/efficiency.w1), s2: Math.ceil(split.s2/efficiency.w1)},
+      w2:{s1: Math.ceil(split.s1/efficiency.w2), s2: Math.ceil(split.s2/efficiency.w2)},
+      ws:{s1: Math.ceil(split.s1/efficiency.ws), s2: Math.ceil(split.s2/efficiency.ws)}
+    };
+    tot.w1s1 += wk.w1.s1; tot.w1s2 += wk.w1.s2;
+    tot.w2s1 += wk.w2.s1; tot.w2s2 += wk.w2.s2;
+    tot.wss1 += wk.ws.s1; tot.wss2 += wk.ws.s2;
+
     h += `<tr>
       <td><span class="zpill" style="background:${c}18;color:${c};font-size:11px"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span></td>
-      <td class="mono">${d.uph}</td>
-      <td class="mono">${dailyUnits.toLocaleString()}</td>
-      <td class="mono" style="color:var(--cyan)">${s1Calc}</td>
-      <td class="mono" style="color:var(--cyan)">${s2Calc}</td>
-      <td class="rc" style="background:rgba(59,130,246,0.05);color:#93c5fd">${d.w1.s1}</td>
-      <td class="rc" style="background:rgba(59,130,246,0.05);color:#64748b">${d.w1.s2}</td>
-      <td class="rc" style="background:rgba(34,197,94,0.05);color:#86efac">${d.w2.s1}</td>
-      <td class="rc" style="background:rgba(34,197,94,0.05);color:#64748b">${d.w2.s2}</td>
-      <td class="rc" style="background:rgba(245,158,11,0.05);color:#fcd34d">${d.ws.s1}</td>
-      <td class="rc" style="background:rgba(245,158,11,0.05);color:#64748b">${d.ws.s2}</td>
+      <td class="mono">${uph}</td>
+      <td class="mono">${units.toLocaleString()}</td>
+      <td class="mono" style="color:var(--cyan)">${split.s1}</td>
+      <td class="mono" style="color:var(--cyan)">${split.s2}</td>
+      <td class="rc" style="background:rgba(59,130,246,0.05);color:#93c5fd">${wk.w1.s1}</td>
+      <td class="rc" style="background:rgba(59,130,246,0.05);color:#64748b">${wk.w1.s2}</td>
+      <td class="rc" style="background:rgba(34,197,94,0.05);color:#86efac">${wk.w2.s1}</td>
+      <td class="rc" style="background:rgba(34,197,94,0.05);color:#64748b">${wk.w2.s2}</td>
+      <td class="rc" style="background:rgba(245,158,11,0.05);color:#fcd34d">${wk.ws.s1}</td>
+      <td class="rc" style="background:rgba(245,158,11,0.05);color:#64748b">${wk.ws.s2}</td>
     </tr>`;
   });
+  
   body.innerHTML = h;
   document.getElementById('r-w1s1').textContent = tot.w1s1;
   document.getElementById('r-w1s2').textContent = tot.w1s2;
@@ -1992,6 +2238,8 @@ function buildRamp() {
   document.getElementById('r-w2s2').textContent = tot.w2s2;
   document.getElementById('r-wss1').textContent = tot.wss1;
   document.getElementById('r-wss2').textContent = tot.wss2;
+   const note = document.getElementById('ramp-volume-note');
+  if(note) note.textContent = `Dynamic volume window: ${Math.floor(start)%24}:00-${Math.floor(end)%24}:00 (${hours.toFixed(1)}h)`;
 }
 
 // ═══════════════════════════════════════════════
