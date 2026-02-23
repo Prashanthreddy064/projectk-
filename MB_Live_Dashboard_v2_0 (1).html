@@ -675,6 +675,10 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       </div>
     </div>
   </div>
+  <div class="card" style="margin-top:16px;">
+    <div class="card-title">Top 10 Associates — Highest Inactive Hours</div>
+    <div id="pp-inactive-leaderboard" style="font-size:12px;color:var(--text2);">Upload live data to view associate inactivity rankings.</div>
+  </div>
 </div>
 
 <!-- ZONE STATS -->
@@ -1398,6 +1402,7 @@ function renderAll() {
   buildRamp();
   buildBoundsTable();
   buildUPHTargets();
+  buildInactiveLeaderboard();
   updateDataBadge();
 }
 
@@ -2619,6 +2624,122 @@ function onPickerSelect(val) {
   renderPickPath();
 }
 
+  function normalizeOperationalMinute(hour, minute = 0) {
+  const adjustedHour = hour < 6 ? hour + 24 : hour;
+  return adjustedHour * 60 + (minute || 0);
+}
+
+function getOperationalHourRange() {
+  const hours = [];
+  for(let h = 6; h <= 25; h++) hours.push(h);
+  return hours;
+}
+
+function formatOperationalHourLabel(opHour) {
+  const h = opHour % 24;
+  if(h === 0) return '12a';
+  if(h < 12) return `${h}a`;
+  if(h === 12) return '12p';
+  return `${h-12}p`;
+}
+
+function buildPickerHourlySeries(rows) {
+  const opHours = getOperationalHourRange();
+  const unitsByOpHour = Object.fromEntries(opHours.map(h => [h, 0]));
+  const inactiveByOpHour = Object.fromEntries(opHours.map(h => [h, 0]));
+
+  if(!rows.length) return { opHours, unitsByOpHour, inactiveByOpHour };
+
+  const sortedRows = rows.slice().sort((a,b)=> normalizeOperationalMinute(a.hour, a.minute) - normalizeOperationalMinute(b.hour, b.minute));
+  sortedRows.forEach(r => {
+    const opHour = r.hour < 6 ? r.hour + 24 : r.hour;
+    if(unitsByOpHour[opHour] != null) unitsByOpHour[opHour] += (r.units || 0);
+  });
+
+  for(let i = 1; i < sortedRows.length; i++) {
+    const prev = sortedRows[i-1];
+    const next = sortedRows[i];
+    const prevMin = normalizeOperationalMinute(prev.hour, prev.minute);
+    const nextMin = normalizeOperationalMinute(next.hour, next.minute);
+    const gap = nextMin - prevMin;
+    if(gap <= INACTIVE_THRESHOLD) continue;
+
+    let inactiveStart = prevMin + INACTIVE_THRESHOLD;
+    const inactiveEnd = nextMin;
+    while(inactiveStart < inactiveEnd) {
+      const opHour = Math.floor(inactiveStart / 60);
+      if(opHour < 6 || opHour > 25) break;
+      const nextBoundary = (opHour + 1) * 60;
+      const segmentEnd = Math.min(nextBoundary, inactiveEnd);
+      const segment = Math.max(0, segmentEnd - inactiveStart);
+      inactiveByOpHour[opHour] = (inactiveByOpHour[opHour] || 0) + segment;
+      inactiveStart = segmentEnd;
+    }
+  }
+
+  return { opHours, unitsByOpHour, inactiveByOpHour };
+}
+
+function buildInactiveLeaderboard() {
+  const host = document.getElementById('pp-inactive-leaderboard');
+  if(!host) return;
+  if(dataSource !== 'dropped' || !txData.length) {
+    host.innerHTML = 'Upload live data to view associate inactivity rankings.';
+    return;
+  }
+
+  const byUser = {};
+  txData.forEach(r => {
+    if(!r.userId || r.userId === 'Unknown') return;
+    if(!byUser[r.userId]) byUser[r.userId] = [];
+    byUser[r.userId].push(r);
+  });
+
+  const leaderboard = Object.entries(byUser).map(([user, rows]) => {
+    const sorted = rows.slice().sort((a,b)=> normalizeOperationalMinute(a.hour, a.minute) - normalizeOperationalMinute(b.hour, b.minute));
+    let inactiveMins = 0;
+    for(let i = 1; i < sorted.length; i++) {
+      const gap = normalizeOperationalMinute(sorted[i].hour, sorted[i].minute) - normalizeOperationalMinute(sorted[i-1].hour, sorted[i-1].minute);
+      if(gap > INACTIVE_THRESHOLD) inactiveMins += (gap - INACTIVE_THRESHOLD);
+    }
+    return {
+      user,
+      inactiveMins,
+      inactiveHrs: inactiveMins / 60,
+      picks: sorted.length,
+      units: sorted.reduce((sum, r) => sum + (r.units || 0), 0),
+    };
+  }).sort((a,b) => b.inactiveMins - a.inactiveMins).slice(0, 10);
+
+  if(!leaderboard.length) {
+    host.innerHTML = '<span style="color:var(--text3)">No picker-level inactivity data available.</span>';
+    return;
+  }
+
+  host.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr>
+        <th style="padding:8px 6px;text-align:left;color:var(--text3);font-size:10px;letter-spacing:.08em;">Rank</th>
+        <th style="padding:8px 6px;text-align:left;color:var(--text3);font-size:10px;letter-spacing:.08em;">Associate</th>
+        <th style="padding:8px 6px;text-align:right;color:var(--text3);font-size:10px;letter-spacing:.08em;">Inactive Hrs</th>
+        <th style="padding:8px 6px;text-align:right;color:var(--text3);font-size:10px;letter-spacing:.08em;">Inactive Min</th>
+        <th style="padding:8px 6px;text-align:right;color:var(--text3);font-size:10px;letter-spacing:.08em;">Picks</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${leaderboard.map((item, idx) => `
+        <tr style="border-top:1px solid #0f1a2e;">
+          <td class="mono" style="padding:8px 6px;color:var(--text3);">#${idx+1}</td>
+          <td style="padding:8px 6px;color:var(--text);font-weight:600;">${item.user}</td>
+          <td class="mono" style="padding:8px 6px;text-align:right;color:#ef4444;font-weight:700;">${item.inactiveHrs.toFixed(2)}</td>
+          <td class="mono" style="padding:8px 6px;text-align:right;color:#fca5a5;">${Math.round(item.inactiveMins)}</td>
+          <td class="mono" style="padding:8px 6px;text-align:right;color:var(--text2);">${item.picks.toLocaleString()}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>`;
+}
+
 function renderPickPath() {
   const user = ppCurrentUser;
   const hourFilter = document.getElementById('pp-hour-filter')?.value || 'all';
@@ -2629,7 +2750,9 @@ function renderPickPath() {
   if(!user) {
     kpiDiv.innerHTML = '';
     zbDiv.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px;">Select a picker to view route.</div>';
+    buildInactiveLeaderboard();
     drawPickPathCanvas([], user);
+    drawPickerHourlyChart([], null);
     return;
   }
 
@@ -2647,7 +2770,9 @@ function renderPickPath() {
   if(!rows.length) {
     kpiDiv.innerHTML = '<span style="color:var(--text3);font-size:11px;">No data for selected filter</span>';
     zbDiv.innerHTML = '';
+   buildInactiveLeaderboard();
     drawPickPathCanvas([], user);
+    drawPickerHourlyChart([], null);
     return;
   }
 
@@ -2710,10 +2835,14 @@ function renderPickPath() {
     </div>`;
   }).join('');
 
+  const allUserRows = txData.filter(r => r.userId === user);
+  const hourlySeries = buildPickerHourlySeries(allUserRows);
+
   // Draw canvas
   drawPickPathCanvas(rows, user);
-  // Draw hourly chart
-  drawPickerHourlyChart(rows);
+   // Draw hourly chart (includes inactive hours)
+  drawPickerHourlyChart(hourlySeries, hourFilter === 'all' ? null : parseInt(hourFilter));
+  buildInactiveLeaderboard();
 }
 
 function drawPickPathCanvas(rows, user) {
@@ -2837,43 +2966,72 @@ function drawPickPathCanvas(rows, user) {
   ctx.fillText(user, pad+4, pad+14);
 }
 
-function drawPickerHourlyChart(rows) {
+function drawPickerHourlyChart(series, selectedHourFilter = null) {
   const canvas = document.getElementById('pp-hourly-chart');
   if(!canvas) return;
   canvas.width = canvas.parentElement.offsetWidth - 32;
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = '#040609'; ctx.fillRect(0,0,W,H);
+   ctx.clearRect(0,0,W,H);
+ ctx.fillStyle = '#040609';
+  ctx.fillRect(0,0,W,H);
+  
+   if(!series || !series.opHours || !series.opHours.length) {
+    ctx.fillStyle = '#334155';
+    ctx.font = '11px IBM Plex Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('No hourly activity data', W/2, H/2);
+    return;
+  }
 
-  // Aggregate by hour
-  const byHour = {};
-  rows.forEach(r => { byHour[r.hour] = (byHour[r.hour]||0) + r.units; });
-  const hours = Object.keys(byHour).map(Number).sort((a,b)=>a-b);
-  if(!hours.length) return;
+  const { opHours, unitsByOpHour, inactiveByOpHour } = series;
+  const maxUnits = Math.max(...opHours.map(h => unitsByOpHour[h] || 0), 1);
+  const maxInactiveHours = Math.max(...opHours.map(h => (inactiveByOpHour[h] || 0) / 60), 1);
 
-  const maxVal = Math.max(...Object.values(byHour), 1);
-  const padL=28, padR=8, padT=10, padB=22;
-  const cw = (W-padL-padR)/hours.length;
+  const padL = 30, padR = 10, padT = 14, padB = 26;
+  const chartH = H - padT - padB;
+  const colW = (W - padL - padR) / opHours.length;
 
-  hours.forEach((h,i) => {
-    const v = byHour[h]||0;
-    const bh = (v/maxVal)*(H-padT-padB);
-    const x = padL + i*cw + cw*0.1;
-    const bw = cw*0.8;
-    const t = i/(hours.length-1||1);
-    const r2 = Math.round(34+(239-34)*t), g2=Math.round(197+(68-197)*t), b2=Math.round(94+(68-94)*t);
-    ctx.fillStyle=`rgba(${r2},${g2},${b2},0.75)`;
-    ctx.fillRect(x, H-padB-bh, bw, bh);
-    ctx.fillStyle='#64748b'; ctx.font='9px IBM Plex Mono'; ctx.textAlign='center';
-    const lbl = h<12?`${h}a`:h===12?'12p':`${h-12}p`;
-    ctx.fillText(lbl, x+bw/2, H-4);
-    if(v>0) {
-      ctx.fillStyle='#94a3b8'; ctx.font='8px IBM Plex Mono';
-      ctx.fillText(v, x+bw/2, H-padB-bh-3);
+  opHours.forEach((opHour, i) => {
+    const units = unitsByOpHour[opHour] || 0;
+    const inactiveHours = (inactiveByOpHour[opHour] || 0) / 60;
+    const x = padL + i * colW;
+
+    const unitsHeight = (units / maxUnits) * chartH;
+    const inactiveHeight = (inactiveHours / maxInactiveHours) * chartH;
+    const barW = Math.max(2, colW * 0.34);
+    const unitsX = x + colW * 0.08;
+    const inactiveX = x + colW * 0.54;
+
+    const isSelected = selectedHourFilter !== null && opHour === (selectedHourFilter === 24 ? 24 : selectedHourFilter === 25 ? 25 : selectedHourFilter);
+    if(isSelected) {
+      ctx.fillStyle = 'rgba(59,130,246,0.12)';
+      ctx.fillRect(x + 1, padT, colW - 2, chartH + 4);
     }
+
+    // Units bar
+    ctx.fillStyle = 'rgba(59,130,246,0.78)';
+    ctx.fillRect(unitsX, H - padB - unitsHeight, barW, unitsHeight);
+
+    // Inactive hours bar
+    ctx.fillStyle = 'rgba(239,68,68,0.82)';
+    ctx.fillRect(inactiveX, H - padB - inactiveHeight, barW, inactiveHeight);
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '9px IBM Plex Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(formatOperationalHourLabel(opHour), x + colW / 2, H - 5);
   });
+
+  // Legend + scales
+  ctx.textAlign = 'left';
+  ctx.font = '9px IBM Plex Mono';
+  ctx.fillStyle = '#3b82f6';
+  ctx.fillText(`■ Units (max ${Math.round(maxUnits)})`, padL, 10);
+  ctx.fillStyle = '#ef4444';
+  ctx.fillText(`■ Inactive hrs (max ${maxInactiveHours.toFixed(2)})`, padL + 105, 10);
 }
+
 
 
 document.querySelectorAll('.tab').forEach(tab => {
