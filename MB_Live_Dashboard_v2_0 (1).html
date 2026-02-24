@@ -978,9 +978,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div class="kpi-sub" id="fc-kpi-peak-sub">highest volume</div>
     </div>
     <div class="kpi" style="--kpi-color:#06b6d4">
-      <div class="kpi-lbl">Avg Units / Pick</div>
-      <div class="kpi-val mono" id="fc-kpi-avgunits">—</div>
-      <div class="kpi-sub">units per transaction</div>
+      <div class="kpi-lbl">Active Picking Hours</div>
+      <div class="kpi-val mono" id="fc-kpi-active-hours">—</div>
+      <div class="kpi-sub" id="fc-kpi-active-hours-sub">pick-to-pick by associate</div>
     </div>
   </div>
 
@@ -1023,6 +1023,8 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <th style="text-align:center;">Volume Share</th>
           <th style="text-align:center;">Zone UPH Target</th>
           <th style="text-align:center;">Unique Pickers</th>
+          <th style="text-align:center;">Active Hours</th>
+          <th style="text-align:center;">Actual UPH</th>
           <th style="width:180px;">Volume Bar</th>
         </tr>
       </thead>
@@ -1034,6 +1036,8 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <td class="mono" style="text-align:center;">100%</td>
           <td></td>
           <td class="mono" style="text-align:center;" id="fc-staff-total-pickers">—</td>
+          <td class="mono" style="text-align:center;" id="fc-staff-total-active-hours">—</td>
+          <td></td>
           <td></td>
         </tr>
       </tfoot>
@@ -1387,7 +1391,7 @@ function assignZonesAndBuild(rows, filename) {
 //                 This counts transit-to-zone time as part of zone cost.
 //                 If no previous zone exists, startTime = first tx in run.
 //   • For each consecutive tx pair within the run, if gap > 5 min:
-//       - only 5 min counted as active, remainder is inactive
+//       - full gap is excluded from active hours and tracked as inactive
 //   • Re-entry is handled naturally: each run is a separate window, never merged.
 //
 const INACTIVE_THRESHOLD = 5; // minutes
@@ -1423,8 +1427,8 @@ function computeZoneRunContributions(sortedTx) {
       for (let k = 1; k < timePoints.length; k++) {
         const gap = timePoints[k] - timePoints[k - 1];
         if (gap > INACTIVE_THRESHOLD) {
-          activeMins += INACTIVE_THRESHOLD;
-          inactiveMins += (gap - INACTIVE_THRESHOLD);
+          // Refined rule: gaps > 5 minutes are fully excluded from active time.
+          inactiveMins += gap;
         } else {
           activeMins += Math.max(gap, 0);
         }
@@ -3345,38 +3349,49 @@ function fcFormatHour(h) {
   return (h - 12) + ':00 PM';
 }
 
-function fcParseHour(val) {
+function fcParseMinuteOfDay(val) {
   if(val == null) return NaN;
   if(typeof val === 'number') {
-    if(val > 100) {
-      // Excel serial date-time: fraction of a day
-      const frac = ((val % 1) + 1) % 1;
-      return Math.floor(frac * 24);
-    }
-    return Math.floor(val) % 24;
+    const frac = ((val % 1) + 1) % 1;
+    const minuteOfDay = Math.floor(frac * 24 * 60);
+    if(!isNaN(minuteOfDay)) return minuteOfDay;
   }
+
   const s = String(val).trim().toLowerCase();
-  const m1 = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  const m1 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i);
   if(m1) {
-    let h = parseInt(m1[1]);
-    const ampm = (m1[3] || '').toLowerCase();
+    let h = parseInt(m1[1], 10);
+    const mins = parseInt(m1[2], 10);
+    const ampm = (m1[4] || '').toLowerCase();
     if(ampm === 'pm' && h < 12) h += 12;
     if(ampm === 'am' && h === 12) h = 0;
-    return h;
+    if(!isNaN(h) && !isNaN(mins)) return ((h % 24) * 60) + mins;
   }
+
   const m2 = s.match(/^(\d{1,2})\s*(am|pm)$/i);
   if(m2) {
-    let h = parseInt(m2[1]);
+    let h = parseInt(m2[1], 10);
     const ampm = m2[2].toLowerCase();
     if(ampm === 'pm' && h < 12) h += 12;
     if(ampm === 'am' && h === 12) h = 0;
-    return h;
+    if(!isNaN(h)) return (h % 24) * 60;
   }
-  // Try parsing as date string
+
   const dt = new Date(s);
-  if(!isNaN(dt)) return dt.getHours();
-  const parsed = parseInt(s);
-  return isNaN(parsed) ? NaN : parsed % 24;
+  if(!isNaN(dt)) return dt.getHours() * 60 + dt.getMinutes();
+
+  const parsed = parseFloat(s);
+  if(!isNaN(parsed)) {
+    const hour = Math.floor(parsed) % 24;
+    const mins = Math.round((parsed - Math.floor(parsed)) * 60);
+    return hour * 60 + Math.max(0, mins);
+  }
+  return NaN;
+}
+
+function fcParseHour(val) {
+  const minuteOfDay = fcParseMinuteOfDay(val);
+  return isNaN(minuteOfDay) ? NaN : Math.floor(minuteOfDay / 60) % 24;
 }
 
 function fcNormalizeDay(val) {
@@ -3395,6 +3410,29 @@ function fcNormalizeDay(val) {
 function fcNormalizeCategory(val) {
   if(!val) return '';
   return String(val).trim();
+}
+
+function fcBuildZoneActiveMetrics(rows) {
+  const byUser = {};
+  rows.forEach(r => {
+    if(!r || !r.zone || isNaN(r.txMin)) return;
+    const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
+    if(!byUser[uid]) byUser[uid] = [];
+    byUser[uid].push({ txMin: r.txMin, zone: r.zone, units: r.units || 0 });
+  });
+
+  const metrics = {};
+  for(const uid of Object.keys(byUser)) {
+    const sorted = byUser[uid].sort((a,b) => a.txMin - b.txMin);
+    const contrib = computeZoneRunContributions(sorted);
+    for(const [zone, vals] of Object.entries(contrib)) {
+      if(!metrics[zone]) metrics[zone] = { activeMinutes: 0, inactiveMinutes: 0, units: 0 };
+      metrics[zone].activeMinutes += vals.activeMinutes || 0;
+      metrics[zone].inactiveMinutes += vals.inactiveMinutes || 0;
+      metrics[zone].units += vals.units || 0;
+    }
+  }
+  return metrics;
 }
 
 function fcGetDateKey(row) {
@@ -3679,6 +3717,7 @@ function handleForecastFile(file) {
       const units = parseFloat(r[colUnits]) || 0;
       if(isNaN(x) || isNaN(y) || units === 0) continue;
 
+      const txMin = colTime >= 0 ? fcParseMinuteOfDay(r[colTime]) : NaN;
       const hour = colTime >= 0 ? fcParseHour(r[colTime]) : NaN;
       const userId = colUserId >= 0 ? String(r[colUserId] || '').trim() : '';
       const date = colDate >= 0 ? cellToText(r[colDate]) : '';
@@ -3686,7 +3725,7 @@ function handleForecastFile(file) {
       const category = colCategory >= 0 ? fcNormalizeCategory(cellToText(r[colCategory])) : 'All';
       const zone = nearestZone(x, y);
 
-      parsed.push({ time: colTime >= 0 ? r[colTime] : null, x, y, units, userId, date, day, category, hour, zone });
+      parsed.push({ time: colTime >= 0 ? r[colTime] : null, txMin, x, y, units, userId, date, day, category, hour, zone });
     }
 
     fcData = parsed;
@@ -3733,24 +3772,27 @@ function fcBuildKPIs() {
   const zoneVolumes = {};
   const allUsers = new Set();
   let totalVol = 0;
-  let totalRows = 0;
   fcFiltered.forEach(r => {
     zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.units;
     totalVol += r.units;
-    totalRows++;
     if(r.userId) allUsers.add(r.userId);
   });
 
   const activeZones = Object.keys(zoneVolumes).filter(z => zoneVolumes[z] > 0).length;
   const peakZone = Object.entries(zoneVolumes).sort((a,b) => b[1] - a[1])[0];
-  const avgUnits = totalRows > 0 ? (totalVol / totalRows).toFixed(1) : '—';
+  const zoneMetrics = fcBuildZoneActiveMetrics(fcFiltered);
+  const totalActiveMins = Object.values(zoneMetrics).reduce((sum, z) => sum + (z.activeMinutes || 0), 0);
+  const totalInactiveMins = Object.values(zoneMetrics).reduce((sum, z) => sum + (z.inactiveMinutes || 0), 0);
 
   document.getElementById('fc-kpi-volume').textContent = Math.round(totalVol).toLocaleString();
   document.getElementById('fc-kpi-zones').textContent = activeZones;
   document.getElementById('fc-kpi-pickers').textContent = allUsers.size;
   document.getElementById('fc-kpi-peak').textContent = peakZone ? peakZone[0] : '—';
   document.getElementById('fc-kpi-peak-sub').textContent = peakZone ? Math.round(peakZone[1]).toLocaleString() + ' units' : '';
-  document.getElementById('fc-kpi-avgunits').textContent = avgUnits;
+  document.getElementById('fc-kpi-active-hours').textContent = (totalActiveMins / 60).toFixed(2) + 'h';
+  document.getElementById('fc-kpi-active-hours-sub').textContent = totalInactiveMins > 0
+    ? 'idle excluded: ' + (totalInactiveMins / 60).toFixed(2) + 'h'
+    : 'idle excluded: 0.00h';
 
   const parts = [];
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
@@ -3922,7 +3964,9 @@ function fcBuildStaffingTable() {
 
   const totalVol = Object.values(zoneVolumes).reduce((s, v) => s + v, 0);
   const maxVol = Math.max(...Object.values(zoneVolumes), 1);
+  const zoneMetrics = fcBuildZoneActiveMetrics(fcFiltered);
   let totalPick = 0;
+  let totalActiveMins = 0;
 
   const sorted = Object.entries(zoneVolumes).sort((a, b) => b[1] - a[1]);
 
@@ -3933,6 +3977,10 @@ function fcBuildStaffingTable() {
     const pickers = zonePickers[zone] ? zonePickers[zone].size : 0;
     totalPick += pickers;
     const barPct = (vol / maxVol * 100).toFixed(1);
+    const activeMins = zoneMetrics[zone] ? zoneMetrics[zone].activeMinutes : 0;
+    totalActiveMins += activeMins;
+    const activeHours = activeMins / 60;
+    const actualUPH = activeHours > 0 ? Math.round(vol / activeHours) : null;
 
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -3941,12 +3989,15 @@ function fcBuildStaffingTable() {
       '<td class="mono" style="text-align:center;">' + share + '%</td>' +
       '<td class="mono" style="text-align:center;">' + uph + '</td>' +
       '<td class="mono" style="text-align:center;font-size:16px;font-weight:700;color:' + c + '">' + pickers + '</td>' +
+      '<td class="mono" style="text-align:center;">' + (activeHours > 0 ? activeHours.toFixed(2) + 'h' : '—') + '</td>' +
+      '<td class="mono" style="text-align:center;color:#22c55e;font-weight:700;">' + (actualUPH != null ? actualUPH : '—') + '</td>' +
       '<td><div class="bar-bg"><div class="bar-fg" style="width:' + barPct + '%;background:' + c + '"></div></div></td>';
     tbody.appendChild(tr);
   });
 
   document.getElementById('fc-staff-total-vol').textContent = Math.round(totalVol).toLocaleString();
   document.getElementById('fc-staff-total-pickers').textContent = totalPick;
+  document.getElementById('fc-staff-total-active-hours').textContent = (totalActiveMins / 60).toFixed(2) + 'h';
 }
 
 // ─── Hourly Volume Chart ─────────────────────
