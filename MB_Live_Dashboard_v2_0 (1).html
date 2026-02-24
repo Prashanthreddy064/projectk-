@@ -916,6 +916,10 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       Upload the Excel file containing the <strong style="color:var(--cyan)">Forecast Data</strong> sheet. Expected columns: <strong style="color:var(--cyan)">Category</strong> (Promo/Non-Promo), <strong style="color:var(--cyan)">Day</strong>, <strong style="color:var(--cyan)">Time</strong>, <strong style="color:var(--cyan)">Zone</strong>, <strong style="color:var(--cyan)">Predicted Volume</strong>, <strong style="color:var(--cyan)">Recommended Pickers</strong>.<br>
       Select a Category, Day, and Hour to view the predicted zone volume map, heat density, and staffing needs for that specific window.
     </p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+      <span class="data-badge" style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.35);color:#93c5fd;">Method: Hybrid WMA + Linear Regression</span>
+      <span style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">WMA captures recent shifts; linear regression captures directional trend. Output is blended per zone-hour and used across KPIs, maps, staffing, and hourly profile.</span>
+    </div>
 
     <!-- Forecast file drop zone -->
     <div class="drop-zone" id="fc-drop-zone" style="margin-bottom:14px;">
@@ -3426,6 +3430,44 @@ function fcWeightedMovingAverage(series) {
   return totalWeight ? (weightedSum / totalWeight) : 0;
 }
 
+function fcLinearRegressionForecast(series) {
+  const values = series
+    .map(v => Number(v))
+    .filter(v => Number.isFinite(v) && v >= 0);
+  if(!values.length) return 0;
+  if(values.length === 1) return values[0];
+
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  values.forEach((y, idx) => {
+    const x = idx;
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  });
+
+  const n = values.length;
+  const denom = (n * sumXX) - (sumX * sumX);
+  const slope = denom === 0 ? 0 : ((n * sumXY) - (sumX * sumY)) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  const nextX = n;
+  return Math.max(0, intercept + slope * nextX);
+}
+
+function fcBlendForecast(series) {
+  const values = series
+    .map(v => Number(v))
+    .filter(v => Number.isFinite(v) && v >= 0);
+  if(!values.length) return 0;
+
+  const wma = fcWeightedMovingAverage(values);
+  const lr = fcLinearRegressionForecast(values);
+
+  // Blend shifts toward trend as more history is available.
+  const trendWeight = values.length >= 8 ? 0.55 : values.length >= 5 ? 0.45 : 0.3;
+  return Math.max(0, (wma * (1 - trendWeight)) + (lr * trendWeight));
+}
+
 function fcBuildForecastRows(options = {}) {
   if(fcData.length === 0) return [];
   const { ignoreHourFilter = false } = options;
@@ -3470,9 +3512,9 @@ function fcBuildForecastRows(options = {}) {
 
   const forecastRows = [];
   groupedSeries.forEach(series => {
-    const volume = fcWeightedMovingAverage(series.volumes);
+    const volume = fcBlendForecast(series.volumes);
     if(volume <= 0) return;
-    const pickers = fcWeightedMovingAverage(series.pickers);
+    const pickers = fcBlendForecast(series.pickers);
     forecastRows.push({
       category: catVal === 'all' ? 'All Categories' : catVal,
       day: dayVal === 'all' ? 'All Days' : dayVal,
