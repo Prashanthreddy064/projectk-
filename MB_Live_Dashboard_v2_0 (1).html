@@ -1089,8 +1089,8 @@ let gridData = [];      // aggregated grid cells
 let zoneStats = {};     // by zone
 let hourlyData = {};    // hour -> units
 let dataSource = 'default';   // 'default' | 'dropped'
-let heatH1 = 6;         // clock slider start hour
-let heatH2 = 22;        // clock slider end hour
+let heatSelectedZones = ['all'];
+let heatSelectedHours = [];
 let droppedFileName = '';
 
   function parseTimeInputToHour(v, fallbackHour) {
@@ -1602,7 +1602,7 @@ function renderAll() {
   buildOvTable();
   drawZoneMap();
   buildHeatControls();
-  drawHeatMap('all');
+  drawHeatMap();
   buildZoneStats();
   buildPickerList();
   buildStaffing();
@@ -2134,7 +2134,9 @@ function drawZoneMap() {
 // ═══════════════════════════════════════════════
 // HEATMAP
 // ═══════════════════════════════════════════════
-let heatZone = 'all';
+function fmtHeatZoneLabel(z) {
+  return z === 'all' ? 'All Zones' : z;
+}
 
 function fmt12(h) {
   if(h===0) return '12 AM';
@@ -2147,44 +2149,60 @@ function buildHeatControls() {
   const div = document.getElementById('heat-controls');
   const zones = ['all', ...Object.keys(ZONE_COLORS)];
   const hasLive = dataSource === 'dropped';
+  const zoneSummary = heatSelectedZones.includes('all')
+    ? 'All Zones'
+    : heatSelectedZones.join(' + ');
+  const hourSummary = heatSelectedHours.length
+    ? heatSelectedHours
+        .slice()
+        .sort((a,b)=>a-b)
+        .map(h => fmt12(h))
+        .join(' + ')
+    : 'All Hours';
   div.innerHTML = `
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
-      ${zones.map(z=>`<button class="mctl${z===heatZone?' active':''}" onclick="setHeat('${z}',this)">${z==='all'?'All Zones':z}</button>`).join('')}
+      ${zones.map(z=>`<button class="mctl heat-zone-btn${heatSelectedZones.includes(z)?' active':''}" data-zone="${z}" onclick="toggleHeatZone('${z}')">${fmtHeatZoneLabel(z)}</button>`).join('')}
     </div>
+    <div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">Zone Selection: single or multi-select (up to 3 zones)</div>
     <div style="background:rgba(255,255,255,0.04);border:1px solid #1e293b;border-radius:8px;padding:12px 16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <span style="font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text3);">⏱ CLOCK FILTER</span>
-        <span id="heat-time-label" style="font-size:12px;font-family:'IBM Plex Mono',monospace;color:var(--accent);font-weight:600;">${fmt12(heatH1)} → ${fmt12(heatH2)}</span>
+        <span style="font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text3);">⏱ HOURLY SELECTOR</span>
+        <span id="heat-time-label" style="font-size:12px;font-family:'IBM Plex Mono',monospace;color:var(--accent);font-weight:600;">${hourSummary}</span>
       </div>
-      <div style="position:relative;height:28px;margin:0 8px;">
-        <input type="range" id="heat-h1" min="0" max="23" value="${heatH1}"
-          style="position:absolute;width:100%;pointer-events:auto;accent-color:var(--accent);height:4px;"
-          oninput="onHeatSlider()">
-        <input type="range" id="heat-h2" min="0" max="23" value="${heatH2}"
-          style="position:absolute;width:100%;pointer-events:auto;accent-color:#ef4444;height:4px;margin-top:14px;"
-          oninput="onHeatSlider()">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${Array.from({length:24},(_,h)=>`<button class="mctl heat-hour-btn${heatSelectedHours.includes(h)?' active':''}" data-hour="${h}" onclick="toggleHeatHour(${h})" ${!hasLive?'disabled':''}>${fmt12(h)}</button>`).join('')}
       </div>
-      <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">
-        <span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>11 PM</span>
-      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'IBM Plex Mono',monospace;">Time Selection: single hour or multi-select up to 3 hours (combined intensity view)</div>
+      <div id="heat-zone-label" style="font-size:10px;color:var(--text3);margin-top:6px;font-family:'IBM Plex Mono',monospace;">Zones: ${zoneSummary}</div>
       ${!hasLive ? '<div style="font-size:10px;color:var(--text3);margin-top:6px;font-family:\'IBM Plex Mono\',monospace;">⚠ Upload transaction data to enable time filtering</div>' : ''}
     </div>`;
 }
 
-function onHeatSlider() {
-  const h1 = parseInt(document.getElementById('heat-h1').value);
-  const h2 = parseInt(document.getElementById('heat-h2').value);
-  heatH1 = Math.min(h1, h2);
-  heatH2 = Math.max(h1, h2);
-  document.getElementById('heat-time-label').textContent = fmt12(heatH1) + ' → ' + fmt12(heatH2);
-  drawHeatMap(heatZone);
+function toggleHeatZone(zone) {
+  if(zone === 'all') {
+    heatSelectedZones = ['all'];
+  } else {
+    heatSelectedZones = heatSelectedZones.filter(z => z !== 'all');
+    if(heatSelectedZones.includes(zone)) {
+      heatSelectedZones = heatSelectedZones.filter(z => z !== zone);
+      if(!heatSelectedZones.length) heatSelectedZones = ['all'];
+    } else if(heatSelectedZones.length < 3) {
+      heatSelectedZones.push(zone);
+    }
+  }
+  buildHeatControls();
+  drawHeatMap();
 }
 
-function setHeat(z, btn) {
-  heatZone = z;
-  document.querySelectorAll('.mctl').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  drawHeatMap(z);
+function toggleHeatHour(hour) {
+  if(dataSource !== 'dropped') return;
+  if(heatSelectedHours.includes(hour)) {
+    heatSelectedHours = heatSelectedHours.filter(h => h !== hour);
+  } else if(heatSelectedHours.length < 3) {
+    heatSelectedHours.push(hour);
+  }
+  buildHeatControls();
+  drawHeatMap();
 }
 
 function buildFilteredGrid() {
@@ -2192,18 +2210,20 @@ function buildFilteredGrid() {
   const RES = 2;
   const gm = {};
   for(const r of txData) {
-    if(r.hour < heatH1 || r.hour > heatH2) continue;
-      if(r.isNA) continue;
+    if(heatSelectedHours.length && !heatSelectedHours.includes(r.hour)) continue;
+    if(r.isNA) continue;
+    const zoneKey = r.zone || 'No Location';
+    if(!heatSelectedZones.includes('all') && !heatSelectedZones.includes(zoneKey)) continue;
     const gx = Math.round(r.x / RES) * RES;
     const gy = Math.round(r.y / RES) * RES;
-    const key = gx + '_' + gy + '_' + r.zone;
-    if(!gm[key]) gm[key] = {gx, gy, zone: r.zone, units:0};
+    const key = gx + '_' + gy + '_' + zoneKey;
+    if(!gm[key]) gm[key] = {gx, gy, zone: zoneKey, units:0};
     gm[key].units += r.units;
   }
   return Object.values(gm);
 }
 
-function drawHeatMap(zf) {
+function drawHeatMap() {
   const canvas = document.getElementById('heat-canvas');
   const parent = canvas.parentElement;
   canvas.width = parent.offsetWidth - 40;
@@ -2213,7 +2233,9 @@ function drawHeatMap(zf) {
   ctx.fillStyle = '#040609'; ctx.fillRect(0,0,W,H);
   
   const activeGrid = buildFilteredGrid();
-  const data = zf==='all' ? activeGrid : activeGrid.filter(d=>d.zone===zf);
+  const data = (dataSource === 'dropped' || heatSelectedZones.includes('all'))
+    ? activeGrid
+    : activeGrid.filter(d=>heatSelectedZones.includes(d.zone));
   if(!data.length) return;
   
   const xMin=3, xMax=298, yMin=1, yMax=87;
@@ -2223,7 +2245,7 @@ function drawHeatMap(zf) {
   const maxU = Math.max(...data.map(d=>d.units),1);
   
   // Zone backgrounds
-  if(zf==='all') {
+  if(heatSelectedZones.includes('all') || heatSelectedZones.length > 1) {
     Object.entries(ZONE_BOUNDS).forEach(([z,b]) => {
       const [x1,y1] = tc(b.xMin,b.yMax);
       const [x2,y2] = tc(b.xMax,b.yMin);
@@ -2255,7 +2277,7 @@ function drawHeatMap(zf) {
   });
   
   // Zone labels on all view
-  if(zf==='all') {
+  if(heatSelectedZones.includes('all') || heatSelectedZones.length > 1) {
     Object.entries(ZONE_BOUNDS).forEach(([z,b]) => {
       const [cx,cy] = tc(b.xMean,b.yMean);
       const c = ZONE_COLORS[z]||'#64748b';
@@ -4100,7 +4122,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     const id = tab.dataset.sec;
     setTimeout(() => {
       if(id==='zonemap') drawZoneMap();
-      if(id==='heatmap') { buildHeatControls(); drawHeatMap(heatZone); }
+      if(id==='heatmap') { buildHeatControls(); drawHeatMap(); }
       if(id==='overview') buildHourlyChart();
       if(id==='uphtargets') buildUPHTargets();
       if(id==='pickpath') { drawPickPathCanvas([], ppCurrentUser); if(ppCurrentUser) renderPickPath(); }
@@ -4116,7 +4138,7 @@ loadDefaults();
 window.addEventListener('resize', () => {
   const active = document.querySelector('.tab.active')?.dataset.sec;
   if(active==='zonemap') drawZoneMap();
-  if(active==='heatmap') drawHeatMap(heatZone);
+  if(active==='heatmap') drawHeatMap();
   if(active==='overview') buildHourlyChart();
   if(active==='uphtargets') drawUPHPickPath();
   if(active==='pickpath') renderPickPath();
