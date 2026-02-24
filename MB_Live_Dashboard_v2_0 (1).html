@@ -474,6 +474,27 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   transition: width 0.3s;
 }
 .loading-bar.show { display: block; }
+
+/* ─── FORECAST ───────────────────────────── */
+#fc-drop-zone {
+  border: 1.5px dashed var(--border2);
+  border-radius: 8px;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--surf1);
+  position: relative;
+}
+#fc-drop-zone:hover {
+  border-color: var(--cyan);
+  background: rgba(6,182,212,0.06);
+}
+#fc-drop-zone input[type=file] {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer;
+}
 </style>
 </head>
 <body>
@@ -519,6 +540,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <button class="tab" data-sec="uphtargets">UPH Targets</button>
   <button class="tab" data-sec="staffing">Staffing Plan</button>
   <button class="tab" data-sec="ramp">Ramp Plan</button>
+  <button class="tab" data-sec="forecast">Forecast</button>
 </nav>
 
 <main>
@@ -641,14 +663,14 @@ tr:hover td { background: rgba(255,255,255,0.015); }
         <label style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;">Hour Filter</label>
         <select id="pp-hour-filter" onchange="renderPickPath()"
           style="background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);font-size:12px;padding:6px 12px;cursor:pointer;">
-          <option value="all">Full Operational Window (6:00 AM - 1:00 AM)</option>
+          <option value="all">Full Operational Window (6:00 AM - 2:00 AM)</option>
           <option value="6">6 AM</option><option value="7">7 AM</option><option value="8">8 AM</option>
           <option value="9">9 AM</option><option value="10">10 AM</option><option value="11">11 AM</option>
           <option value="12">12 PM</option><option value="13">1 PM</option><option value="14">2 PM</option>
           <option value="15">3 PM</option><option value="16">4 PM</option><option value="17">5 PM</option>
           <option value="18">6 PM</option><option value="19">7 PM</option><option value="20">8 PM</option>
           <option value="21">9 PM</option><option value="22">10 PM</option><option value="23">11 PM</option>
-          <option value="24">12 AM</option><option value="25">1 AM</option>
+          <option value="24">12 AM</option><option value="25">1 AM</option><option value="26">2 AM</option>
         </select>
       </div>
       <div id="pp-kpis" style="display:flex;gap:10px;flex-wrap:wrap;margin-left:auto;"></div>
@@ -882,6 +904,146 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div style="font-size:11px;color:var(--text2);line-height:1.7;font-family:'IBM Plex Mono',monospace;">Full UPH targets met. S1 premium maintained for zone coverage. Continuous monitoring. KPI review weekly.</div>
     </div>
   </div>
+</div>
+
+<!-- FORECAST DASHBOARD -->
+<div id="sec-forecast" class="section">
+
+  <!-- Upload + Controls -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Forecasting Dashboard — Two-Week Look-Ahead</div>
+    <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;margin-bottom:14px;">
+      Upload the Excel file containing the <strong style="color:var(--cyan)">Forecast Data</strong> sheet. Expected columns: <strong style="color:var(--cyan)">Category</strong> (Promo/Non-Promo), <strong style="color:var(--cyan)">Day</strong>, <strong style="color:var(--cyan)">Time</strong>, <strong style="color:var(--cyan)">Zone</strong>, <strong style="color:var(--cyan)">Predicted Volume</strong>, <strong style="color:var(--cyan)">Recommended Pickers</strong>.<br>
+      Select a Category, Day, and Hour to view the predicted zone volume map, heat density, and staffing needs for that specific window.
+    </p>
+
+    <!-- Forecast file drop zone -->
+    <div class="drop-zone" id="fc-drop-zone" style="margin-bottom:14px;">
+      <input type="file" id="fc-file-input" accept=".xlsx,.xls" onchange="handleForecastFile(this.files[0])">
+      <div class="drop-icon">📊</div>
+      <div class="drop-text">
+        <strong>Drop Forecast Excel file here</strong>
+        <span>Sheet: "Forecast Data" · Columns: Category, Day, Time, Zone, Volume, Pickers</span>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+      <span class="data-badge default" id="fc-data-badge">NO DATA LOADED</span>
+      <span id="fc-row-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+    </div>
+
+    <!-- Filter Controls -->
+    <div class="plan-controls" style="margin-top:14px;">
+      <div class="plan-field">
+        <label>Category</label>
+        <select id="fc-category" onchange="applyForecastFilters()">
+          <option value="">— Load data —</option>
+        </select>
+      </div>
+      <div class="plan-field">
+        <label>Day</label>
+        <select id="fc-day" onchange="applyForecastFilters()">
+          <option value="">— Load data —</option>
+        </select>
+      </div>
+      <div class="plan-field">
+        <label>Hour</label>
+        <select id="fc-hour" onchange="applyForecastFilters()">
+          <option value="">— Load data —</option>
+        </select>
+      </div>
+      <button class="refresh-btn" onclick="applyForecastFilters()" style="margin-left:auto;">
+        <span class="spin">⟳</span> Apply Filters
+      </button>
+    </div>
+  </div>
+
+  <!-- KPI Summary -->
+  <div class="kpi-row" id="fc-kpi-row" style="grid-template-columns:repeat(4,1fr);">
+    <div class="kpi" style="--kpi-color:#3b82f6">
+      <div class="kpi-lbl">Total Predicted Volume</div>
+      <div class="kpi-val mono" id="fc-kpi-volume">—</div>
+      <div class="kpi-sub" id="fc-kpi-volume-sub">select filters above</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#22c55e">
+      <div class="kpi-lbl">Zones Active</div>
+      <div class="kpi-val mono" id="fc-kpi-zones">—</div>
+      <div class="kpi-sub">with predicted volume</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#f59e0b">
+      <div class="kpi-lbl">Total Pickers Needed</div>
+      <div class="kpi-val mono" id="fc-kpi-pickers">—</div>
+      <div class="kpi-sub">recommended staffing</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#8b5cf6">
+      <div class="kpi-lbl">Peak Zone</div>
+      <div class="kpi-val" id="fc-kpi-peak" style="font-size:18px;">—</div>
+      <div class="kpi-sub" id="fc-kpi-peak-sub">highest volume</div>
+    </div>
+  </div>
+
+  <!-- Zone Map + Heat Map side by side -->
+  <div class="two-col" style="margin-bottom:16px;">
+    <div class="map-wrap" style="margin-bottom:0;">
+      <div class="card-title">Predicted Volume — Zone Map</div>
+      <p style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">
+        Zone fill intensity proportional to predicted volume for selected Category · Day · Hour
+      </p>
+      <canvas id="fc-zone-canvas"></canvas>
+      <div class="legend" id="fc-zone-legend" style="margin-top:10px;"></div>
+    </div>
+    <div class="map-wrap" style="margin-bottom:0;">
+      <div class="card-title">Density Heat Map — Predicted Activity</div>
+      <p style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">
+        Heat intensity based on zone predicted volume · higher density = warmer colors
+      </p>
+      <canvas id="fc-heat-canvas"></canvas>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+        <span style="font-size:10px;color:var(--text3)">Low</span>
+        <div style="flex:1;max-width:180px;height:6px;border-radius:4px;background:linear-gradient(to right,#0c1a3b,#1e40af,#2563eb,#f59e0b,#ef4444,#7f1d1d)"></div>
+        <span style="font-size:10px;color:var(--text3)">High</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Staffing Requirements Table -->
+  <div class="card">
+    <div class="card-title">Staffing Requirements — Recommended Pickers per Zone</div>
+    <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
+      Pickers assigned per zone based on the forecasted volume for the selected Category, Day, and Hour.
+      Zones sorted by predicted volume descending. Staffing = Volume ÷ (Zone UPH × 1 hr), minimum 1 picker where volume exists.
+    </p>
+    <table id="fc-staffing-table">
+      <thead>
+        <tr>
+          <th>Zone</th>
+          <th>Predicted Volume</th>
+          <th style="text-align:center;">Volume Share</th>
+          <th style="text-align:center;">Zone UPH Target</th>
+          <th style="text-align:center;">Recommended Pickers</th>
+          <th style="width:180px;">Volume Bar</th>
+        </tr>
+      </thead>
+      <tbody id="fc-staffing-body"></tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--border);font-weight:700;">
+          <td style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.06em;">TOTAL</td>
+          <td class="mono" id="fc-staff-total-vol">—</td>
+          <td class="mono" style="text-align:center;">100%</td>
+          <td></td>
+          <td class="mono" style="text-align:center;" id="fc-staff-total-pickers">—</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <!-- Hourly Volume Profile for Selected Day -->
+  <div class="card" style="margin-top:16px;">
+    <div class="card-title">Hourly Volume Profile <span id="fc-hourly-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <canvas id="fc-hourly-canvas" height="180"></canvas>
+  </div>
+
 </div>
 
 </main>
@@ -2676,7 +2838,7 @@ function populatePickerHourFilter(user) {
   if(!sel) return;
 
   if(!user) {
-    sel.innerHTML = '<option value="all">Full Operational Window (6:00 AM - 1:00 AM)</option>';
+    sel.innerHTML = '<option value="all">Full Operational Window (6:00 AM - 2:00 AM)</option>';
     sel.value = 'all';
     return;
   }
@@ -2705,7 +2867,7 @@ function populatePickerHourFilter(user) {
 
 function getOperationalHourRange() {
   const hours = [];
-  for(let h = 6; h <= 25; h++) hours.push(h);
+  for(let h = 6; h <= 26; h++) hours.push(h);
   return hours;
 }
 
@@ -2770,7 +2932,7 @@ function buildPickerHourlySeries(rows) {
     const inactiveEnd = nextMin;
     while(inactiveStart < inactiveEnd) {
       const opHour = Math.floor(inactiveStart / 60);
-      if(opHour < 6 || opHour > 25) break;
+      if(opHour < 6 || opHour > 26) break;
       const nextBoundary = (opHour + 1) * 60;
       const segmentEnd = Math.min(nextBoundary, inactiveEnd);
       const segment = Math.max(0, segmentEnd - inactiveStart);
@@ -2862,8 +3024,8 @@ function renderPickPath() {
   let rows = txData.filter(r => r.userId === user);
   if(hourFilter !== 'all') {
     const filterHour = parseInt(hourFilter);
-    // Map extended hours: 24→0 (midnight), 25→1 (1 AM)
-    const normalizedFilterHour = filterHour === 24 ? 0 : (filterHour === 25 ? 1 : filterHour);
+    // Map extended hours: 24→0 (midnight), 25→1 (1 AM), 26→2 (2 AM)
+    const normalizedFilterHour = filterHour === 24 ? 0 : (filterHour === 25 ? 1 : (filterHour === 26 ? 2 : filterHour));
     rows = rows.filter(r => r.hour === normalizedFilterHour);
   }
   // Sort by time
@@ -3105,7 +3267,7 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
     const unitsX = x + colW * 0.08;
     const inactiveX = x + colW * 0.54;
 
-    const isSelected = selectedHourFilter !== null && opHour === (selectedHourFilter === 24 ? 24 : selectedHourFilter === 25 ? 25 : selectedHourFilter);
+    const isSelected = selectedHourFilter !== null && opHour === (selectedHourFilter === 24 ? 24 : selectedHourFilter === 25 ? 25 : selectedHourFilter === 26 ? 26 : selectedHourFilter);
     if(isSelected) {
       ctx.fillStyle = 'rgba(59,130,246,0.12)';
       ctx.fillRect(x + 1, padT, colW - 2, chartH + 4);
@@ -3155,6 +3317,574 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
 
 
 
+// ═══════════════════════════════════════════════
+// FORECAST DASHBOARD
+// ═══════════════════════════════════════════════
+let fcData = [];          // parsed forecast rows
+let fcFiltered = [];      // filtered subset
+
+const FC_DAY_ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const FC_HOURS = [];
+(function() {
+  for(let h = 6; h <= 23; h++) FC_HOURS.push(h);
+  FC_HOURS.push(0); FC_HOURS.push(1); FC_HOURS.push(2); // next day 12AM, 1AM, 2AM
+})();
+
+function fcFormatHour(h) {
+  if(h === 0) return '12:00 AM';
+  if(h < 12) return h + ':00 AM';
+  if(h === 12) return '12:00 PM';
+  return (h - 12) + ':00 PM';
+}
+
+function fcParseHour(val) {
+  if(val == null) return NaN;
+  if(typeof val === 'number') {
+    // Excel serial fraction
+    const frac = ((val % 1) + 1) % 1;
+    return Math.floor(frac * 24);
+  }
+  const s = String(val).trim().toLowerCase();
+  // Try "8:00 AM", "14:00", "8 AM", etc.
+  const m1 = s.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+  if(m1) {
+    let h = parseInt(m1[1]);
+    const ampm = (m1[3] || '').toLowerCase();
+    if(ampm === 'pm' && h < 12) h += 12;
+    if(ampm === 'am' && h === 12) h = 0;
+    return h;
+  }
+  const m2 = s.match(/^(\d{1,2})\s*(am|pm)$/i);
+  if(m2) {
+    let h = parseInt(m2[1]);
+    const ampm = m2[2].toLowerCase();
+    if(ampm === 'pm' && h < 12) h += 12;
+    if(ampm === 'am' && h === 12) h = 0;
+    return h;
+  }
+  const parsed = parseInt(s);
+  return isNaN(parsed) ? NaN : parsed;
+}
+
+function fcNormalizeDay(val) {
+  if(!val) return '';
+  const s = String(val).trim().toLowerCase();
+  for(const d of FC_DAY_ORDER) {
+    if(s === d.toLowerCase() || s === d.toLowerCase().slice(0,3)) return d;
+  }
+  // Try parsing as a date
+  const dt = new Date(val);
+  if(!isNaN(dt)) {
+    const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return dayNames[dt.getDay()] || '';
+  }
+  return String(val).trim();
+}
+
+function fcNormalizeCategory(val) {
+  if(!val) return '';
+  const s = String(val).trim().toLowerCase();
+  if(s.includes('non') || s.includes('non-promo') || s.includes('nonpromo')) return 'Non-Promo';
+  if(s.includes('promo')) return 'Promo';
+  return String(val).trim();
+}
+
+function fcNormalizeZone(val) {
+  if(!val) return '';
+  const s = String(val).trim();
+  // Match against known zones
+  const knownZones = Object.keys(ZONE_COLORS);
+  for(const z of knownZones) {
+    if(s.toLowerCase() === z.toLowerCase()) return z;
+  }
+  // Try "Zone 1" variants
+  const zm = s.match(/zone\s*(\d+)/i);
+  if(zm) return 'ZONE ' + zm[1];
+  return s;
+}
+
+function handleForecastFile(file) {
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const wb = XLSX.read(e.target.result, {type:'array'});
+    // Find "Forecast Data" sheet or fall back to first sheet
+    const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('forecast')) || wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
+
+    const cellToText = v => {
+      if(v == null) return '';
+      if(typeof v === 'object' && v.w) return String(v.w);
+      if(typeof v === 'object' && v.v != null) return String(v.v);
+      return String(v);
+    };
+    const normalizeHeader = value => cellToText(value).trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+
+    // Find header row
+    let headerRowIdx = 0;
+    let colCategory = -1, colDay = -1, colTime = -1, colZone = -1, colVolume = -1, colPickers = -1;
+
+    for(let i = 0; i < Math.min(rows.length, 30); i++) {
+      const hdr = (rows[i] || []).map(normalizeHeader);
+      const catIdx = hdr.findIndex(h => h.includes('category') || h.includes('cat') || h === 'type' || h === 'promo');
+      const dayIdx = hdr.findIndex(h => h.includes('day') || h.includes('date') || h === 'weekday');
+      const timeIdx = hdr.findIndex(h => h.includes('time') || h.includes('hour'));
+      const zoneIdx = hdr.findIndex(h => h.includes('zone') || h.includes('area'));
+      const volIdx = hdr.findIndex(h => h.includes('volume') || h.includes('predicted') || h.includes('forecast') || h.includes('units') || h.includes('qty'));
+      const pickIdx = hdr.findIndex(h => h.includes('picker') || h.includes('staff') || h.includes('headcount') || h.includes('recommended'));
+
+      if(zoneIdx >= 0 && volIdx >= 0) {
+        headerRowIdx = i;
+        colCategory = catIdx;
+        colDay = dayIdx;
+        colTime = timeIdx;
+        colZone = zoneIdx;
+        colVolume = volIdx;
+        colPickers = pickIdx;
+        break;
+      }
+    }
+
+    const parsed = [];
+    for(let i = headerRowIdx + 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const zone = fcNormalizeZone(cellToText(r[colZone]));
+      const vol = parseFloat(r[colVolume]) || 0;
+      if(!zone || vol === 0) continue;
+
+      const category = colCategory >= 0 ? fcNormalizeCategory(cellToText(r[colCategory])) : 'All';
+      const day = colDay >= 0 ? fcNormalizeDay(r[colDay]) : 'All';
+      const hour = colTime >= 0 ? fcParseHour(r[colTime]) : NaN;
+      const pickers = colPickers >= 0 ? (parseFloat(r[colPickers]) || 0) : 0;
+
+      parsed.push({ category, day, hour, zone, volume: vol, pickers });
+    }
+
+    fcData = parsed;
+    document.getElementById('fc-row-count').textContent = parsed.length.toLocaleString() + ' forecast rows loaded';
+
+    // Update badge
+    const badge = document.getElementById('fc-data-badge');
+    badge.className = 'data-badge live';
+    badge.textContent = 'LIVE · ' + file.name;
+
+    // Build dropdown options
+    fcBuildDropdowns();
+    applyForecastFilters();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function fcBuildDropdowns() {
+  // Category
+  const cats = [...new Set(fcData.map(r => r.category))].filter(Boolean).sort();
+  const catSel = document.getElementById('fc-category');
+  catSel.innerHTML = '<option value="all">All Categories</option>';
+  cats.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; catSel.appendChild(o); });
+
+  // Day
+  const days = [...new Set(fcData.map(r => r.day))].filter(Boolean);
+  // Sort by day-of-week order
+  days.sort((a,b) => {
+    const ia = FC_DAY_ORDER.indexOf(a);
+    const ib = FC_DAY_ORDER.indexOf(b);
+    if(ia >= 0 && ib >= 0) return ia - ib;
+    return a.localeCompare(b);
+  });
+  const daySel = document.getElementById('fc-day');
+  daySel.innerHTML = '<option value="all">All Days</option>';
+  days.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; daySel.appendChild(o); });
+
+  // Hour
+  const hours = [...new Set(fcData.map(r => r.hour))].filter(h => !isNaN(h));
+  hours.sort((a,b) => {
+    const na = a < 6 ? a + 24 : a;
+    const nb = b < 6 ? b + 24 : b;
+    return na - nb;
+  });
+  const hourSel = document.getElementById('fc-hour');
+  hourSel.innerHTML = '<option value="all">All Hours</option>';
+  hours.forEach(h => { const o = document.createElement('option'); o.value = h; o.textContent = fcFormatHour(h); hourSel.appendChild(o); });
+}
+
+function applyForecastFilters() {
+  if(fcData.length === 0) return;
+
+  const catVal = document.getElementById('fc-category').value;
+  const dayVal = document.getElementById('fc-day').value;
+  const hourVal = document.getElementById('fc-hour').value;
+
+  fcFiltered = fcData.filter(r => {
+    if(catVal !== 'all' && r.category !== catVal) return false;
+    if(dayVal !== 'all' && r.day !== dayVal) return false;
+    if(hourVal !== 'all' && r.hour !== parseInt(hourVal)) return false;
+    return true;
+  });
+
+  fcBuildKPIs();
+  fcDrawZoneMap();
+  fcDrawHeatMap();
+  fcBuildStaffingTable();
+  fcBuildHourlyChart();
+}
+
+function fcBuildKPIs() {
+  // Aggregate by zone
+  const zoneVolumes = {};
+  let totalVol = 0;
+  let totalPickers = 0;
+  fcFiltered.forEach(r => {
+    zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume;
+    totalVol += r.volume;
+    totalPickers += r.pickers;
+  });
+
+  const activeZones = Object.keys(zoneVolumes).filter(z => zoneVolumes[z] > 0).length;
+  const peakZone = Object.entries(zoneVolumes).sort((a,b) => b[1] - a[1])[0];
+
+  // If no pickers in data, compute from UPH
+  if(totalPickers === 0) {
+    Object.entries(zoneVolumes).forEach(([z, v]) => {
+      if(v > 0) totalPickers += Math.max(1, Math.ceil(v / (UPH[z] || 150)));
+    });
+  }
+
+  document.getElementById('fc-kpi-volume').textContent = Math.round(totalVol).toLocaleString();
+  document.getElementById('fc-kpi-zones').textContent = activeZones;
+  document.getElementById('fc-kpi-pickers').textContent = totalPickers;
+  document.getElementById('fc-kpi-peak').textContent = peakZone ? peakZone[0] : '—';
+  document.getElementById('fc-kpi-peak-sub').textContent = peakZone ? Math.round(peakZone[1]).toLocaleString() + ' units' : '';
+
+  const catVal = document.getElementById('fc-category').value;
+  const dayVal = document.getElementById('fc-day').value;
+  const hourVal = document.getElementById('fc-hour').value;
+  const parts = [];
+  if(catVal !== 'all') parts.push(catVal);
+  if(dayVal !== 'all') parts.push(dayVal);
+  if(hourVal !== 'all') parts.push(fcFormatHour(parseInt(hourVal)));
+  document.getElementById('fc-kpi-volume-sub').textContent = parts.length ? parts.join(' · ') : 'all data';
+}
+
+function fcDrawZoneMap() {
+  const canvas = document.getElementById('fc-zone-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.parentElement.clientWidth - 40;
+  const H = Math.round(W * 0.42);
+  canvas.width = W; canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  // Aggregate volumes by zone
+  const zoneVolumes = {};
+  fcFiltered.forEach(r => { zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume; });
+  const maxVol = Math.max(...Object.values(zoneVolumes), 1);
+
+  // Coordinate transform
+  const allBounds = Object.values(ZONE_BOUNDS);
+  const globalXMin = Math.min(...allBounds.map(b => b.xMin));
+  const globalXMax = Math.max(...allBounds.map(b => b.xMax));
+  const globalYMin = Math.min(...allBounds.map(b => b.yMin));
+  const globalYMax = Math.max(...allBounds.map(b => b.yMax));
+  const pad = 30;
+  const scaleX = (W - 2 * pad) / (globalXMax - globalXMin);
+  const scaleY = (H - 2 * pad) / (globalYMax - globalYMin);
+  const scale = Math.min(scaleX, scaleY);
+  const offsetX = pad + ((W - 2 * pad) - (globalXMax - globalXMin) * scale) / 2;
+  const offsetY = pad + ((H - 2 * pad) - (globalYMax - globalYMin) * scale) / 2;
+  const tc = (x, y) => [offsetX + (x - globalXMin) * scale, offsetY + (globalYMax - y) * scale];
+
+  // Background
+  ctx.fillStyle = '#060a12';
+  ctx.fillRect(0, 0, W, H);
+
+  // Draw zone rectangles with fill intensity based on volume
+  Object.entries(ZONE_BOUNDS).forEach(([z, b]) => {
+    const [x1, y1] = tc(b.xMin, b.yMax);
+    const [x2, y2] = tc(b.xMax, b.yMin);
+    const vol = zoneVolumes[z] || 0;
+    const intensity = vol / maxVol;
+    const c = ZONE_COLORS[z] || '#64748b';
+
+    // Background fill — intensity scales alpha
+    const alpha = Math.max(0.08, intensity * 0.7);
+    ctx.fillStyle = c + Math.round(alpha * 255).toString(16).padStart(2, '0');
+    ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+
+    // Border
+    ctx.strokeStyle = vol > 0 ? c + 'aa' : c + '30';
+    ctx.lineWidth = vol > 0 ? 1.5 : 0.5;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+    // Zone label
+    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+    ctx.fillStyle = c;
+    ctx.font = 'bold 10px Syne';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(z, cx, cy - 8);
+
+    // Volume text
+    if(vol > 0) {
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 14px IBM Plex Mono';
+      ctx.fillText(Math.round(vol).toLocaleString(), cx, cy + 8);
+    } else {
+      ctx.fillStyle = '#475569';
+      ctx.font = '10px IBM Plex Mono';
+      ctx.fillText('0', cx, cy + 8);
+    }
+  });
+
+  // Legend
+  const legendEl = document.getElementById('fc-zone-legend');
+  legendEl.innerHTML = '';
+  Object.entries(zoneVolumes).sort((a,b) => b[1] - a[1]).forEach(([z, v]) => {
+    if(v <= 0) return;
+    const c = ZONE_COLORS[z] || '#64748b';
+    const item = document.createElement('div');
+    item.className = 'leg-item';
+    item.innerHTML = `<div class="leg-sq" style="background:${c}"></div>${z}: ${Math.round(v).toLocaleString()}`;
+    legendEl.appendChild(item);
+  });
+}
+
+function fcDrawHeatMap() {
+  const canvas = document.getElementById('fc-heat-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.parentElement.clientWidth - 40;
+  const H = Math.round(W * 0.42);
+  canvas.width = W; canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#060a12';
+  ctx.fillRect(0, 0, W, H);
+
+  // Aggregate by zone
+  const zoneVolumes = {};
+  fcFiltered.forEach(r => { zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume; });
+  const maxVol = Math.max(...Object.values(zoneVolumes), 1);
+
+  // Coordinate transform
+  const allBounds = Object.values(ZONE_BOUNDS);
+  const globalXMin = Math.min(...allBounds.map(b => b.xMin));
+  const globalXMax = Math.max(...allBounds.map(b => b.xMax));
+  const globalYMin = Math.min(...allBounds.map(b => b.yMin));
+  const globalYMax = Math.max(...allBounds.map(b => b.yMax));
+  const pad = 30;
+  const scaleX = (W - 2 * pad) / (globalXMax - globalXMin);
+  const scaleY = (H - 2 * pad) / (globalYMax - globalYMin);
+  const scale = Math.min(scaleX, scaleY);
+  const offsetX = pad + ((W - 2 * pad) - (globalXMax - globalXMin) * scale) / 2;
+  const offsetY = pad + ((H - 2 * pad) - (globalYMax - globalYMin) * scale) / 2;
+  const tc = (x, y) => [offsetX + (x - globalXMin) * scale, offsetY + (globalYMax - y) * scale];
+
+  // Draw locus points colored by zone heat
+  LOCUS.forEach(p => {
+    const [cx, cy] = tc(p.x, p.y);
+    const vol = zoneVolumes[p.zone] || 0;
+    const intensity = vol / maxVol;
+    // Color gradient: blue → yellow → red
+    let r, g, b;
+    if(intensity < 0.5) {
+      const t = intensity * 2;
+      r = Math.round(30 + t * 215);
+      g = Math.round(64 + t * 94);
+      b = Math.round(175 - t * 107);
+    } else {
+      const t = (intensity - 0.5) * 2;
+      r = Math.round(245 - t * 6);
+      g = Math.round(158 - t * 90);
+      b = Math.round(68 - t * 24);
+    }
+    const radius = 1.5 + intensity * 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r},${g},${b},${0.3 + intensity * 0.7})`;
+    ctx.fill();
+  });
+
+  // Overlay zone glow for high-volume zones
+  Object.entries(ZONE_BOUNDS).forEach(([z, b]) => {
+    const vol = zoneVolumes[z] || 0;
+    if(vol === 0) return;
+    const intensity = vol / maxVol;
+    const [cx, cy] = tc(b.xMean, b.yMean);
+    const zoneW = (b.xMax - b.xMin) * scale;
+    const zoneH = (b.yMax - b.yMin) * scale;
+    const radius = Math.max(zoneW, zoneH) * 0.4;
+
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    if(intensity > 0.6) {
+      grad.addColorStop(0, `rgba(239,68,68,${intensity * 0.25})`);
+      grad.addColorStop(0.5, `rgba(245,158,11,${intensity * 0.12})`);
+    } else {
+      grad.addColorStop(0, `rgba(59,130,246,${intensity * 0.2})`);
+      grad.addColorStop(0.5, `rgba(6,182,212,${intensity * 0.08})`);
+    }
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+  });
+
+  // Zone labels
+  Object.entries(ZONE_BOUNDS).forEach(([z, b]) => {
+    const [cx, cy] = tc(b.xMean, b.yMean);
+    const vol = zoneVolumes[z] || 0;
+    ctx.fillStyle = vol > 0 ? '#e2e8f0' : '#334155';
+    ctx.font = 'bold 9px Syne';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(z, cx, cy);
+  });
+}
+
+function fcBuildStaffingTable() {
+  const tbody = document.getElementById('fc-staffing-body');
+  tbody.innerHTML = '';
+
+  // Aggregate by zone
+  const zoneVolumes = {};
+  const zonePickers = {};
+  fcFiltered.forEach(r => {
+    zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume;
+    zonePickers[r.zone] = (zonePickers[r.zone] || 0) + r.pickers;
+  });
+
+  const totalVol = Object.values(zoneVolumes).reduce((s, v) => s + v, 0);
+  const maxVol = Math.max(...Object.values(zoneVolumes), 1);
+  let totalPick = 0;
+
+  // Sort by volume descending
+  const sorted = Object.entries(zoneVolumes).sort((a, b) => b[1] - a[1]);
+
+  sorted.forEach(([zone, vol]) => {
+    const c = ZONE_COLORS[zone] || '#64748b';
+    const share = totalVol > 0 ? ((vol / totalVol) * 100).toFixed(1) : '0.0';
+    const uph = UPH[zone] || 150;
+    let pickers = zonePickers[zone] || 0;
+    if(pickers === 0 && vol > 0) {
+      pickers = Math.max(1, Math.ceil(vol / uph));
+    }
+    totalPick += pickers;
+    const barPct = (vol / maxVol * 100).toFixed(1);
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="zpill" style="background:${c}18;color:${c};border:1px solid ${c}40"><span class="leg-sq" style="background:${c}"></span> ${zone}</span></td>
+      <td class="mono">${Math.round(vol).toLocaleString()}</td>
+      <td class="mono" style="text-align:center;">${share}%</td>
+      <td class="mono" style="text-align:center;">${uph}</td>
+      <td class="mono" style="text-align:center;font-size:16px;font-weight:700;color:${c}">${pickers}</td>
+      <td><div class="bar-bg"><div class="bar-fg" style="width:${barPct}%;background:${c}"></div></div></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('fc-staff-total-vol').textContent = Math.round(totalVol).toLocaleString();
+  document.getElementById('fc-staff-total-pickers').textContent = totalPick;
+}
+
+function fcBuildHourlyChart() {
+  const canvas = document.getElementById('fc-hourly-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.parentElement.clientWidth - 40;
+  const H = 180;
+  canvas.width = W; canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  // Determine if we are filtering by day/category
+  const catVal = document.getElementById('fc-category').value;
+  const dayVal = document.getElementById('fc-day').value;
+  const labelParts = [];
+  if(catVal !== 'all') labelParts.push(catVal);
+  if(dayVal !== 'all') labelParts.push(dayVal);
+  document.getElementById('fc-hourly-label').textContent = labelParts.length ? labelParts.join(' · ') : 'All Data';
+
+  // Aggregate hourly (ignoring hour filter to show full profile)
+  const subset = fcData.filter(r => {
+    if(catVal !== 'all' && r.category !== catVal) return false;
+    if(dayVal !== 'all' && r.day !== dayVal) return false;
+    return true;
+  });
+
+  const hourlyVol = {};
+  FC_HOURS.forEach(h => hourlyVol[h] = 0);
+  subset.forEach(r => {
+    if(!isNaN(r.hour) && FC_HOURS.includes(r.hour)) {
+      hourlyVol[r.hour] += r.volume;
+    }
+  });
+
+  const maxV = Math.max(...Object.values(hourlyVol), 1);
+  const padL = 50, padR = 20, padT = 20, padB = 25;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+  const barW = chartW / FC_HOURS.length;
+
+  // Grid lines
+  ctx.strokeStyle = '#1f2d45';
+  ctx.lineWidth = 0.5;
+  for(let i = 0; i <= 4; i++) {
+    const y = padT + (chartH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle = '#475569';
+    ctx.font = '9px IBM Plex Mono';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxV * (1 - i / 4)).toLocaleString(), padL - 6, y + 3);
+  }
+
+  // Highlight selected hour
+  const hourVal = document.getElementById('fc-hour').value;
+  const selectedHour = hourVal !== 'all' ? parseInt(hourVal) : null;
+
+  // Bars
+  FC_HOURS.forEach((h, idx) => {
+    const vol = hourlyVol[h] || 0;
+    const barH = (vol / maxV) * chartH;
+    const x = padL + idx * barW;
+    const y = padT + chartH - barH;
+
+    const isSelected = selectedHour !== null && h === selectedHour;
+    ctx.fillStyle = isSelected ? '#3b82f6' : (vol > 0 ? 'rgba(6,182,212,0.5)' : 'rgba(71,85,105,0.2)');
+    ctx.fillRect(x + 1, y, barW - 2, barH);
+
+    if(isSelected) {
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x + 1, y, barW - 2, barH);
+    }
+
+    // Hour label
+    ctx.fillStyle = isSelected ? '#3b82f6' : '#475569';
+    ctx.font = '8px IBM Plex Mono';
+    ctx.textAlign = 'center';
+    const label = h === 0 ? '12a' : h < 12 ? h + 'a' : h === 12 ? '12p' : (h - 12) + 'p';
+    ctx.fillText(label, x + barW / 2, H - 8);
+
+    // Value on top of bar if it fits
+    if(vol > 0 && barH > 14) {
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 9px IBM Plex Mono';
+      ctx.fillText(Math.round(vol).toLocaleString(), x + barW / 2, y - 4);
+    }
+  });
+}
+
+// Drag and drop support for forecast zone
+(function() {
+  const zone = document.getElementById('fc-drop-zone');
+  if(!zone) return;
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragging'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragging'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('dragging');
+    const f = e.dataTransfer.files[0];
+    if(f) handleForecastFile(f);
+  });
+})();
+
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -3170,6 +3900,7 @@ document.querySelectorAll('.tab').forEach(tab => {
       if(id==='overview') buildHourlyChart();
       if(id==='uphtargets') buildUPHTargets();
       if(id==='pickpath') { drawPickPathCanvas([], ppCurrentUser); if(ppCurrentUser) renderPickPath(); }
+      if(id==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
     }, 30);
   });
 });
@@ -3185,6 +3916,7 @@ window.addEventListener('resize', () => {
   if(active==='overview') buildHourlyChart();
   if(active==='uphtargets') drawUPHPickPath();
   if(active==='pickpath') renderPickPath();
+  if(active==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
 });
 </script>
 </body>
