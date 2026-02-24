@@ -947,7 +947,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
         </div>
       </div>
       <div style="margin-bottom:12px;">
-        <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:6px;">Hour <span style="text-transform:none;letter-spacing:0;color:var(--text3);font-size:9px;">(single select or up to 3)</span></label>
+        <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:6px;">Hour <span style="text-transform:none;letter-spacing:0;color:var(--text3);font-size:9px;">(single or multi-select)</span></label>
         <div id="fc-hour-btns" style="display:flex;flex-wrap:wrap;gap:6px;">
           <button class="mctl active" onclick="fcToggleFilter('hour','all',this)">All</button>
         </div>
@@ -2163,7 +2163,7 @@ function buildHeatControls() {
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
       ${zones.map(z=>`<button class="mctl heat-zone-btn${heatSelectedZones.includes(z)?' active':''}" data-zone="${z}" onclick="toggleHeatZone('${z}')">${fmtHeatZoneLabel(z)}</button>`).join('')}
     </div>
-    <div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">Zone Selection: single or multi-select (up to 3 zones)</div>
+    <div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">Zone Selection: single or multi-select</div>
     <div style="background:rgba(255,255,255,0.04);border:1px solid #1e293b;border-radius:8px;padding:12px 16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <span style="font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text3);">⏱ HOURLY SELECTOR</span>
@@ -2172,7 +2172,7 @@ function buildHeatControls() {
       <div style="display:flex;flex-wrap:wrap;gap:6px;">
         ${Array.from({length:24},(_,h)=>`<button class="mctl heat-hour-btn${heatSelectedHours.includes(h)?' active':''}" data-hour="${h}" onclick="toggleHeatHour(${h})" ${!hasLive?'disabled':''}>${fmt12(h)}</button>`).join('')}
       </div>
-      <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'IBM Plex Mono',monospace;">Time Selection: single hour or multi-select up to 3 hours (combined intensity view)</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'IBM Plex Mono',monospace;">Time Selection: single hour or multi-select (combined intensity view)</div>
       <div id="heat-zone-label" style="font-size:10px;color:var(--text3);margin-top:6px;font-family:'IBM Plex Mono',monospace;">Zones: ${zoneSummary}</div>
       ${!hasLive ? '<div style="font-size:10px;color:var(--text3);margin-top:6px;font-family:\'IBM Plex Mono\',monospace;">⚠ Upload transaction data to enable time filtering</div>' : ''}
     </div>`;
@@ -2186,7 +2186,7 @@ function toggleHeatZone(zone) {
     if(heatSelectedZones.includes(zone)) {
       heatSelectedZones = heatSelectedZones.filter(z => z !== zone);
       if(!heatSelectedZones.length) heatSelectedZones = ['all'];
-    } else if(heatSelectedZones.length < 3) {
+    } else {
       heatSelectedZones.push(zone);
     }
   }
@@ -2198,7 +2198,7 @@ function toggleHeatHour(hour) {
   if(dataSource !== 'dropped') return;
   if(heatSelectedHours.includes(hour)) {
     heatSelectedHours = heatSelectedHours.filter(h => h !== hour);
-  } else if(heatSelectedHours.length < 3) {
+  } else {
     heatSelectedHours.push(hour);
   }
   buildHeatControls();
@@ -3355,7 +3355,7 @@ let fcGridData = [];      // aggregated 2x2 grid for heat map
 // Active filter state for toggle buttons
 let fcFilterCat = 'all';
 let fcFilterDay = 'all';
-let fcFilterHours = []; // supports single-select or multi-select (up to 3 hours)
+let fcFilterHours = []; // supports single-select or multi-select
 
 const FC_DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const FC_HOURS = [];
@@ -3603,7 +3603,7 @@ function fcToggleFilter(type, value, btn) {
       const idx = fcFilterHours.indexOf(value);
       if(idx >= 0) {
         fcFilterHours.splice(idx, 1);
-      } else if(fcFilterHours.length < 3) {
+      } else {
         fcFilterHours.push(value);
       }
     }
