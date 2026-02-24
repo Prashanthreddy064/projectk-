@@ -783,6 +783,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <div id="sec-zonestats" class="section">
   <div class="card">
     <div class="card-title">Detailed Zone Statistics — From Loaded Data</div>
+    <div id="shift-scenario-summary" style="display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:10px;margin-bottom:14px;"></div>
+    <div id="shift-scenario-bars" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
+    <table id="shift-scenario-table" style="margin-bottom:16px;"></table>
     <table id="zstats-table"></table>
   </div>
 </div>
@@ -1172,6 +1175,8 @@ let heatSelectedZones = ['all'];
 let heatSelectedHours = [];
 let droppedFileName = '';
 let overviewSelectedShift = 's1';
+const SHIFT_SPLIT_MINUTE = 14 * 60 + 30; // 2:30 PM
+let shiftScenarioStats = null;
 
   function parseTimeInputToHour(v, fallbackHour) {
   if(!v || typeof v !== 'string' || !v.includes(':')) return fallbackHour;
@@ -1591,6 +1596,119 @@ function computeZoneRunContributions(sortedTx) {
   return contrib;
 }
 
+function buildShiftScenarioMetrics(rows) {
+  const scenarios = {
+    s1Individual: { label: 'S1 Individual', users: new Set(), txByUser: {} },
+    shared: { label: 'S1 & S2 Shared', users: new Set(), txByUser: {} },
+    s2Individual: { label: 'S2 Individual', users: new Set(), txByUser: {} }
+  };
+
+  const byUser = {};
+  for(const r of rows) {
+    const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
+    if(!byUser[uid]) byUser[uid] = [];
+    byUser[uid].push({ ...r, txMin: r.hour * 60 + (r.minute || 0) });
+  }
+
+  for(const [uid, txs] of Object.entries(byUser)) {
+    const sorted = txs.sort((a,b) => a.txMin - b.txMin);
+    if(!sorted.length) continue;
+    const pickerShift = sorted[0].txMin < SHIFT_SPLIT_MINUTE ? 's1' : 's2';
+
+    for(const tx of sorted) {
+      let scenarioKey = 'shared';
+      if(pickerShift === 's1' && tx.txMin < SHIFT_SPLIT_MINUTE) scenarioKey = 's1Individual';
+      else if(pickerShift === 's2' && tx.txMin >= SHIFT_SPLIT_MINUTE) scenarioKey = 's2Individual';
+
+      if(!scenarios[scenarioKey].txByUser[uid]) scenarios[scenarioKey].txByUser[uid] = [];
+      scenarios[scenarioKey].txByUser[uid].push({ txMin: tx.txMin, zone: tx.zone || 'No Location', units: tx.units || 0 });
+      scenarios[scenarioKey].users.add(uid);
+    }
+  }
+
+  const result = {};
+  for(const [key, meta] of Object.entries(scenarios)) {
+    const aggregate = { units: 0, activeMinutes: 0, inactiveMinutes: 0 };
+    for(const userTx of Object.values(meta.txByUser)) {
+      const contrib = computeZoneRunContributions(userTx.sort((a,b)=>a.txMin-b.txMin));
+      for(const vals of Object.values(contrib)) {
+        aggregate.units += vals.units || 0;
+        aggregate.activeMinutes += vals.activeMinutes || 0;
+        aggregate.inactiveMinutes += vals.inactiveMinutes || 0;
+      }
+    }
+
+    const roundedActiveMins = Math.round(aggregate.activeMinutes);
+    const activeHours = roundedActiveMins / 60;
+    const inactiveHours = aggregate.inactiveMinutes / 60;
+    result[key] = {
+      label: meta.label,
+      userCount: meta.users.size,
+      units: aggregate.units,
+      activeHours: parseFloat(activeHours.toFixed(2)),
+      inactiveHours: parseFloat(inactiveHours.toFixed(2)),
+      uph: activeHours > 0 ? Math.round(aggregate.units / activeHours) : null
+    };
+  }
+
+  return result;
+}
+
+function buildShiftScenarioVisuals() {
+  const summaryEl = document.getElementById('shift-scenario-summary');
+  const barsEl = document.getElementById('shift-scenario-bars');
+  const tableEl = document.getElementById('shift-scenario-table');
+  if(!summaryEl || !barsEl || !tableEl) return;
+
+  if(!shiftScenarioStats) {
+    summaryEl.innerHTML = '';
+    barsEl.innerHTML = '';
+    tableEl.innerHTML = '<tbody><tr><td style="color:var(--text3);padding:10px;">Load transaction data to view S1/S2 picker segmentation.</td></tr></tbody>';
+    return;
+  }
+
+  const order = ['s1Individual', 'shared', 's2Individual'];
+  const palette = { s1Individual:'#22c55e', shared:'#06b6d4', s2Individual:'#8b5cf6' };
+  const maxUnits = Math.max(...order.map(k => shiftScenarioStats[k].units), 1);
+
+  summaryEl.innerHTML = order.map(key => {
+    const d = shiftScenarioStats[key];
+    const color = palette[key];
+    return `<div style="background:rgba(255,255,255,0.02);border:1px solid ${color}50;border-radius:8px;padding:10px 12px;">
+      <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:${color};margin-bottom:6px;">${d.label}</div>
+      <div style="font-size:22px;font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--text);">${d.uph != null ? d.uph : '—'}</div>
+      <div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">UPH · ${d.userCount} pickers</div>
+    </div>`;
+  }).join('');
+
+  barsEl.innerHTML = order.map(key => {
+    const d = shiftScenarioStats[key];
+    const color = palette[key];
+    const width = ((d.units / maxUnits) * 100).toFixed(1);
+    return `<div>
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;font-family:'IBM Plex Mono',monospace;color:var(--text2);margin-bottom:3px;">
+        <span>${d.label}</span>
+        <span>${Math.round(d.units).toLocaleString()} units · ${d.activeHours.toFixed(2)}h active · ${d.inactiveHours.toFixed(2)}h inactive</span>
+      </div>
+      <div style="height:8px;background:#0b1324;border-radius:999px;overflow:hidden;border:1px solid #1f2d45;"><div style="height:100%;width:${width}%;background:${color};"></div></div>
+    </div>`;
+  }).join('');
+
+  tableEl.innerHTML = `<thead><tr>
+    <th>Scenario</th><th>Pickers</th><th>Total Units</th><th>Picking Hours</th><th>Inactive Hours</th><th>UPH</th>
+  </tr></thead><tbody>${order.map(key => {
+    const d = shiftScenarioStats[key];
+    return `<tr>
+      <td>${d.label}</td>
+      <td class="mono">${d.userCount}</td>
+      <td class="mono">${Math.round(d.units).toLocaleString()}</td>
+      <td class="mono">${d.activeHours.toFixed(2)}</td>
+      <td class="mono" style="color:${d.inactiveHours > d.activeHours ? '#ef4444' : '#f59e0b'}">${d.inactiveHours.toFixed(2)}</td>
+      <td class="mono" style="font-weight:700;color:${d.uph != null && d.uph >= 200 ? '#22c55e' : '#f59e0b'}">${d.uph != null ? d.uph : '—'}</td>
+    </tr>`;
+  }).join('')}</tbody>`;
+}
+
 // ═══════════════════════════════════════════════
 // BUILD AGGREGATIONS
 // ═══════════════════════════════════════════════
@@ -1692,6 +1810,7 @@ function buildAllData() {
 
   zoneStats = zs;
   hourlyData = hs;
+  shiftScenarioStats = buildShiftScenarioMetrics(txData);
   // Store hourly zone picker data globally for dynamic hourly UPH
   window._hourlyZonePickerData = hourlyZonePickerData;
   
@@ -1734,6 +1853,7 @@ function loadDefaults() {
   hourlyData = hd;
   gridData   = DEFAULT_GRID;
   dataSource = 'default';
+  shiftScenarioStats = null;
   renderAll();
   updateLastRefreshed();
 }
@@ -1750,6 +1870,7 @@ function renderAll() {
   buildHeatControls();
   drawHeatMap();
   buildZoneStats();
+  buildShiftScenarioVisuals();
   buildPickerList();
   buildStaffing();
   buildRamp();
