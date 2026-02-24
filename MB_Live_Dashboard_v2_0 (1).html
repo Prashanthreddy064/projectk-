@@ -1013,7 +1013,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div class="card-title">Zone Volume & Staffing — Forecast Data</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
       Volume and unique pickers per zone based on the forecast data for the selected Category, Day, and Hour.
-      Zones sorted by completed units descending. Calculated Hours = Units ÷ Zone UPH target. Calculated Pickers = Calculated Hours ÷ Active Operational Hours.
+      Zones sorted by completed units descending. Staffing = Volume ÷ (Zone UPH × 1 hr), minimum 1 picker where volume exists.
     </p>
     <table id="fc-staffing-table">
       <thead>
@@ -1023,10 +1023,8 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <th style="text-align:center;">Volume Share</th>
           <th style="text-align:center;">Zone UPH Target</th>
           <th style="text-align:center;">Unique Pickers</th>
-          <th style="text-align:center;">Active Operational Hours</th>
+          <th style="text-align:center;">Active Hours</th>
           <th style="text-align:center;">Actual UPH</th>
-          <th style="text-align:center;">Calculated Hours</th>
-          <th style="text-align:center;">Calculated Pickers</th>
           <th style="width:180px;">Volume Bar</th>
         </tr>
       </thead>
@@ -1039,9 +1037,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <td></td>
           <td class="mono" style="text-align:center;" id="fc-staff-total-pickers">—</td>
           <td class="mono" style="text-align:center;" id="fc-staff-total-active-hours">—</td>
-          <td class="mono" style="text-align:center;" id="fc-staff-total-overall-uph">—</td>
-          <td class="mono" style="text-align:center;" id="fc-staff-total-calculated-hours">—</td>
-          <td class="mono" style="text-align:center;" id="fc-staff-total-calculated-pickers">—</td>
+          <td></td>
           <td></td>
         </tr>
       </tfoot>
@@ -3982,26 +3978,17 @@ function fcBuildStaffingTable() {
 
   const zoneVolumes = {};
   const zonePickers = {};
-  const zoneActiveHours = {};
   fcFiltered.forEach(r => {
     zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.units;
     if(!zonePickers[r.zone]) zonePickers[r.zone] = new Set();
     if(r.userId) zonePickers[r.zone].add(r.userId);
-    if(r.units > 0) {
-      if(!zoneActiveHours[r.zone]) zoneActiveHours[r.zone] = new Set();
-      if(!isNaN(r.hour)) {
-        zoneActiveHours[r.zone].add(r.hour);
-      } else if(!isNaN(r.txMin)) {
-        zoneActiveHours[r.zone].add(Math.floor(r.txMin / 60));
-      }
-    }
   });
 
   const totalVol = Object.values(zoneVolumes).reduce((s, v) => s + v, 0);
   const maxVol = Math.max(...Object.values(zoneVolumes), 1);
+  const zoneMetrics = fcBuildZoneActiveMetrics(fcFiltered);
   let totalPick = 0;
-  let totalActiveHours = 0;
-  let totalCalcHours = 0;
+  let totalActiveMins = 0;
 
   const sorted = Object.entries(zoneVolumes).sort((a, b) => b[1] - a[1]);
 
@@ -4012,12 +3999,10 @@ function fcBuildStaffingTable() {
     const pickers = zonePickers[zone] ? zonePickers[zone].size : 0;
     totalPick += pickers;
     const barPct = (vol / maxVol * 100).toFixed(1);
-    const activeHours = zoneActiveHours[zone] ? zoneActiveHours[zone].size : 0;
-    totalActiveHours += activeHours;
+    const activeMins = zoneMetrics[zone] ? zoneMetrics[zone].activeMinutes : 0;
+    totalActiveMins += activeMins;
+    const activeHours = activeMins / 60;
     const actualUPH = activeHours > 0 ? Math.round(vol / activeHours) : null;
-    const calcHours = uph > 0 ? vol / uph : 0;
-    totalCalcHours += calcHours;
-    const calcPickers = activeHours > 0 ? calcHours / activeHours : null;
 
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -4026,22 +4011,15 @@ function fcBuildStaffingTable() {
       '<td class="mono" style="text-align:center;">' + share + '%</td>' +
       '<td class="mono" style="text-align:center;">' + uph + '</td>' +
       '<td class="mono" style="text-align:center;font-size:16px;font-weight:700;color:' + c + '">' + pickers + '</td>' +
-      '<td class="mono" style="text-align:center;">' + (activeHours > 0 ? activeHours + 'h' : '—') + '</td>' +
+      '<td class="mono" style="text-align:center;">' + (activeHours > 0 ? activeHours.toFixed(2) + 'h' : '—') + '</td>' +
       '<td class="mono" style="text-align:center;color:#22c55e;font-weight:700;">' + (actualUPH != null ? actualUPH : '—') + '</td>' +
-      '<td class="mono" style="text-align:center;">' + (calcHours > 0 ? calcHours.toFixed(2) : '—') + '</td>' +
-      '<td class="mono" style="text-align:center;">' + (calcPickers != null ? calcPickers.toFixed(2) : '—') + '</td>' +
       '<td><div class="bar-bg"><div class="bar-fg" style="width:' + barPct + '%;background:' + c + '"></div></div></td>';
     tbody.appendChild(tr);
   });
 
-  const overallUPH = totalActiveHours > 0 ? Math.round(totalVol / totalActiveHours) : null;
-  const totalCalculatedPickers = totalActiveHours > 0 ? totalCalcHours / totalActiveHours : null;
   document.getElementById('fc-staff-total-vol').textContent = Math.round(totalVol).toLocaleString();
   document.getElementById('fc-staff-total-pickers').textContent = totalPick;
-  document.getElementById('fc-staff-total-active-hours').textContent = totalActiveHours.toFixed(0) + 'h';
-  document.getElementById('fc-staff-total-overall-uph').textContent = overallUPH != null ? overallUPH.toLocaleString() : '—';
-  document.getElementById('fc-staff-total-calculated-hours').textContent = totalCalcHours > 0 ? totalCalcHours.toFixed(2) : '—';
-  document.getElementById('fc-staff-total-calculated-pickers').textContent = totalCalculatedPickers != null ? totalCalculatedPickers.toFixed(2) : '—';
+  document.getElementById('fc-staff-total-active-hours').textContent = (totalActiveMins / 60).toFixed(2) + 'h';
 }
 
 // ─── Hourly Volume Chart ─────────────────────
