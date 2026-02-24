@@ -306,6 +306,25 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   padding:6px 10px;
   font-family:'IBM Plex Mono', monospace;
 }
+.fc-toggle-group { display:flex; flex-wrap:wrap; gap:6px; min-height:32px; }
+.fc-toggle-btn {
+  border:1px solid var(--border2);
+  border-radius:6px;
+  background:var(--surf3);
+  color:var(--text2);
+  font-size:11px;
+  font-weight:700;
+  padding:7px 12px;
+  cursor:pointer;
+  font-family:'Syne', sans-serif;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+}
+.fc-toggle-btn.active {
+  color:var(--blue);
+  border-color:var(--blue);
+  background:rgba(59,130,246,0.14);
+}
   
 .shift-tabs {
   display:flex;
@@ -938,11 +957,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
     <!-- Filter Controls -->
     <div class="plan-controls" style="margin-top:14px;">
-      <div class="plan-field">
+      <div class="plan-field" style="min-width:260px;">
         <label>Category</label>
-        <select id="fc-category" onchange="applyForecastFilters()">
-          <option value="">— Load data —</option>
-        </select>
+        <div id="fc-category" class="fc-toggle-group"></div>
       </div>
       <div class="plan-field">
         <label>Day</label>
@@ -3326,6 +3343,9 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
 // ═══════════════════════════════════════════════
 let fcData = [];          // parsed forecast rows
 let fcFiltered = [];      // filtered subset
+let fcSelectedCategory = 'all';
+let fcIndex = { rowsByCombo: new Map(), rowsByComboHour: new Map(), hourlyByCombo: new Map() };
+let fcHeatPointCache = { key: '', points: [] };
 
 const FC_DAY_ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const FC_HOURS = [];
@@ -3468,64 +3488,83 @@ function fcBlendForecast(series) {
   return Math.max(0, (wma * (1 - trendWeight)) + (lr * trendWeight));
 }
 
-function fcBuildForecastRows(options = {}) {
-  if(fcData.length === 0) return [];
-  const { ignoreHourFilter = false } = options;
+function fcBuildForecastIndex() {
+  const comboBuckets = new Map();
 
-  const catVal = document.getElementById('fc-category').value;
-  const dayVal = document.getElementById('fc-day').value;
-  const hourVal = document.getElementById('fc-hour').value;
-  const selectedHour = (!ignoreHourFilter && hourVal !== 'all') ? parseInt(hourVal) : null;
-
-  const bucketMap = new Map();
   fcData.forEach(r => {
-    if(catVal !== 'all' && r.category !== catVal) return;
-    if(dayVal !== 'all' && r.day !== dayVal) return;
-    if(selectedHour !== null && r.hour !== selectedHour) return;
     if(isNaN(r.hour)) return;
+    const catKeys = ['all'];
+    if(r.category) catKeys.push(r.category);
+    const dayKeys = ['all'];
+    if(r.day) dayKeys.push(r.day);
 
-    const dateKey = r.dateKey || `weekday:${r.day}:sample`;
-    const key = [dateKey, r.day || 'Unknown', r.zone, r.hour].join('|');
-    const curr = bucketMap.get(key) || {
-      dateKey,
-      day: r.day || 'Unknown',
-      zone: r.zone,
-      hour: r.hour,
-      volume: 0,
-      pickers: 0
-    };
-    curr.volume += r.volume || 0;
-    curr.pickers += r.pickers || 0;
-    bucketMap.set(key, curr);
+    const dateKey = r.dateKey || `weekday:${r.day || 'Unknown'}:sample`;
+    catKeys.forEach(cat => {
+      dayKeys.forEach(day => {
+        const combo = `${cat}|${day}`;
+        const bucketKey = `${combo}|${dateKey}|${r.zone}|${r.hour}`;
+        const bucket = comboBuckets.get(bucketKey) || {
+          combo,
+          dateKey,
+          zone: r.zone,
+          hour: r.hour,
+          volume: 0,
+          pickers: 0
+        };
+        bucket.volume += r.volume || 0;
+        bucket.pickers += r.pickers || 0;
+        comboBuckets.set(bucketKey, bucket);
+      });
+    });
   });
 
   const groupedSeries = new Map();
-  [...bucketMap.values()]
+  [...comboBuckets.values()]
     .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
     .forEach(row => {
-      const key = `${row.zone}|${row.hour}`;
-      if(!groupedSeries.has(key)) groupedSeries.set(key, { zone: row.zone, hour: row.hour, volumes: [], pickers: [] });
+      const key = `${row.combo}|${row.zone}|${row.hour}`;
+      if(!groupedSeries.has(key)) groupedSeries.set(key, { combo: row.combo, zone: row.zone, hour: row.hour, volumes: [], pickers: [] });
       const s = groupedSeries.get(key);
       s.volumes.push(row.volume);
       s.pickers.push(row.pickers);
     });
 
-  const forecastRows = [];
+  const rowsByCombo = new Map();
+  const rowsByComboHour = new Map();
+  const hourlyByCombo = new Map();
+
   groupedSeries.forEach(series => {
     const volume = fcBlendForecast(series.volumes);
     if(volume <= 0) return;
     const pickers = fcBlendForecast(series.pickers);
-    forecastRows.push({
-      category: catVal === 'all' ? 'All Categories' : catVal,
-      day: dayVal === 'all' ? 'All Days' : dayVal,
-      hour: series.hour,
-      zone: series.zone,
-      volume,
-      pickers
-    });
+    const [category, day] = series.combo.split('|');
+    const row = { category, day, hour: series.hour, zone: series.zone, volume, pickers };
+
+    const comboRows = rowsByCombo.get(series.combo) || [];
+    comboRows.push(row);
+    rowsByCombo.set(series.combo, comboRows);
+
+    const comboHourKey = `${series.combo}|${series.hour}`;
+    const comboHourRows = rowsByComboHour.get(comboHourKey) || [];
+    comboHourRows.push(row);
+    rowsByComboHour.set(comboHourKey, comboHourRows);
+
+    const hourly = hourlyByCombo.get(series.combo) || {};
+    hourly[series.hour] = (hourly[series.hour] || 0) + volume;
+    hourlyByCombo.set(series.combo, hourly);
   });
 
-  return forecastRows;
+  fcIndex = { rowsByCombo, rowsByComboHour, hourlyByCombo };
+}
+
+function fcBuildForecastRows(options = {}) {
+  if(fcData.length === 0) return [];
+  const { category = fcSelectedCategory, day = document.getElementById('fc-day').value, hour = document.getElementById('fc-hour').value, ignoreHourFilter = false } = options;
+  const combo = `${category || 'all'}|${day || 'all'}`;
+  if(!ignoreHourFilter && hour !== 'all') {
+    return fcIndex.rowsByComboHour.get(`${combo}|${parseInt(hour)}`) || [];
+  }
+  return fcIndex.rowsByCombo.get(combo) || [];
 }
 
 function fcNormalizeCategory(val) {
@@ -3609,6 +3648,9 @@ function handleForecastFile(file) {
     }
 
     fcData = parsed;
+    fcSelectedCategory = 'all';
+    fcHeatPointCache = { key: '', points: [] };
+    fcBuildForecastIndex();
     document.getElementById('fc-row-count').textContent = parsed.length.toLocaleString() + ' forecast rows loaded';
 
     // Update badge
@@ -3624,15 +3666,31 @@ function handleForecastFile(file) {
 }
 
 function fcBuildDropdowns() {
-  // Category
+  // Category toggle buttons
   const cats = [...new Set(fcData.map(r => r.category))].filter(Boolean).sort();
-  const catSel = document.getElementById('fc-category');
-  catSel.innerHTML = '<option value="all">All Categories</option>';
-  cats.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; catSel.appendChild(o); });
+  const catWrap = document.getElementById('fc-category');
+  catWrap.innerHTML = '';
+
+  const buildBtn = (value, label) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fc-toggle-btn' + (fcSelectedCategory === value ? ' active' : '');
+    btn.textContent = label;
+    btn.onclick = () => {
+      if(fcSelectedCategory === value) return;
+      fcSelectedCategory = value;
+      catWrap.querySelectorAll('.fc-toggle-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyForecastFilters();
+    };
+    catWrap.appendChild(btn);
+  };
+
+  buildBtn('all', 'All Categories');
+  cats.forEach(c => buildBtn(c, c));
 
   // Day
   const days = [...new Set(fcData.map(r => r.day))].filter(Boolean);
-  // Sort by day-of-week order
   days.sort((a,b) => {
     const ia = FC_DAY_ORDER.indexOf(a);
     const ib = FC_DAY_ORDER.indexOf(b);
@@ -3694,7 +3752,7 @@ function fcBuildKPIs() {
   document.getElementById('fc-kpi-peak').textContent = peakZone ? peakZone[0] : '—';
   document.getElementById('fc-kpi-peak-sub').textContent = peakZone ? Math.round(peakZone[1]).toLocaleString() + ' units' : '';
 
-  const catVal = document.getElementById('fc-category').value;
+  const catVal = fcSelectedCategory;
   const dayVal = document.getElementById('fc-day').value;
   const hourVal = document.getElementById('fc-hour').value;
   const parts = [];
@@ -3817,12 +3875,21 @@ function fcDrawHeatMap() {
   const offsetY = pad + ((H - 2 * pad) - (globalYMax - globalYMin) * scale) / 2;
   const tc = (x, y) => [offsetX + (x - globalXMin) * scale, offsetY + (globalYMax - y) * scale];
 
+  const cacheKey = `${W}x${H}`;
+  if(fcHeatPointCache.key !== cacheKey) {
+    fcHeatPointCache = {
+      key: cacheKey,
+      points: LOCUS.map(p => {
+        const [cx, cy] = tc(p.x, p.y);
+        return { zone: p.zone, cx, cy };
+      })
+    };
+  }
+
   // Draw locus points colored by zone heat
-  LOCUS.forEach(p => {
-    const [cx, cy] = tc(p.x, p.y);
+  fcHeatPointCache.points.forEach(p => {
     const vol = zoneVolumes[p.zone] || 0;
     const intensity = vol / maxVol;
-    // Color gradient: blue → yellow → red
     let r, g, b;
     if(intensity < 0.5) {
       const t = intensity * 2;
@@ -3837,7 +3904,7 @@ function fcDrawHeatMap() {
     }
     const radius = 1.5 + intensity * 3;
     ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.arc(p.cx, p.cy, radius, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${r},${g},${b},${0.3 + intensity * 0.7})`;
     ctx.fill();
   });
@@ -3932,7 +3999,7 @@ function fcBuildHourlyChart() {
   ctx.clearRect(0, 0, W, H);
 
   // Determine if we are filtering by day/category
-  const catVal = document.getElementById('fc-category').value;
+  const catVal = fcSelectedCategory;
   const dayVal = document.getElementById('fc-day').value;
   const labelParts = [];
   if(catVal !== 'all') labelParts.push(catVal);
@@ -3942,9 +4009,11 @@ function fcBuildHourlyChart() {
   // Aggregate hourly (ignoring hour filter to show full profile)
   const hourlyVol = {};
   FC_HOURS.forEach(h => hourlyVol[h] = 0);
-  const hourlyForecast = fcBuildForecastRows({ ignoreHourFilter: true });
-  hourlyForecast.forEach(r => {
-    if(!isNaN(r.hour) && FC_HOURS.includes(r.hour)) hourlyVol[r.hour] += r.volume;
+  const combo = `${catVal || 'all'}|${dayVal || 'all'}`;
+  const precomputed = fcIndex.hourlyByCombo.get(combo) || {};
+  Object.entries(precomputed).forEach(([h, v]) => {
+    const hour = parseInt(h);
+    if(!isNaN(hour) && FC_HOURS.includes(hour)) hourlyVol[hour] += v;
   });
 
   const maxV = Math.max(...Object.values(hourlyVol), 1);
