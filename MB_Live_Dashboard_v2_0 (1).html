@@ -932,8 +932,8 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <div class="card" style="margin-bottom:16px;">
     <div class="card-title">Forecasting Dashboard — Two-Week Look-Ahead</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;margin-bottom:14px;">
-      Upload the Excel file containing the <strong style="color:var(--cyan)">Forecast Data</strong> sheet. Expected columns: <strong style="color:var(--cyan)">Category</strong> (Promo/Non-Promo), <strong style="color:var(--cyan)">Day</strong>, <strong style="color:var(--cyan)">Time</strong>, <strong style="color:var(--cyan)">Zone</strong>, <strong style="color:var(--cyan)">Predicted Volume</strong>, <strong style="color:var(--cyan)">Recommended Pickers</strong>.<br>
-      Select a Category, Day, and Hour to view the predicted zone volume map, heat density, and staffing needs for that specific window.
+      Upload the Excel file containing the <strong style="color:var(--cyan)">Forecast Data</strong> sheet. Expected columns: <strong style="color:var(--cyan)">Actual Start Time</strong>, <strong style="color:var(--cyan)">X</strong>, <strong style="color:var(--cyan)">Y</strong>, <strong style="color:var(--cyan)">Completed Units</strong>, <strong style="color:var(--cyan)">User ID</strong>, <strong style="color:var(--cyan)">Date</strong>, <strong style="color:var(--cyan)">Day</strong>, <strong style="color:var(--cyan)">Category</strong>.<br>
+      Select a Category, Day, and Hour to view the coordinate-based zone overview map, heat intensity, and staffing profile for that specific window.
     </p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
       <span class="data-badge" style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.35);color:#93c5fd;">Method: Hybrid WMA + Linear Regression</span>
@@ -946,7 +946,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div class="drop-icon">📊</div>
       <div class="drop-text">
         <strong>Drop Forecast Excel file here</strong>
-        <span>Sheet: "Forecast Data" · Columns: Category, Day, Time, Zone, Volume, Pickers</span>
+        <span>Sheet: "Forecast Data" · Columns: Actual Start Time, X, Y, Completed Units, User ID, Date, Day, Category</span>
       </div>
     </div>
 
@@ -3490,6 +3490,9 @@ function fcBlendForecast(series) {
 
 function fcBuildForecastIndex() {
   const comboBuckets = new Map();
+  const rowsByCombo = new Map();
+  const rowsByComboHour = new Map();
+  const hourlyByCombo = new Map();
 
   fcData.forEach(r => {
     if(isNaN(r.hour)) return;
@@ -3498,60 +3501,42 @@ function fcBuildForecastIndex() {
     const dayKeys = ['all'];
     if(r.day) dayKeys.push(r.day);
 
-    const dateKey = r.dateKey || `weekday:${r.day || 'Unknown'}:sample`;
     catKeys.forEach(cat => {
       dayKeys.forEach(day => {
         const combo = `${cat}|${day}`;
-        const bucketKey = `${combo}|${dateKey}|${r.zone}|${r.hour}`;
+        const bucketKey = `${combo}|${r.zone}|${r.hour}`;
         const bucket = comboBuckets.get(bucketKey) || {
           combo,
-          dateKey,
           zone: r.zone,
           hour: r.hour,
           volume: 0,
-          pickers: 0
+          users: new Set()
         };
         bucket.volume += r.volume || 0;
-        bucket.pickers += r.pickers || 0;
+        if(r.userId) bucket.users.add(r.userId);
         comboBuckets.set(bucketKey, bucket);
       });
     });
   });
 
-  const groupedSeries = new Map();
-  [...comboBuckets.values()]
-    .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
-    .forEach(row => {
-      const key = `${row.combo}|${row.zone}|${row.hour}`;
-      if(!groupedSeries.has(key)) groupedSeries.set(key, { combo: row.combo, zone: row.zone, hour: row.hour, volumes: [], pickers: [] });
-      const s = groupedSeries.get(key);
-      s.volumes.push(row.volume);
-      s.pickers.push(row.pickers);
-    });
+  [...comboBuckets.values()].forEach(bucket => {
+    if(bucket.volume <= 0) return;
+    const [category, day] = bucket.combo.split('|');
+    const pickers = bucket.users.size || Math.max(1, Math.ceil(bucket.volume / (UPH[bucket.zone] || 150)));
+    const row = { category, day, hour: bucket.hour, zone: bucket.zone, volume: bucket.volume, pickers };
 
-  const rowsByCombo = new Map();
-  const rowsByComboHour = new Map();
-  const hourlyByCombo = new Map();
-
-  groupedSeries.forEach(series => {
-    const volume = fcBlendForecast(series.volumes);
-    if(volume <= 0) return;
-    const pickers = fcBlendForecast(series.pickers);
-    const [category, day] = series.combo.split('|');
-    const row = { category, day, hour: series.hour, zone: series.zone, volume, pickers };
-
-    const comboRows = rowsByCombo.get(series.combo) || [];
+    const comboRows = rowsByCombo.get(bucket.combo) || [];
     comboRows.push(row);
-    rowsByCombo.set(series.combo, comboRows);
+    rowsByCombo.set(bucket.combo, comboRows);
 
-    const comboHourKey = `${series.combo}|${series.hour}`;
+    const comboHourKey = `${bucket.combo}|${bucket.hour}`;
     const comboHourRows = rowsByComboHour.get(comboHourKey) || [];
     comboHourRows.push(row);
     rowsByComboHour.set(comboHourKey, comboHourRows);
 
-    const hourly = hourlyByCombo.get(series.combo) || {};
-    hourly[series.hour] = (hourly[series.hour] || 0) + volume;
-    hourlyByCombo.set(series.combo, hourly);
+    const hourly = hourlyByCombo.get(bucket.combo) || {};
+    hourly[bucket.hour] = (hourly[bucket.hour] || 0) + bucket.volume;
+    hourlyByCombo.set(bucket.combo, hourly);
   });
 
   fcIndex = { rowsByCombo, rowsByComboHour, hourlyByCombo };
@@ -3609,25 +3594,29 @@ function handleForecastFile(file) {
 
     // Find header row
     let headerRowIdx = 0;
-    let colCategory = -1, colDay = -1, colTime = -1, colZone = -1, colVolume = -1, colPickers = -1;
+    let colCategory = -1, colDay = -1, colTime = -1, colDate = -1, colX = -1, colY = -1, colUnits = -1, colUser = -1;
 
     for(let i = 0; i < Math.min(rows.length, 30); i++) {
       const hdr = (rows[i] || []).map(normalizeHeader);
       const catIdx = hdr.findIndex(h => h.includes('category') || h.includes('cat') || h === 'type' || h === 'promo');
-      const dayIdx = hdr.findIndex(h => h.includes('day') || h.includes('date') || h === 'weekday');
-      const timeIdx = hdr.findIndex(h => h.includes('time') || h.includes('hour'));
-      const zoneIdx = hdr.findIndex(h => h.includes('zone') || h.includes('area'));
-      const volIdx = hdr.findIndex(h => h.includes('volume') || h.includes('predicted') || h.includes('forecast') || h.includes('units') || h.includes('qty'));
-      const pickIdx = hdr.findIndex(h => h.includes('picker') || h.includes('staff') || h.includes('headcount') || h.includes('recommended'));
+      const dayIdx = hdr.findIndex(h => h === 'day' || h.includes('weekday'));
+      const dateIdx = hdr.findIndex(h => h === 'date' || h.includes('work date'));
+      const timeIdx = hdr.findIndex(h => h.includes('actual start time') || h === 'time' || h.includes('hour') || h.includes('start time'));
+      const xIdx = hdr.findIndex(h => h === 'x' || h.includes('x coordinate') || h.includes('x coord'));
+      const yIdx = hdr.findIndex(h => h === 'y' || h.includes('y coordinate') || h.includes('y coord'));
+      const unitIdx = hdr.findIndex(h => h.includes('completed units') || h === 'units' || h.includes('qty') || h.includes('quantity'));
+      const userIdx = hdr.findIndex(h => h.includes('user id') || h === 'user' || h.includes('picker'));
 
-      if(zoneIdx >= 0 && volIdx >= 0) {
+      if(xIdx >= 0 && yIdx >= 0 && unitIdx >= 0) {
         headerRowIdx = i;
         colCategory = catIdx;
         colDay = dayIdx;
+        colDate = dateIdx;
         colTime = timeIdx;
-        colZone = zoneIdx;
-        colVolume = volIdx;
-        colPickers = pickIdx;
+        colX = xIdx;
+        colY = yIdx;
+        colUnits = unitIdx;
+        colUser = userIdx;
         break;
       }
     }
@@ -3635,16 +3624,21 @@ function handleForecastFile(file) {
     const parsed = [];
     for(let i = headerRowIdx + 1; i < rows.length; i++) {
       const r = rows[i] || [];
-      const zone = fcNormalizeZone(cellToText(r[colZone]));
-      const vol = parseFloat(r[colVolume]) || 0;
-      if(!zone || vol === 0) continue;
+      const x = parseFloat(r[colX]);
+      const y = parseFloat(r[colY]);
+      const vol = parseFloat(r[colUnits]) || 0;
+      if(!isFinite(x) || !isFinite(y) || vol <= 0) continue;
 
       const category = colCategory >= 0 ? fcNormalizeCategory(cellToText(r[colCategory])) : 'All';
-      const dateInfo = colDay >= 0 ? fcParseDateInfo(r[colDay]) : { day: 'All', dateKey: '' };
+      const dayVal = colDay >= 0 ? r[colDay] : '';
+      const dateVal = colDate >= 0 ? r[colDate] : dayVal;
+      const dateInfo = fcParseDateInfo(dateVal);
+      if(!dateInfo.day && dayVal) dateInfo.day = fcNormalizeDay(dayVal);
       const hour = colTime >= 0 ? fcParseHour(r[colTime]) : NaN;
-      const pickers = colPickers >= 0 ? (parseFloat(r[colPickers]) || 0) : 0;
+      const zone = fcNormalizeZone(nearestZone(x, y));
+      const userId = colUser >= 0 ? cellToText(r[colUser]).trim() : '';
 
-      parsed.push({ category, day: dateInfo.day, dateKey: dateInfo.dateKey, hour, zone, volume: vol, pickers });
+      parsed.push({ category, day: dateInfo.day, dateKey: dateInfo.dateKey, hour, zone, volume: vol, pickers: 0, x, y, userId });
     }
 
     fcData = parsed;
@@ -3875,21 +3869,20 @@ function fcDrawHeatMap() {
   const offsetY = pad + ((H - 2 * pad) - (globalYMax - globalYMin) * scale) / 2;
   const tc = (x, y) => [offsetX + (x - globalXMin) * scale, offsetY + (globalYMax - y) * scale];
 
-  const cacheKey = `${W}x${H}`;
-  if(fcHeatPointCache.key !== cacheKey) {
-    fcHeatPointCache = {
-      key: cacheKey,
-      points: LOCUS.map(p => {
-        const [cx, cy] = tc(p.x, p.y);
-        return { zone: p.zone, cx, cy };
-      })
-    };
-  }
+  // Draw uploaded coordinate points directly
+  const heatPoints = fcData.filter(r => {
+    if(fcSelectedCategory !== 'all' && r.category !== fcSelectedCategory) return false;
+    const dayVal = document.getElementById('fc-day').value;
+    if(dayVal !== 'all' && r.day !== dayVal) return false;
+    const hourVal = document.getElementById('fc-hour').value;
+    if(hourVal !== 'all' && r.hour !== parseInt(hourVal)) return false;
+    return isFinite(r.x) && isFinite(r.y) && (r.volume || 0) > 0;
+  });
 
-  // Draw locus points colored by zone heat
-  fcHeatPointCache.points.forEach(p => {
-    const vol = zoneVolumes[p.zone] || 0;
-    const intensity = vol / maxVol;
+  const maxPointVol = Math.max(...heatPoints.map(p => p.volume || 0), 1);
+  heatPoints.forEach(p => {
+    const [cx, cy] = tc(p.x, p.y);
+    const intensity = (p.volume || 0) / maxPointVol;
     let r, g, b;
     if(intensity < 0.5) {
       const t = intensity * 2;
@@ -3902,9 +3895,9 @@ function fcDrawHeatMap() {
       g = Math.round(158 - t * 90);
       b = Math.round(68 - t * 24);
     }
-    const radius = 1.5 + intensity * 3;
+    const radius = 1.5 + intensity * 4;
     ctx.beginPath();
-    ctx.arc(p.cx, p.cy, radius, 0, Math.PI * 2);
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${r},${g},${b},${0.3 + intensity * 0.7})`;
     ctx.fill();
   });
