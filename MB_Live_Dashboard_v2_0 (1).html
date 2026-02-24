@@ -143,7 +143,7 @@ main { padding: 20px 28px; }
 /* ─── KPI ROW ─────────────────────────────── */
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -616,10 +616,20 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div class="kpi-val" id="kpi-upu">—</div>
       <div class="kpi-sub">Units per transaction</div>
     </div>
+    <div class="kpi" style="--kpi-color:#22c55e">
+      <div class="kpi-lbl">Active Picking Time</div>
+      <div class="kpi-val" id="kpi-active-time">—</div>
+      <div class="kpi-sub" id="kpi-active-time-sub">picker active runtime</div>
+    </div>
     <div class="kpi" style="--kpi-color:#ef4444">
-      <div class="kpi-lbl">Inactive Time</div>
+      <div class="kpi-lbl">Inactive Hours</div>
       <div class="kpi-val" id="kpi-inactive">—</div>
       <div class="kpi-sub" id="kpi-inactive-sub">gaps &gt; 5 min</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#14b8a6">
+      <div class="kpi-lbl">Goal Active Hours</div>
+      <div class="kpi-val" id="kpi-goal-hours">—</div>
+      <div class="kpi-sub" id="kpi-goal-hours-sub">to hit blended 200 UPH</div>
     </div>
   </div>
 
@@ -1866,25 +1876,51 @@ function buildKPIs() {
     }
   }
 
-  // Inactive time KPI — total inactive minutes across all zones
+  const totalInactiveMins = Object.values(zoneStats).reduce((s,z) => s + (z.inactiveMinutes || 0), 0);
+  const totalActiveMins = Object.values(zoneStats).reduce((s,z) => {
+    const ph = z.totalPickerHours ? parseFloat(z.totalPickerHours) * 60 : 0;
+    return s + ph;
+  }, 0);
+
+  const kpiActiveEl = document.getElementById('kpi-active-time');
+  const kpiActiveSub = document.getElementById('kpi-active-time-sub');
+  if(kpiActiveEl) {
+    const activeHrs = totalActiveMins / 60;
+    kpiActiveEl.textContent = activeHrs > 0 ? activeHrs.toFixed(1) + 'h' : '—';
+    kpiActiveEl.style.color = activeHrs > 0 ? '#22c55e' : '';
+    if(kpiActiveSub) kpiActiveSub.textContent = activeHrs > 0 ? 'across all active zones' : 'picker active runtime';
+  }
+
   const kpiInactiveEl = document.getElementById('kpi-inactive');
   const kpiInactiveSub = document.getElementById('kpi-inactive-sub');
   if(kpiInactiveEl) {
-    const totalInactiveMins = Object.values(zoneStats).reduce((s,z) => s + (z.inactiveMinutes || 0), 0);
     if(totalInactiveMins > 0) {
       const inactiveHrs = totalInactiveMins / 60;
       kpiInactiveEl.textContent = inactiveHrs >= 1 ? inactiveHrs.toFixed(1) + 'h' : Math.round(totalInactiveMins) + 'm';
       kpiInactiveEl.style.color = '#ef4444';
-      const totalActiveMins = Object.values(zoneStats).reduce((s,z) => {
-        const ph = z.totalPickerHours ? parseFloat(z.totalPickerHours) * 60 : 0;
-        return s + ph;
-      }, 0);
       const pct = totalActiveMins > 0 ? ((totalInactiveMins / (totalActiveMins + totalInactiveMins)) * 100).toFixed(1) : '0.0';
       if(kpiInactiveSub) kpiInactiveSub.textContent = pct + '% of total time · gaps > 5 min';
     } else {
       kpiInactiveEl.textContent = '—';
       kpiInactiveEl.style.color = '';
       if(kpiInactiveSub) kpiInactiveSub.textContent = 'gaps > 5 min';
+    }
+  }
+
+  const kpiGoalEl = document.getElementById('kpi-goal-hours');
+  const kpiGoalSub = document.getElementById('kpi-goal-hours-sub');
+  if(kpiGoalEl) {
+    const goalActiveHours = totalUnits > 0 ? (totalUnits / 200) : 0;
+    kpiGoalEl.textContent = goalActiveHours > 0 ? goalActiveHours.toFixed(1) + 'h' : '—';
+    kpiGoalEl.style.color = goalActiveHours > 0 ? '#14b8a6' : '';
+    if(kpiGoalSub) {
+      if(goalActiveHours > 0 && totalActiveMins > 0) {
+        const deltaHours = (totalActiveMins / 60) - goalActiveHours;
+        const sign = deltaHours >= 0 ? '+' : '';
+        kpiGoalSub.textContent = `${sign}${deltaHours.toFixed(1)}h vs current active time`;
+      } else {
+        kpiGoalSub.textContent = 'to hit blended 200 UPH';
+      }
     }
   }
 }
@@ -1926,15 +1962,14 @@ function buildHourlyChart() {
 function drawHourlyChart(canvas) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
-  
-  const vals = Array.from({length:24},(_,h) => hourlyData[h]||0);
+
+  const vals = HOURLY_AXIS_HOURS.map((hour) => hourlyData[hour] || 0);
   const maxV = Math.max(...vals, 1);
   const pad = {t:20,r:20,b:30,l:55};
   const cW = W-pad.l-pad.r, cH = H-pad.t-pad.b;
-  
+
   ctx.fillStyle = '#060a12'; ctx.fillRect(0,0,W,H);
-  
-  // Grid lines
+
   for(let i=0;i<=4;i++){
     const y = pad.t + cH*(1-i/4);
     ctx.strokeStyle='rgba(31,45,69,0.8)'; ctx.lineWidth=1;
@@ -1942,71 +1977,57 @@ function drawHourlyChart(canvas) {
     ctx.fillStyle='#475569'; ctx.font='10px IBM Plex Mono'; ctx.textAlign='right';
     ctx.fillText(Math.round(maxV*i/4/1000)+'k', pad.l-6, y+4);
   }
-  
-  // Shift shading
-  ctx.fillStyle='rgba(59,130,246,0.07)';
-  ctx.fillRect(pad.l+cW*6/24, pad.t, cW*8/24, cH);
-  ctx.fillStyle='rgba(6,182,212,0.07)';
-  ctx.fillRect(pad.l+cW*14/24, pad.t, cW*8/24, cH);
-  
+
   const bw = cW/24*0.72;
   hourlyBarRects = [];
-  vals.forEach((v,h) => {
-    const x = pad.l+cW*h/24+cW/24*0.14;
+  vals.forEach((v,axisIdx) => {
+    const hour = HOURLY_AXIS_HOURS[axisIdx];
+    const x = pad.l+cW*axisIdx/24+cW/24*0.14;
     const bh = Math.max(cH*(v/maxV), v>0 ? 2 : 0);
     const y = pad.t+cH-bh;
-    const isSelected = selectedHour === h;
-    const isShift1 = h>=6&&h<14, isShift2 = h>=14&&h<22;
-    const base = isShift1 ? 'rgba(59,130,246,' : isShift2 ? 'rgba(6,182,212,' : 'rgba(30,45,69,';
-    
-    // Dim non-selected bars when a selection is active
-    let alpha = '0.75)';
-    if(selectedHour !== null && !isSelected) alpha = '0.18)';
-    if(isSelected) alpha = '1)';
-    
-    ctx.fillStyle = base + alpha.replace(')',',').replace(',)','');
-    // Rebuild the rgba properly
+    const isSelected = selectedHour === hour;
+
     if(isSelected) {
-      ctx.fillStyle = isShift1 ? 'rgba(59,130,246,1)' : isShift2 ? 'rgba(6,182,212,1)' : 'rgba(100,116,139,1)';
+      ctx.fillStyle = 'rgba(59,130,246,1)';
     } else if(selectedHour !== null) {
-      ctx.fillStyle = isShift1 ? 'rgba(59,130,246,0.18)' : isShift2 ? 'rgba(6,182,212,0.18)' : 'rgba(30,45,69,0.18)';
+      ctx.fillStyle = 'rgba(59,130,246,0.2)';
     } else {
-      ctx.fillStyle = isShift1 ? 'rgba(59,130,246,0.75)' : isShift2 ? 'rgba(6,182,212,0.75)' : '#1e2d45';
+      ctx.fillStyle = 'rgba(59,130,246,0.78)';
     }
     ctx.fillRect(x,y,bw,bh);
-    
-    // Glow outline on selected bar
+
     if(isSelected) {
-      ctx.strokeStyle = isShift1 ? 'rgba(59,130,246,0.9)' : isShift2 ? 'rgba(6,182,212,0.9)' : 'rgba(100,116,139,0.9)';
+      ctx.strokeStyle = 'rgba(59,130,246,0.95)';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(x-1, y-1, bw+2, bh+2);
-      // Value label above
       if(v>0) {
         ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 10px IBM Plex Mono'; ctx.textAlign = 'center';
         ctx.fillText(v.toLocaleString(), x+bw/2, y-5);
       }
     }
-    
-    hourlyBarRects.push({h, x, y, w: bw, bh});
-    
-    if(h%4===0){ ctx.fillStyle= selectedHour !== null && selectedHour !== h ? '#2a3a50' : '#475569'; ctx.font='9px IBM Plex Mono'; ctx.textAlign='center'; ctx.fillText(h+':00',x+bw/2,H-5); }
+
+    hourlyBarRects.push({h: hour, x, y, w: bw, bh});
+
+    const isMajorTick = axisIdx % 3 === 0 || axisIdx === 19 || axisIdx === 23;
+    if(isMajorTick){
+      ctx.fillStyle= selectedHour !== null && selectedHour !== hour ? '#2a3a50' : '#475569';
+      ctx.font='9px IBM Plex Mono';
+      ctx.textAlign='center';
+      const label = hour === 0 ? '12A' : hour < 12 ? `${hour}A` : hour === 12 ? '12P' : `${hour-12}P`;
+      ctx.fillText(label,x+bw/2,H-5);
+    }
   });
-  
-  // Selected hour label
+
   if(selectedHour !== null) {
     const hLabel = selectedHour < 12 ? selectedHour + ':00 AM' : selectedHour === 12 ? '12:00 PM' : (selectedHour-12)+':00 PM';
     ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.font='bold 10px Syne'; ctx.textAlign='center';
     ctx.fillText('● ' + hLabel + ' selected · click bar again to clear', W/2, pad.t - 4);
   }
 
-  // Legend
-  ctx.fillStyle = selectedHour !== null ? 'rgba(59,130,246,0.3)' : 'rgba(59,130,246,0.75)';
-  ctx.fillRect(pad.l,4,10,8);
-  ctx.fillStyle='#94a3b8'; ctx.font='10px Syne'; ctx.textAlign='left';
-  ctx.fillText('Shift 1  06:00–14:00', pad.l+14, 12);
-  ctx.fillStyle = selectedHour !== null ? 'rgba(6,182,212,0.3)' : 'rgba(6,182,212,0.75)';
-  ctx.fillRect(pad.l+140,4,10,8);
-  ctx.fillText('Shift 2  14:00–22:00', pad.l+154, 12);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font='10px Syne';
+  ctx.textAlign='left';
+  ctx.fillText('Operating range: 5:00 AM → 4:00 AM', pad.l, 12);
 }
 
 function clearHourFilter() {
@@ -2969,6 +2990,7 @@ function buildUPHGapBars() {
 let ppCurrentUser = '';
 let selectedHour = null; // null = all hours; number = filter ov-table to that hour
 let hourlyBarRects = []; // [{h, x, y, w, h2}] used for click detection
+const HOURLY_AXIS_HOURS = Array.from({length:24}, (_, idx) => (idx + 5) % 24);
 
 function buildPickerList() {
   const sel = document.getElementById('pp-user-select');
