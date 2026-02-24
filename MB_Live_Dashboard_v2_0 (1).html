@@ -993,7 +993,8 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <div id="sec-shiftbreakdown" class="section">
   <div class="sb-cutoff-note">
     <strong>SHIFT CUTOFF</strong> Pickers are categorized by their <strong>first pick transaction time</strong>.
-    S1 Picker = first pick before 2:30 PM &nbsp;·&nbsp; S2 Picker = first pick at or after 2:30 PM
+    S1 = first pick before 2:30 PM &nbsp;·&nbsp; S2 = first pick at/after 2:30 PM &nbsp;·&nbsp;
+    <strong>Shared</strong> = overlap window where both shifts are active on the floor simultaneously
   </div>
 
   <!-- Hero cards: S1, Shared, S2 -->
@@ -1019,7 +1020,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       </div>
     </div>
     <div class="card" style="margin-bottom:0;">
-      <div class="card-title">Shift Comparison — Key Metrics</div>
+      <div class="card-title">Shift Comparison — S1 vs Shared vs S2</div>
       <canvas id="sb-comparison-chart" height="200"></canvas>
     </div>
   </div>
@@ -2862,14 +2863,24 @@ function buildShiftBreakdown() {
 
   const s1Agg = aggShift(s1Pickers);
   const s2Agg = aggShift(s2Pickers);
-  const allAgg = aggShift(pickers);
 
-  // Step 4: Compute UPH scenarios
-  // S1 Individual: Only S1 pickers, only txs before 2:30 PM
-  // S1 & S2 Shared: All pickers, all txs (blended overall)
-  // S2 Individual: Only S2 pickers, only txs at/after 2:30 PM
-  function computeScenarioUPH(pickerSubset, txFilter) {
+  // Step 4: Determine the overlap window where both shifts share clock hours
+  // S1 active range = [earliest first tx among S1, latest last tx among S1]
+  // S2 active range = [earliest first tx among S2, latest last tx among S2]
+  // Overlap = [max(s1Start, s2Start), min(s1End, s2End)]  (if positive width)
+  const s1RangeStart = s1Pickers.length ? Math.min(...s1Pickers.map(p => p.firstTxMin)) : 0;
+  const s1RangeEnd   = s1Pickers.length ? Math.max(...s1Pickers.map(p => p.lastTxMin))  : 0;
+  const s2RangeStart = s2Pickers.length ? Math.min(...s2Pickers.map(p => p.firstTxMin)) : 0;
+  const s2RangeEnd   = s2Pickers.length ? Math.max(...s2Pickers.map(p => p.lastTxMin))  : 0;
+
+  const overlapStart = Math.max(s1RangeStart, s2RangeStart);
+  const overlapEnd   = Math.min(s1RangeEnd, s2RangeEnd);
+  const hasOverlap   = overlapStart < overlapEnd && s1Pickers.length > 0 && s2Pickers.length > 0;
+
+  // Aggregate the shared (overlap) window metrics from ALL pickers
+  function aggWindow(pickerSubset, txFilter) {
     let totalUnits = 0, activeMins = 0, inactiveMins = 0;
+    let pickerCount = 0;
     for (const p of pickerSubset) {
       const filtered = p.txs.filter(txFilter).map(r => ({
         txMin: r.hour * 60 + (r.minute || 0),
@@ -2877,6 +2888,42 @@ function buildShiftBreakdown() {
         units: r.units
       }));
       if (!filtered.length) continue;
+      pickerCount++;
+      const contrib = computeZoneRunContributions(filtered);
+      for (const z of Object.values(contrib)) {
+        totalUnits += z.units;
+        activeMins += z.activeMinutes;
+        inactiveMins += z.inactiveMinutes;
+      }
+    }
+    const activeHrs = Math.round(activeMins) / 60;
+    const inactiveHrs = Math.round(inactiveMins) / 60;
+    const avgUPH = activeHrs > 0 ? Math.round(totalUnits / activeHrs) : 0;
+    return { count: pickerCount, totalUnits, totalActiveHours: activeHrs, totalInactiveHours: inactiveHrs, avgUPH };
+  }
+
+  const sharedAgg = hasOverlap
+    ? aggWindow(pickers, r => {
+        const m = r.hour * 60 + (r.minute || 0);
+        return m >= overlapStart && m <= overlapEnd;
+      })
+    : { count: 0, totalUnits: 0, totalActiveHours: 0, totalInactiveHours: 0, avgUPH: 0 };
+
+  // Step 5: Compute UPH scenarios using the overlap window
+  // S1 Individual: S1 pickers, txs BEFORE the overlap starts (exclusive S1 hours)
+  // S1 & S2 Shared: ALL pickers, txs DURING the overlap window
+  // S2 Individual: S2 pickers, txs AFTER the overlap ends (exclusive S2 hours)
+  function computeScenarioUPH(pickerSubset, txFilter) {
+    let totalUnits = 0, activeMins = 0, inactiveMins = 0;
+    let activeCount = 0;
+    for (const p of pickerSubset) {
+      const filtered = p.txs.filter(txFilter).map(r => ({
+        txMin: r.hour * 60 + (r.minute || 0),
+        zone: r.zone || 'No Location',
+        units: r.units
+      }));
+      if (!filtered.length) continue;
+      activeCount++;
       const contrib = computeZoneRunContributions(filtered);
       for (const z of Object.values(contrib)) {
         totalUnits += z.units;
@@ -2887,12 +2934,21 @@ function buildShiftBreakdown() {
     const activeHrs = Math.round(activeMins) / 60;
     const inactiveHrs = Math.round(inactiveMins) / 60;
     const uph = activeHrs > 0 ? Math.round(totalUnits / activeHrs) : 0;
-    return { totalUnits, activeHrs, inactiveHrs, uph, pickerCount: pickerSubset.length };
+    return { totalUnits, activeHrs, inactiveHrs, uph, pickerCount: activeCount };
   }
 
-  const scenarioS1 = computeScenarioUPH(s1Pickers, r => (r.hour * 60 + (r.minute || 0)) < SHIFT_CUTOFF_MIN);
-  const scenarioShared = computeScenarioUPH(pickers, () => true);
-  const scenarioS2 = computeScenarioUPH(s2Pickers, r => (r.hour * 60 + (r.minute || 0)) >= SHIFT_CUTOFF_MIN);
+  const scenarioS1 = hasOverlap
+    ? computeScenarioUPH(s1Pickers, r => (r.hour * 60 + (r.minute || 0)) < overlapStart)
+    : computeScenarioUPH(s1Pickers, () => true);
+  const scenarioShared = hasOverlap
+    ? computeScenarioUPH(pickers, r => {
+        const m = r.hour * 60 + (r.minute || 0);
+        return m >= overlapStart && m <= overlapEnd;
+      })
+    : { totalUnits: 0, activeHrs: 0, inactiveHrs: 0, uph: 0, pickerCount: 0 };
+  const scenarioS2 = hasOverlap
+    ? computeScenarioUPH(s2Pickers, r => (r.hour * 60 + (r.minute || 0)) > overlapEnd)
+    : computeScenarioUPH(s2Pickers, () => true);
 
   // Step 5: Render hero cards
   const heroGrid = document.getElementById('sb-hero-grid');
@@ -2924,17 +2980,17 @@ function buildShiftBreakdown() {
 
     <div class="sb-hero-card" style="--sb-accent:#f59e0b">
       <div class="sb-hero-header">
-        <span class="sb-hero-label"><span style="font-size:16px;">&#9889;</span> Combined S1 + S2</span>
-        <span class="sb-hero-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">${allAgg.count} total</span>
+        <span class="sb-hero-label"><span style="font-size:16px;">&#9889;</span> Shared Overlap</span>
+        <span class="sb-hero-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">${sharedAgg.count} active</span>
       </div>
       <div class="sb-hero-body">
-        <div class="sb-hero-val" style="color:#f59e0b">${allAgg.totalUnits.toLocaleString()}</div>
-        <div class="sb-hero-sub">blended total · all pickers</div>
+        <div class="sb-hero-val" style="color:#f59e0b">${sharedAgg.totalUnits.toLocaleString()}</div>
+        <div class="sb-hero-sub">${hasOverlap ? `overlap window · ${fmtTime(overlapStart)} – ${fmtTime(overlapEnd)}` : 'no overlap detected'}</div>
       </div>
       <div class="sb-metrics-row">
-        <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(allAgg.totalActiveHours)}</div></div>
-        <div class="sb-metric"><div class="sb-metric-lbl">Inactive Hours</div><div class="sb-metric-val" style="color:#ef4444">${fmtHrs(allAgg.totalInactiveHours)}</div></div>
-        <div class="sb-metric"><div class="sb-metric-lbl">Avg UPH</div><div class="sb-metric-val" style="color:#f59e0b">${allAgg.avgUPH.toLocaleString()}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(sharedAgg.totalActiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Inactive Hours</div><div class="sb-metric-val" style="color:#ef4444">${fmtHrs(sharedAgg.totalInactiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Avg UPH</div><div class="sb-metric-val" style="color:#f59e0b">${sharedAgg.avgUPH.toLocaleString()}</div></div>
       </div>
     </div>
 
@@ -2957,10 +3013,11 @@ function buildShiftBreakdown() {
 
   // Step 6: Render UPH scenario cards
   const scenarioEl = document.getElementById('sb-uph-scenarios');
+  const overlapLabel = hasOverlap ? `${fmtTime(overlapStart)} – ${fmtTime(overlapEnd)}` : 'no overlap';
   const scenarios = [
-    { label: 'S1 Individual', desc: 'S1 pickers · txs before 2:30 PM', data: scenarioS1, color: '#3b82f6' },
-    { label: 'S1 & S2 Shared', desc: 'All pickers · all transactions', data: scenarioShared, color: '#f59e0b' },
-    { label: 'S2 Individual', desc: 'S2 pickers · txs at/after 2:30 PM', data: scenarioS2, color: '#8b5cf6' }
+    { label: 'S1 Individual', desc: hasOverlap ? `S1 pickers · before ${fmtTime(overlapStart)}` : 'S1 pickers · full shift', data: scenarioS1, color: '#3b82f6' },
+    { label: 'S1 & S2 Shared', desc: hasOverlap ? `all pickers · overlap ${overlapLabel}` : 'no overlap window detected', data: scenarioShared, color: '#f59e0b' },
+    { label: 'S2 Individual', desc: hasOverlap ? `S2 pickers · after ${fmtTime(overlapEnd)}` : 'S2 pickers · full shift', data: scenarioS2, color: '#8b5cf6' }
   ];
 
   scenarioEl.innerHTML = scenarios.map(s => {
@@ -2983,8 +3040,8 @@ function buildShiftBreakdown() {
   // Step 7: Render donut chart
   drawShiftDonut(s1Agg.count, s2Agg.count);
 
-  // Step 8: Render comparison bar chart
-  drawShiftComparisonChart(s1Agg, s2Agg);
+  // Step 8: Render comparison bar chart (S1 vs Shared vs S2)
+  drawShiftComparisonChart(s1Agg, sharedAgg, s2Agg);
 
   // Step 9: Render picker table
   const filter = document.getElementById('sb-shift-filter')?.value || 'all';
@@ -3088,32 +3145,39 @@ function drawShiftDonut(s1Count, s2Count) {
   }
 }
 
-function drawShiftComparisonChart(s1Agg, s2Agg) {
+function drawShiftComparisonChart(s1Agg, sharedAgg, s2Agg) {
   const canvas = document.getElementById('sb-comparison-chart');
   if (!canvas) return;
   const parent = canvas.parentElement;
   canvas.width = parent.offsetWidth - 40;
-  canvas.height = 200;
+  canvas.height = 220;
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
   const metrics = [
-    { label: 'Total Units', s1: s1Agg.totalUnits, s2: s2Agg.totalUnits, fmt: v => v.toLocaleString() },
-    { label: 'Active Hours', s1: s1Agg.totalActiveHours, s2: s2Agg.totalActiveHours, fmt: v => v.toFixed(1) + 'h' },
-    { label: 'Inactive Hours', s1: s1Agg.totalInactiveHours, s2: s2Agg.totalInactiveHours, fmt: v => v.toFixed(1) + 'h' },
-    { label: 'Avg UPH', s1: s1Agg.avgUPH, s2: s2Agg.avgUPH, fmt: v => v.toLocaleString() }
+    { label: 'Total Units', s1: s1Agg.totalUnits, sh: sharedAgg.totalUnits, s2: s2Agg.totalUnits, fmt: v => v.toLocaleString() },
+    { label: 'Active Hours', s1: s1Agg.totalActiveHours, sh: sharedAgg.totalActiveHours, s2: s2Agg.totalActiveHours, fmt: v => v.toFixed(1) + 'h' },
+    { label: 'Inactive Hours', s1: s1Agg.totalInactiveHours, sh: sharedAgg.totalInactiveHours, s2: s2Agg.totalInactiveHours, fmt: v => v.toFixed(1) + 'h' },
+    { label: 'Avg UPH', s1: s1Agg.avgUPH, sh: sharedAgg.avgUPH, s2: s2Agg.avgUPH, fmt: v => v.toLocaleString() }
   ];
 
-  const pad = { left: 100, right: 20, top: 20, bottom: 30 };
+  const bars = [
+    { key: 's1', color: '#3b82f6', textColor: '#93c5fd' },
+    { key: 'sh', color: '#f59e0b', textColor: '#fcd34d' },
+    { key: 's2', color: '#8b5cf6', textColor: '#c4b5fd' }
+  ];
+
+  const pad = { left: 100, right: 20, top: 16, bottom: 28 };
   const rowH = (H - pad.top - pad.bottom) / metrics.length;
-  const barH = 12;
+  const barH = 9;
+  const barGap = 2;
   const chartW = W - pad.left - pad.right;
 
   for (let i = 0; i < metrics.length; i++) {
     const m = metrics[i];
     const y = pad.top + i * rowH;
-    const maxVal = Math.max(m.s1, m.s2, 1);
+    const maxVal = Math.max(m.s1, m.sh, m.s2, 1);
 
     // Label
     ctx.fillStyle = '#64748b';
@@ -3122,31 +3186,27 @@ function drawShiftComparisonChart(s1Agg, s2Agg) {
     ctx.textBaseline = 'middle';
     ctx.fillText(m.label, pad.left - 12, y + rowH / 2);
 
-    // S1 bar
-    const s1W = Math.max((m.s1 / maxVal) * chartW * 0.9, 2);
-    const s1Y = y + rowH / 2 - barH - 2;
-    ctx.fillStyle = '#3b82f6';
-    ctx.beginPath();
-    ctx.roundRect(pad.left, s1Y, s1W, barH, 3);
-    ctx.fill();
-    ctx.fillStyle = '#93c5fd';
-    ctx.font = '10px "IBM Plex Mono", monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(m.fmt(m.s1), pad.left + s1W + 6, s1Y + barH / 2);
+    // Draw three bars
+    const totalBarHeight = bars.length * barH + (bars.length - 1) * barGap;
+    const barStartY = y + (rowH - totalBarHeight) / 2;
 
-    // S2 bar
-    const s2W = Math.max((m.s2 / maxVal) * chartW * 0.9, 2);
-    const s2Y = y + rowH / 2 + 2;
-    ctx.fillStyle = '#8b5cf6';
-    ctx.beginPath();
-    ctx.roundRect(pad.left, s2Y, s2W, barH, 3);
-    ctx.fill();
-    ctx.fillStyle = '#c4b5fd';
-    ctx.font = '10px "IBM Plex Mono", monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(m.fmt(m.s2), pad.left + s2W + 6, s2Y + barH / 2);
+    for (let b = 0; b < bars.length; b++) {
+      const bar = bars[b];
+      const val = m[bar.key];
+      const bW = Math.max((val / maxVal) * chartW * 0.85, 2);
+      const bY = barStartY + b * (barH + barGap);
+
+      ctx.fillStyle = bar.color;
+      ctx.beginPath();
+      ctx.roundRect(pad.left, bY, bW, barH, 3);
+      ctx.fill();
+
+      ctx.fillStyle = bar.textColor;
+      ctx.font = '9px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(m.fmt(val), pad.left + bW + 6, bY + barH / 2);
+    }
 
     // Divider
     if (i < metrics.length - 1) {
@@ -3160,21 +3220,23 @@ function drawShiftComparisonChart(s1Agg, s2Agg) {
   }
 
   // Legend at bottom
-  ctx.fillStyle = '#3b82f6';
-  ctx.beginPath();
-  ctx.roundRect(pad.left, H - 16, 10, 10, 2);
-  ctx.fill();
-  ctx.fillStyle = '#94a3b8';
+  const legendItems = [
+    { color: '#3b82f6', label: 'S1' },
+    { color: '#f59e0b', label: 'Shared' },
+    { color: '#8b5cf6', label: 'S2' }
+  ];
+  let lx = pad.left;
   ctx.font = '10px "IBM Plex Mono", monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('S1', pad.left + 14, H - 10);
-
-  ctx.fillStyle = '#8b5cf6';
-  ctx.beginPath();
-  ctx.roundRect(pad.left + 40, H - 16, 10, 10, 2);
-  ctx.fill();
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillText('S2', pad.left + 54, H - 10);
+  for (const item of legendItems) {
+    ctx.fillStyle = item.color;
+    ctx.beginPath();
+    ctx.roundRect(lx, H - 16, 10, 10, 2);
+    ctx.fill();
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(item.label, lx + 14, H - 10);
+    lx += ctx.measureText(item.label).width + 28;
+  }
 }
 
 // ═══════════════════════════════════════════════
