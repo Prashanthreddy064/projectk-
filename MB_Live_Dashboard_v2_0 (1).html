@@ -3122,19 +3122,36 @@ function buildInactiveLeaderboard() {
 
   const leaderboard = Object.entries(byUser).map(([user, rows]) => {
     const sorted = rows.slice().sort((a,b)=> normalizeOperationalMinute(a.hour, a.minute) - normalizeOperationalMinute(b.hour, b.minute));
+    const sortedTx = sorted.map(r => ({
+      txMin: normalizeOperationalMinute(r.hour, r.minute),
+      zone: r.zone || 'No Location',
+      units: r.units || 0,
+    }));
+
     let inactiveMins = 0;
     for(let i = 1; i < sorted.length; i++) {
       const gap = normalizeOperationalMinute(sorted[i].hour, sorted[i].minute) - normalizeOperationalMinute(sorted[i-1].hour, sorted[i-1].minute);
       if(gap > INACTIVE_THRESHOLD) inactiveMins += (gap - INACTIVE_THRESHOLD);
     }
+
+    const contrib = computeZoneRunContributions(sortedTx);
+    const activeMins = Object.values(contrib).reduce((sum, v) => sum + (v.activeMinutes || 0), 0);
+
     return {
       user,
       inactiveMins,
       inactiveHrs: inactiveMins / 60,
+      activeMins,
+      activeHrs: activeMins / 60,
       picks: sorted.length,
       units: sorted.reduce((sum, r) => sum + (r.units || 0), 0),
     };
-  }).sort((a,b) => b.inactiveMins - a.inactiveMins);
+  })
+  .sort((a,b) => {
+    if(a.picks !== b.picks) return a.picks - b.picks;
+    return b.inactiveMins - a.inactiveMins;
+  })
+  .slice(0, 10);
 
   if(!leaderboard.length) {
     host.innerHTML = '<span style="color:var(--text3)">No picker-level inactivity data available.</span>';
@@ -3148,6 +3165,7 @@ function buildInactiveLeaderboard() {
         <th style="padding:8px 6px;text-align:left;color:var(--text3);font-size:10px;letter-spacing:.08em;">Associate</th>
         <th style="padding:8px 6px;text-align:right;color:var(--text3);font-size:10px;letter-spacing:.08em;">Inactive Hrs</th>
         <th style="padding:8px 6px;text-align:right;color:var(--text3);font-size:10px;letter-spacing:.08em;">Inactive Min</th>
+        <th style="padding:8px 6px;text-align:right;color:var(--text3);font-size:10px;letter-spacing:.08em;">Total Active Hrs</th>
         <th style="padding:8px 6px;text-align:right;color:var(--text3);font-size:10px;letter-spacing:.08em;">Picks</th>
       </tr>
     </thead>
@@ -3158,6 +3176,7 @@ function buildInactiveLeaderboard() {
           <td style="padding:8px 6px;color:var(--text);font-weight:600;">${item.user}</td>
           <td class="mono" style="padding:8px 6px;text-align:right;color:#ef4444;font-weight:700;">${item.inactiveHrs.toFixed(2)}</td>
           <td class="mono" style="padding:8px 6px;text-align:right;color:#fca5a5;">${Math.round(item.inactiveMins)}</td>
+          <td class="mono" style="padding:8px 6px;text-align:right;color:#22c55e;">${item.activeHrs.toFixed(2)}</td>
           <td class="mono" style="padding:8px 6px;text-align:right;color:var(--text2);">${item.picks.toLocaleString()}</td>
         </tr>
       `).join('')}
