@@ -3397,6 +3397,140 @@ function fcNormalizeCategory(val) {
   return String(val).trim();
 }
 
+function fcGetDateKey(row) {
+  const raw = row && row.date != null ? String(row.date).trim() : '';
+  if(!raw) return '';
+  const dt = new Date(raw);
+  if(!isNaN(dt)) {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+  return raw;
+}
+
+function fcForecastSeries(values) {
+  if(!values || values.length === 0) return 0;
+  if(values.length === 1) return values[0];
+
+  const n = values.length;
+  const recent = values.slice(Math.max(0, n - 5));
+  const wmaDen = recent.reduce((s, _, i) => s + (i + 1), 0);
+  const wma = recent.reduce((s, v, i) => s + v * (i + 1), 0) / Math.max(wmaDen, 1);
+
+  if(n < 3) return Math.max(0, wma);
+
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  for(let i = 0; i < n; i++) {
+    const x = i + 1;
+    const y = values[i];
+    sumX += x; sumY += y; sumXY += x * y; sumXX += x * x;
+  }
+  const den = n * sumXX - sumX * sumX;
+  const slope = den === 0 ? 0 : (n * sumXY - sumX * sumY) / den;
+  const intercept = (sumY - slope * sumX) / n;
+  const lr = intercept + slope * (n + 1);
+
+  return Math.max(0, wma * 0.65 + lr * 0.35);
+}
+
+function fcBuildForecastRows() {
+  const categoryRows = fcData.filter(r => fcFilterCat === 'all' || r.category === fcFilterCat);
+  const dayRows = categoryRows.filter(r => fcFilterDay === 'all' || r.day === fcFilterDay);
+  const sourceRows = dayRows.length ? dayRows : categoryRows;
+  if(sourceRows.length === 0) return [];
+
+  const byDate = {};
+  sourceRows.forEach(r => {
+    const dk = fcGetDateKey(r);
+    if(!dk) return;
+    if(!byDate[dk]) byDate[dk] = [];
+    byDate[dk].push(r);
+  });
+  const dateKeys = Object.keys(byDate).sort();
+  if(dateKeys.length === 0) return [];
+
+  const selectedDateRows = byDate[dateKeys[dateKeys.length - 1]];
+  const dailyTotals = [];
+  const hourSeries = {};
+  const zoneHourSeries = {};
+
+  dateKeys.forEach(dk => {
+    const rows = byDate[dk];
+    let total = 0;
+    const hTotals = {};
+    const zhTotals = {};
+    rows.forEach(r => {
+      total += r.units;
+      if(!isNaN(r.hour)) {
+        hTotals[r.hour] = (hTotals[r.hour] || 0) + r.units;
+        const zhk = r.zone + '|' + r.hour;
+        zhTotals[zhk] = (zhTotals[zhk] || 0) + r.units;
+      }
+    });
+    dailyTotals.push(total);
+
+    FC_HOURS.forEach(h => {
+      if(!hourSeries[h]) hourSeries[h] = [];
+      hourSeries[h].push(hTotals[h] || 0);
+    });
+
+    Object.keys(zhTotals).forEach(k => {
+      if(!zoneHourSeries[k]) zoneHourSeries[k] = [];
+      zoneHourSeries[k].push(zhTotals[k]);
+    });
+    Object.keys(zoneHourSeries).forEach(k => {
+      if(!(k in zhTotals)) zoneHourSeries[k].push(0);
+    });
+  });
+
+  const dailyForecast = fcForecastSeries(dailyTotals);
+  const forecastByHour = {};
+  FC_HOURS.forEach(h => {
+    const vals = hourSeries[h] || Array(dateKeys.length).fill(0);
+    forecastByHour[h] = fcForecastSeries(vals);
+  });
+
+  const hourForecastSum = Object.values(forecastByHour).reduce((s, v) => s + v, 0);
+  if(hourForecastSum > 0 && dailyForecast > 0) {
+    const scale = dailyForecast / hourForecastSum;
+    Object.keys(forecastByHour).forEach(h => { forecastByHour[h] *= scale; });
+  }
+
+  const templateByZoneHour = {};
+  selectedDateRows.forEach(r => {
+    if(isNaN(r.hour)) return;
+    const k = r.zone + '|' + r.hour;
+    templateByZoneHour[k] = (templateByZoneHour[k] || 0) + r.units;
+  });
+
+  const rows = selectedDateRows.map(r => {
+    if(isNaN(r.hour) || !FC_HOURS.includes(r.hour)) return { ...r };
+    const zhk = r.zone + '|' + r.hour;
+    const zhSeries = zoneHourSeries[zhk] || Array(dateKeys.length).fill(0);
+    let targetZh = fcForecastSeries(zhSeries);
+    const hourTarget = forecastByHour[r.hour] || 0;
+
+    if(targetZh <= 0 && hourTarget > 0) {
+      const templateHourTotal = selectedDateRows
+        .filter(x => x.hour === r.hour)
+        .reduce((s, x) => s + x.units, 0);
+      const ratio = templateHourTotal > 0 ? (r.units / templateHourTotal) : 0;
+      targetZh = hourTarget * ratio;
+    }
+
+    const denom = templateByZoneHour[zhk] || 0;
+    const scaledUnits = denom > 0 ? (r.units / denom) * targetZh : r.units;
+    return { ...r, units: Math.max(0, scaledUnits) };
+  });
+
+  if(fcFilterHour !== 'all') {
+    return rows.filter(r => r.hour === fcFilterHour);
+  }
+  return rows;
+}
+
 // ─── Toggle Button Filter Logic ─────────────
 function fcToggleFilter(type, value, btn) {
   // Update active state
@@ -3553,12 +3687,7 @@ function handleForecastFile(file) {
 function applyForecastFilters() {
   if(fcData.length === 0) return;
 
-  fcFiltered = fcData.filter(r => {
-    if(fcFilterCat !== 'all' && r.category !== fcFilterCat) return false;
-    if(fcFilterDay !== 'all' && r.day !== fcFilterDay) return false;
-    if(fcFilterHour !== 'all' && r.hour !== fcFilterHour) return false;
-    return true;
-  });
+  fcFiltered = fcBuildForecastRows();
 
   // Build grid data from X/Y coordinates (same approach as main heatmap)
   const RES = 2;
@@ -3812,9 +3941,8 @@ function fcBuildHourlyChart() {
   document.getElementById('fc-hourly-label').textContent = labelParts.length ? labelParts.join(' · ') : 'All Data';
 
   // Aggregate hourly (ignoring hour filter to show full profile)
-  const subset = fcData.filter(r => {
-    if(fcFilterCat !== 'all' && r.category !== fcFilterCat) return false;
-    if(fcFilterDay !== 'all' && r.day !== fcFilterDay) return false;
+  const subset = fcBuildForecastRows().filter(r => {
+    if(fcFilterHour !== 'all' && r.hour !== fcFilterHour) return false;
     return true;
   });
 
