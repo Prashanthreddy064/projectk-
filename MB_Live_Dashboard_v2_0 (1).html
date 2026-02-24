@@ -3585,9 +3585,21 @@ function fcNormalizeDay(val) {
   return String(val).trim();
 }
 
-function fcNormalizeCategory(val) {
-  if(!val) return '';
-  return String(val).trim();
+function fcCategoryFromPicker(userId) {
+  const normalizedId = String(userId || '').trim().toLowerCase();
+  if(!normalizedId) return '';
+  if(/\b(imp|impl|implement|implements)\b/.test(normalizedId)) return 'Implement';
+  return '';
+}
+
+function fcNormalizeCategory(val, userId) {
+  const raw = String(val || '').trim();
+  if(!raw) return fcCategoryFromPicker(userId);
+
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  if(/\b(imp|impl|implement|implements)\b/.test(normalized)) return 'Implement';
+
+  return raw.replace(/\s+/g, ' ');
 }
 
 function fcBuildZoneActiveMetrics(rows) {
@@ -3901,7 +3913,7 @@ function handleForecastFile(file) {
       const userIdx = hdr.findIndex(h => h.includes('user') || h.includes('picker') || h.includes('associate'));
       const dateIdx = hdr.findIndex(h => h === 'date' || h.includes('date'));
       const dayIdx = hdr.findIndex((h, idx) => (h === 'day' || h === 'weekday' || h === 'day of week') && idx !== dateIdx);
-      const catIdx = hdr.findIndex(h => h.includes('category') || h.includes('cat') || h === 'type');
+      const catIdx = hdr.findIndex(h => h === 'category' || h === 'cat' || h === 'type' || /\bcategory\b/.test(h));
 
       // Need at least X, Y, and Units to be valid
       if(xIdx >= 0 && yIdx >= 0 && unitsIdx >= 0) {
@@ -3931,7 +3943,7 @@ function handleForecastFile(file) {
       const userId = colUserId >= 0 ? String(r[colUserId] || '').trim() : '';
       const date = colDate >= 0 ? cellToText(r[colDate]) : '';
       const day = colDay >= 0 ? fcNormalizeDay(r[colDay]) : (colDate >= 0 ? fcNormalizeDay(r[colDate]) : '');
-      const category = colCategory >= 0 ? fcNormalizeCategory(cellToText(r[colCategory])) : 'All';
+      const category = colCategory >= 0 ? fcNormalizeCategory(cellToText(r[colCategory]), userId) : (fcCategoryFromPicker(userId) || 'All');
       const zone = nearestZone(x, y);
 
       parsed.push({ time: colTime >= 0 ? r[colTime] : null, txMin, x, y, units, userId, date, day, category, hour, zone });
