@@ -526,6 +526,281 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 #fc-drop-zone input[type=file] {
   position: absolute; inset: 0; opacity: 0; cursor: pointer;
 }
+
+/* ─── SHIFT BREAKDOWN ─────────────────────── */
+.sb-hero-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.sb-hero-card {
+  background: var(--surf2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+}
+.sb-hero-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--sb-accent, var(--blue));
+}
+.sb-hero-header {
+  padding: 18px 22px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sb-hero-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sb-hero-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 20px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.sb-hero-body {
+  padding: 0 22px 18px;
+}
+.sb-hero-val {
+  font-size: 36px;
+  font-weight: 800;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.sb-hero-sub {
+  font-size: 11px;
+  color: var(--text3);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.sb-metrics-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border-top: 1px solid var(--border);
+}
+.sb-metric {
+  background: var(--surf2);
+  padding: 12px 16px;
+  text-align: center;
+}
+.sb-metric-lbl {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+.sb-metric-val {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.sb-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.sb-donut-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 20px;
+}
+.sb-donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sb-donut-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.sb-donut-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.sb-table-wrap {
+  overflow-x: auto;
+}
+.sb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.sb-table thead th {
+  background: var(--surf3);
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+.sb-table tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(31,45,69,0.3);
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--text2);
+  white-space: nowrap;
+}
+.sb-table tbody tr:hover {
+  background: rgba(59,130,246,0.04);
+}
+.sb-shift-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.sb-shift-tag.s1 {
+  background: rgba(59,130,246,0.15);
+  color: #60a5fa;
+}
+.sb-shift-tag.s2 {
+  background: rgba(139,92,246,0.15);
+  color: #a78bfa;
+}
+.sb-bar-cell {
+  position: relative;
+  min-width: 80px;
+}
+.sb-bar-bg {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(59,130,246,0.12);
+  width: 100%;
+}
+.sb-bar-fg {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  height: 6px;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.sb-uph-scenarios {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.sb-scenario-card {
+  background: var(--surf2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+.sb-scenario-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--sc-color, var(--blue));
+}
+.sb-scenario-header {
+  padding: 16px 18px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text3);
+}
+.sb-scenario-body {
+  padding: 0 18px 16px;
+}
+.sb-scenario-uph {
+  font-size: 32px;
+  font-weight: 800;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: -0.03em;
+}
+.sb-scenario-sub {
+  font-size: 11px;
+  color: var(--text3);
+  font-family: 'IBM Plex Mono', monospace;
+  margin-top: 2px;
+}
+.sb-scenario-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  border-top: 1px solid var(--border);
+}
+.sb-scenario-metric {
+  background: var(--surf2);
+  padding: 10px 12px;
+  text-align: center;
+}
+.sb-scenario-metric-lbl {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+  margin-bottom: 3px;
+}
+.sb-scenario-metric-val {
+  font-size: 15px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.sb-cutoff-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(59,130,246,0.06);
+  border: 1px solid rgba(59,130,246,0.15);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 20px;
+  font-size: 11px;
+  color: var(--text2);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.sb-cutoff-note strong {
+  color: var(--blue);
+}
 </style>
 </head>
 <body>
@@ -567,6 +842,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <button class="tab" data-sec="zonemap">Zone Map</button>
   <button class="tab" data-sec="heatmap">Intensity Map</button>
   <button class="tab" data-sec="zonestats">Zone Stats</button>
+  <button class="tab" data-sec="shiftbreakdown">Shift Breakdown</button>
   <button class="tab" data-sec="pickpath">Pick Path</button>
   <button class="tab" data-sec="uphtargets">UPH Targets</button>
   <button class="tab" data-sec="staffing">Staffing Plan</button>
@@ -709,6 +985,63 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div style="flex:1;max-width:200px;height:7px;border-radius:4px;background:linear-gradient(to right,#0c1a3b,#1e40af,#2563eb,#f59e0b,#ef4444,#7f1d1d)"></div>
       <span style="font-size:11px;color:var(--text3)">High density</span>
       <span style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-left:12px;">2×2 unit grid · radius ∝ volume</span>
+    </div>
+  </div>
+</div>
+
+<!-- SHIFT BREAKDOWN -->
+<div id="sec-shiftbreakdown" class="section">
+  <div class="sb-cutoff-note">
+    <strong>SHIFT CUTOFF</strong> Pickers are categorized by their <strong>first pick transaction time</strong>.
+    S1 Picker = first pick before 2:30 PM &nbsp;·&nbsp; S2 Picker = first pick at or after 2:30 PM
+  </div>
+
+  <!-- Hero cards: S1, Shared, S2 -->
+  <div class="sb-hero-grid" id="sb-hero-grid">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- UPH Scenario Cards -->
+  <div class="card" style="margin-bottom:20px;">
+    <div class="card-title">UPH Performance by Scenario</div>
+    <div class="sb-uph-scenarios" id="sb-uph-scenarios">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
+  <!-- Distribution chart + picker summary -->
+  <div class="sb-detail-grid">
+    <div class="card" style="margin-bottom:0;">
+      <div class="card-title">Picker Distribution</div>
+      <div class="sb-donut-wrap">
+        <canvas id="sb-donut-canvas" width="160" height="160"></canvas>
+        <div class="sb-donut-legend" id="sb-donut-legend"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:0;">
+      <div class="card-title">Shift Comparison — Key Metrics</div>
+      <canvas id="sb-comparison-chart" height="200"></canvas>
+    </div>
+  </div>
+
+  <!-- Detailed picker table -->
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div class="card-title" style="margin-bottom:0;">Individual Picker Breakdown</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <select id="sb-shift-filter" onchange="buildShiftBreakdown()"
+          style="background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);font-size:11px;padding:5px 10px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
+          <option value="all">All Shifts</option>
+          <option value="s1">S1 Only</option>
+          <option value="s2">S2 Only</option>
+        </select>
+        <span id="sb-picker-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+      </div>
+    </div>
+    <div class="sb-table-wrap" style="max-height:480px;overflow-y:auto;">
+      <table class="sb-table" id="sb-picker-table">
+        <!-- Populated by JS -->
+      </table>
     </div>
   </div>
 </div>
@@ -1738,6 +2071,7 @@ function renderAll() {
   buildHeatControls();
   drawHeatMap();
   buildZoneStats();
+  buildShiftBreakdown();
   buildPickerList();
   buildStaffing();
   buildRamp();
@@ -2454,6 +2788,393 @@ function buildZoneStats() {
     </tr>`;
   });
   tbl.innerHTML = h + '</tbody>';
+}
+
+// ═══════════════════════════════════════════════
+// SHIFT BREAKDOWN — Categorize pickers by first tx
+// ═══════════════════════════════════════════════
+const SHIFT_CUTOFF_MIN = 14 * 60 + 30; // 2:30 PM in minutes
+
+function buildShiftBreakdown() {
+  if (!txData.length) return;
+
+  // Step 1: Group transactions by picker and find first tx time
+  const pickerMap = {};
+  for (const r of txData) {
+    const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
+    if (!pickerMap[uid]) pickerMap[uid] = [];
+    pickerMap[uid].push(r);
+  }
+
+  // Step 2: Classify each picker as S1 or S2 based on first pick time
+  const pickers = [];
+  for (const [uid, txs] of Object.entries(pickerMap)) {
+    const sorted = txs.slice().sort((a, b) => (a.hour * 60 + (a.minute || 0)) - (b.hour * 60 + (b.minute || 0)));
+    const firstTxMin = sorted[0].hour * 60 + (sorted[0].minute || 0);
+    const lastTxMin = sorted[sorted.length - 1].hour * 60 + (sorted[sorted.length - 1].minute || 0);
+    const shift = firstTxMin < SHIFT_CUTOFF_MIN ? 's1' : 's2';
+
+    // Compute zone-run contributions for this picker
+    const sortedForRuns = sorted.map(r => ({
+      txMin: r.hour * 60 + (r.minute || 0),
+      zone: r.zone || 'No Location',
+      units: r.units
+    }));
+    const contrib = computeZoneRunContributions(sortedForRuns);
+
+    let totalUnits = 0, activeMins = 0, inactiveMins = 0;
+    for (const z of Object.values(contrib)) {
+      totalUnits += z.units;
+      activeMins += z.activeMinutes;
+      inactiveMins += z.inactiveMinutes;
+    }
+
+    const activeHours = Math.round(activeMins) / 60;
+    const inactiveHours = Math.round(inactiveMins) / 60;
+    const uph = activeHours > 0 ? Math.round(totalUnits / activeHours) : 0;
+
+    // Zone spread
+    const zones = {};
+    for (const r of sorted) {
+      const z = r.zone || 'No Location';
+      zones[z] = (zones[z] || 0) + r.units;
+    }
+    const primaryZone = Object.entries(zones).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
+
+    pickers.push({
+      uid, shift, firstTxMin, lastTxMin,
+      totalUnits, activeHours, inactiveHours, uph,
+      picks: sorted.length, primaryZone, zones, txs: sorted
+    });
+  }
+
+  // Step 3: Aggregate per-shift metrics
+  const s1Pickers = pickers.filter(p => p.shift === 's1');
+  const s2Pickers = pickers.filter(p => p.shift === 's2');
+
+  function aggShift(arr) {
+    const totalUnits = arr.reduce((s, p) => s + p.totalUnits, 0);
+    const totalActiveHours = arr.reduce((s, p) => s + p.activeHours, 0);
+    const totalInactiveHours = arr.reduce((s, p) => s + p.inactiveHours, 0);
+    const avgUPH = totalActiveHours > 0 ? Math.round(totalUnits / totalActiveHours) : 0;
+    return { count: arr.length, totalUnits, totalActiveHours, totalInactiveHours, avgUPH };
+  }
+
+  const s1Agg = aggShift(s1Pickers);
+  const s2Agg = aggShift(s2Pickers);
+  const allAgg = aggShift(pickers);
+
+  // Step 4: Compute UPH scenarios
+  // S1 Individual: Only S1 pickers, only txs before 2:30 PM
+  // S1 & S2 Shared: All pickers, all txs (blended overall)
+  // S2 Individual: Only S2 pickers, only txs at/after 2:30 PM
+  function computeScenarioUPH(pickerSubset, txFilter) {
+    let totalUnits = 0, activeMins = 0, inactiveMins = 0;
+    for (const p of pickerSubset) {
+      const filtered = p.txs.filter(txFilter).map(r => ({
+        txMin: r.hour * 60 + (r.minute || 0),
+        zone: r.zone || 'No Location',
+        units: r.units
+      }));
+      if (!filtered.length) continue;
+      const contrib = computeZoneRunContributions(filtered);
+      for (const z of Object.values(contrib)) {
+        totalUnits += z.units;
+        activeMins += z.activeMinutes;
+        inactiveMins += z.inactiveMinutes;
+      }
+    }
+    const activeHrs = Math.round(activeMins) / 60;
+    const inactiveHrs = Math.round(inactiveMins) / 60;
+    const uph = activeHrs > 0 ? Math.round(totalUnits / activeHrs) : 0;
+    return { totalUnits, activeHrs, inactiveHrs, uph, pickerCount: pickerSubset.length };
+  }
+
+  const scenarioS1 = computeScenarioUPH(s1Pickers, r => (r.hour * 60 + (r.minute || 0)) < SHIFT_CUTOFF_MIN);
+  const scenarioShared = computeScenarioUPH(pickers, () => true);
+  const scenarioS2 = computeScenarioUPH(s2Pickers, r => (r.hour * 60 + (r.minute || 0)) >= SHIFT_CUTOFF_MIN);
+
+  // Step 5: Render hero cards
+  const heroGrid = document.getElementById('sb-hero-grid');
+  function fmtHrs(h) { return h >= 1 ? h.toFixed(1) + 'h' : Math.round(h * 60) + 'm'; }
+  function fmtTime(min) {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const hh = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    return `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
+  }
+
+  heroGrid.innerHTML = `
+    <div class="sb-hero-card" style="--sb-accent:#3b82f6">
+      <div class="sb-hero-header">
+        <span class="sb-hero-label"><span style="font-size:16px;">&#9728;&#65039;</span> Shift 1 Pickers</span>
+        <span class="sb-hero-badge" style="background:rgba(59,130,246,0.15);color:#60a5fa;">${s1Agg.count} pickers</span>
+      </div>
+      <div class="sb-hero-body">
+        <div class="sb-hero-val" style="color:#3b82f6">${s1Agg.totalUnits.toLocaleString()}</div>
+        <div class="sb-hero-sub">total units · first pick before 2:30 PM</div>
+      </div>
+      <div class="sb-metrics-row">
+        <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s1Agg.totalActiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Inactive Hours</div><div class="sb-metric-val" style="color:#ef4444">${fmtHrs(s1Agg.totalInactiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Avg UPH</div><div class="sb-metric-val" style="color:#f59e0b">${s1Agg.avgUPH.toLocaleString()}</div></div>
+      </div>
+    </div>
+
+    <div class="sb-hero-card" style="--sb-accent:#f59e0b">
+      <div class="sb-hero-header">
+        <span class="sb-hero-label"><span style="font-size:16px;">&#9889;</span> Combined S1 + S2</span>
+        <span class="sb-hero-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;">${allAgg.count} total</span>
+      </div>
+      <div class="sb-hero-body">
+        <div class="sb-hero-val" style="color:#f59e0b">${allAgg.totalUnits.toLocaleString()}</div>
+        <div class="sb-hero-sub">blended total · all pickers</div>
+      </div>
+      <div class="sb-metrics-row">
+        <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(allAgg.totalActiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Inactive Hours</div><div class="sb-metric-val" style="color:#ef4444">${fmtHrs(allAgg.totalInactiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Avg UPH</div><div class="sb-metric-val" style="color:#f59e0b">${allAgg.avgUPH.toLocaleString()}</div></div>
+      </div>
+    </div>
+
+    <div class="sb-hero-card" style="--sb-accent:#8b5cf6">
+      <div class="sb-hero-header">
+        <span class="sb-hero-label"><span style="font-size:16px;">&#127747;</span> Shift 2 Pickers</span>
+        <span class="sb-hero-badge" style="background:rgba(139,92,246,0.15);color:#a78bfa;">${s2Agg.count} pickers</span>
+      </div>
+      <div class="sb-hero-body">
+        <div class="sb-hero-val" style="color:#8b5cf6">${s2Agg.totalUnits.toLocaleString()}</div>
+        <div class="sb-hero-sub">total units · first pick at/after 2:30 PM</div>
+      </div>
+      <div class="sb-metrics-row">
+        <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s2Agg.totalActiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Inactive Hours</div><div class="sb-metric-val" style="color:#ef4444">${fmtHrs(s2Agg.totalInactiveHours)}</div></div>
+        <div class="sb-metric"><div class="sb-metric-lbl">Avg UPH</div><div class="sb-metric-val" style="color:#f59e0b">${s2Agg.avgUPH.toLocaleString()}</div></div>
+      </div>
+    </div>
+  `;
+
+  // Step 6: Render UPH scenario cards
+  const scenarioEl = document.getElementById('sb-uph-scenarios');
+  const scenarios = [
+    { label: 'S1 Individual', desc: 'S1 pickers · txs before 2:30 PM', data: scenarioS1, color: '#3b82f6' },
+    { label: 'S1 & S2 Shared', desc: 'All pickers · all transactions', data: scenarioShared, color: '#f59e0b' },
+    { label: 'S2 Individual', desc: 'S2 pickers · txs at/after 2:30 PM', data: scenarioS2, color: '#8b5cf6' }
+  ];
+
+  scenarioEl.innerHTML = scenarios.map(s => {
+    const uphColor = s.data.uph >= 200 ? '#22c55e' : s.data.uph >= 150 ? '#f59e0b' : '#ef4444';
+    return `
+      <div class="sb-scenario-card" style="--sc-color:${s.color}">
+        <div class="sb-scenario-header">${s.label}</div>
+        <div class="sb-scenario-body">
+          <div class="sb-scenario-uph" style="color:${uphColor}">${s.data.uph.toLocaleString()}</div>
+          <div class="sb-scenario-sub">${s.desc}</div>
+        </div>
+        <div class="sb-scenario-metrics">
+          <div class="sb-scenario-metric"><div class="sb-scenario-metric-lbl">Units</div><div class="sb-scenario-metric-val" style="color:${s.color}">${s.data.totalUnits.toLocaleString()}</div></div>
+          <div class="sb-scenario-metric"><div class="sb-scenario-metric-lbl">Active Hrs</div><div class="sb-scenario-metric-val" style="color:#22c55e">${fmtHrs(s.data.activeHrs)}</div></div>
+          <div class="sb-scenario-metric"><div class="sb-scenario-metric-lbl">Inactive Hrs</div><div class="sb-scenario-metric-val" style="color:#ef4444">${fmtHrs(s.data.inactiveHrs)}</div></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Step 7: Render donut chart
+  drawShiftDonut(s1Agg.count, s2Agg.count);
+
+  // Step 8: Render comparison bar chart
+  drawShiftComparisonChart(s1Agg, s2Agg);
+
+  // Step 9: Render picker table
+  const filter = document.getElementById('sb-shift-filter')?.value || 'all';
+  const filtered = filter === 'all' ? pickers : pickers.filter(p => p.shift === filter);
+  filtered.sort((a, b) => b.totalUnits - a.totalUnits);
+
+  const countEl = document.getElementById('sb-picker-count');
+  if (countEl) countEl.textContent = `${filtered.length} pickers`;
+
+  const tbl = document.getElementById('sb-picker-table');
+  const maxUnits = Math.max(...filtered.map(p => p.totalUnits), 1);
+
+  let html = `<thead><tr>
+    <th>Picker</th>
+    <th>Shift</th>
+    <th>First Pick</th>
+    <th>Last Pick</th>
+    <th>Total Units</th>
+    <th>Picks</th>
+    <th>Active Hrs</th>
+    <th>Inactive Hrs</th>
+    <th>UPH</th>
+    <th>Primary Zone</th>
+    <th>Volume</th>
+  </tr></thead><tbody>`;
+
+  for (const p of filtered) {
+    const barPct = (p.totalUnits / maxUnits * 100).toFixed(0);
+    const uphColor = p.uph >= 200 ? '#22c55e' : p.uph >= 150 ? '#f59e0b' : '#ef4444';
+    const shiftColor = p.shift === 's1' ? '#3b82f6' : '#8b5cf6';
+    const zoneColor = ZONE_COLORS[p.primaryZone] || '#64748b';
+    const inactiveColor = p.inactiveHours > 1 ? '#ef4444' : p.inactiveHours > 0.5 ? '#f59e0b' : '#22c55e';
+
+    html += `<tr>
+      <td style="color:var(--text);font-weight:600;">${p.uid}</td>
+      <td><span class="sb-shift-tag ${p.shift}"><span style="width:5px;height:5px;border-radius:50%;background:${shiftColor};display:inline-block;"></span>${p.shift === 's1' ? 'S1' : 'S2'}</span></td>
+      <td>${fmtTime(p.firstTxMin)}</td>
+      <td>${fmtTime(p.lastTxMin)}</td>
+      <td style="font-weight:700;color:var(--text);">${p.totalUnits.toLocaleString()}</td>
+      <td>${p.picks.toLocaleString()}</td>
+      <td style="color:#22c55e">${p.activeHours.toFixed(2)}</td>
+      <td style="color:${inactiveColor};font-weight:600;">${p.inactiveHours.toFixed(2)}</td>
+      <td style="color:${uphColor};font-weight:700;">${p.uph.toLocaleString()}</td>
+      <td><span class="zpill" style="background:${zoneColor}18;color:${zoneColor};font-size:10px;"><span style="width:5px;height:5px;border-radius:50%;background:${zoneColor};display:inline-block;"></span>${p.primaryZone}</span></td>
+      <td style="position:relative;min-width:80px;">
+        <div class="sb-bar-bg"></div>
+        <div class="sb-bar-fg" style="width:${barPct}%;background:${shiftColor};"></div>
+        <span style="position:relative;z-index:1;font-size:10px;color:var(--text3);">${barPct}%</span>
+      </td>
+    </tr>`;
+  }
+
+  tbl.innerHTML = html + '</tbody>';
+}
+
+function drawShiftDonut(s1Count, s2Count) {
+  const canvas = document.getElementById('sb-donut-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const total = s1Count + s2Count;
+  if (total === 0) return;
+
+  const cx = w / 2, cy = h / 2, radius = 65, innerR = 40;
+  const slices = [
+    { val: s1Count, color: '#3b82f6', label: 'S1' },
+    { val: s2Count, color: '#8b5cf6', label: 'S2' }
+  ];
+
+  let angle = -Math.PI / 2;
+  for (const s of slices) {
+    const sliceAngle = (s.val / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, angle, angle + sliceAngle);
+    ctx.arc(cx, cy, innerR, angle + sliceAngle, angle, true);
+    ctx.closePath();
+    ctx.fillStyle = s.color;
+    ctx.fill();
+    angle += sliceAngle;
+  }
+
+  // Center text
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = 'bold 22px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(total, cx, cy - 6);
+  ctx.fillStyle = '#475569';
+  ctx.font = '10px "IBM Plex Mono", monospace';
+  ctx.fillText('PICKERS', cx, cy + 12);
+
+  // Legend
+  const legendEl = document.getElementById('sb-donut-legend');
+  if (legendEl) {
+    legendEl.innerHTML = slices.map(s => {
+      const pct = (s.val / total * 100).toFixed(1);
+      return `<div class="sb-donut-item"><div class="sb-donut-swatch" style="background:${s.color}"></div><span style="color:var(--text)">${s.label}</span><span style="color:var(--text3)">${s.val} (${pct}%)</span></div>`;
+    }).join('');
+  }
+}
+
+function drawShiftComparisonChart(s1Agg, s2Agg) {
+  const canvas = document.getElementById('sb-comparison-chart');
+  if (!canvas) return;
+  const parent = canvas.parentElement;
+  canvas.width = parent.offsetWidth - 40;
+  canvas.height = 200;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const metrics = [
+    { label: 'Total Units', s1: s1Agg.totalUnits, s2: s2Agg.totalUnits, fmt: v => v.toLocaleString() },
+    { label: 'Active Hours', s1: s1Agg.totalActiveHours, s2: s2Agg.totalActiveHours, fmt: v => v.toFixed(1) + 'h' },
+    { label: 'Inactive Hours', s1: s1Agg.totalInactiveHours, s2: s2Agg.totalInactiveHours, fmt: v => v.toFixed(1) + 'h' },
+    { label: 'Avg UPH', s1: s1Agg.avgUPH, s2: s2Agg.avgUPH, fmt: v => v.toLocaleString() }
+  ];
+
+  const pad = { left: 100, right: 20, top: 20, bottom: 30 };
+  const rowH = (H - pad.top - pad.bottom) / metrics.length;
+  const barH = 12;
+  const chartW = W - pad.left - pad.right;
+
+  for (let i = 0; i < metrics.length; i++) {
+    const m = metrics[i];
+    const y = pad.top + i * rowH;
+    const maxVal = Math.max(m.s1, m.s2, 1);
+
+    // Label
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(m.label, pad.left - 12, y + rowH / 2);
+
+    // S1 bar
+    const s1W = Math.max((m.s1 / maxVal) * chartW * 0.9, 2);
+    const s1Y = y + rowH / 2 - barH - 2;
+    ctx.fillStyle = '#3b82f6';
+    ctx.beginPath();
+    ctx.roundRect(pad.left, s1Y, s1W, barH, 3);
+    ctx.fill();
+    ctx.fillStyle = '#93c5fd';
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(m.fmt(m.s1), pad.left + s1W + 6, s1Y + barH / 2);
+
+    // S2 bar
+    const s2W = Math.max((m.s2 / maxVal) * chartW * 0.9, 2);
+    const s2Y = y + rowH / 2 + 2;
+    ctx.fillStyle = '#8b5cf6';
+    ctx.beginPath();
+    ctx.roundRect(pad.left, s2Y, s2W, barH, 3);
+    ctx.fill();
+    ctx.fillStyle = '#c4b5fd';
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(m.fmt(m.s2), pad.left + s2W + 6, s2Y + barH / 2);
+
+    // Divider
+    if (i < metrics.length - 1) {
+      ctx.strokeStyle = 'rgba(31,45,69,0.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, y + rowH);
+      ctx.lineTo(W - pad.right, y + rowH);
+      ctx.stroke();
+    }
+  }
+
+  // Legend at bottom
+  ctx.fillStyle = '#3b82f6';
+  ctx.beginPath();
+  ctx.roundRect(pad.left, H - 16, 10, 10, 2);
+  ctx.fill();
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '10px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('S1', pad.left + 14, H - 10);
+
+  ctx.fillStyle = '#8b5cf6';
+  ctx.beginPath();
+  ctx.roundRect(pad.left + 40, H - 16, 10, 10, 2);
+  ctx.fill();
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('S2', pad.left + 54, H - 10);
 }
 
 // ═══════════════════════════════════════════════
@@ -4325,6 +5046,7 @@ document.querySelectorAll('.tab').forEach(tab => {
       if(id==='overview') buildHourlyChart();
       if(id==='uphtargets') buildUPHTargets();
       if(id==='pickpath') { drawPickPathCanvas([], ppCurrentUser); if(ppCurrentUser) renderPickPath(); }
+      if(id==='shiftbreakdown' && txData.length > 0) { buildShiftBreakdown(); }
       if(id==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
     }, 30);
   });
