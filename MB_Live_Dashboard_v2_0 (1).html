@@ -931,6 +931,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <span class="data-badge default" id="fc-data-badge">NO DATA LOADED</span>
       <span id="fc-row-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
     </div>
+    <div id="fc-methodology-info" style="font-size:10px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:8px;">
+      Method: load forecast data to enable hybrid WMA + linear regression model.
+    </div>
 
     <!-- Filter Controls -->
     <div class="plan-controls" style="margin-top:14px;">
@@ -3322,6 +3325,7 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
 // ═══════════════════════════════════════════════
 let fcData = [];          // parsed forecast rows
 let fcFiltered = [];      // filtered subset
+let fcProjected = [];     // modeled rows (WMA + linear regression)
 
 const FC_DAY_ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const FC_HOURS = [];
@@ -3508,6 +3512,72 @@ function fcBuildDropdowns() {
   hours.forEach(h => { const o = document.createElement('option'); o.value = h; o.textContent = fcFormatHour(h); hourSel.appendChild(o); });
 }
 
+function fcGetModelVolume(series, targetHour) {
+  const points = FC_HOURS
+    .filter(h => series[h] != null)
+    .map(h => ({ idx: FC_HOURS.indexOf(h), value: series[h] }));
+  if(points.length === 0) return 0;
+
+  const targetIdx = FC_HOURS.indexOf(targetHour);
+  if(targetIdx < 0) return 0;
+
+  const recent = points
+    .filter(p => p.idx < targetIdx)
+    .sort((a, b) => a.idx - b.idx)
+    .slice(-3)
+    .map(p => p.value);
+
+  let wma = points[points.length - 1].value;
+  if(recent.length > 0) {
+    const weights = recent.map((_, i) => i + 1);
+    const weightedSum = recent.reduce((sum, v, i) => sum + (v * weights[i]), 0);
+    const weightTotal = weights.reduce((sum, w) => sum + w, 0);
+    wma = weightedSum / Math.max(weightTotal, 1);
+  }
+
+  let lr = wma;
+  if(points.length >= 2) {
+    const n = points.length;
+    const sx = points.reduce((sum, p) => sum + p.idx, 0);
+    const sy = points.reduce((sum, p) => sum + p.value, 0);
+    const sxy = points.reduce((sum, p) => sum + (p.idx * p.value), 0);
+    const sx2 = points.reduce((sum, p) => sum + (p.idx * p.idx), 0);
+    const denom = (n * sx2) - (sx * sx);
+    const slope = denom === 0 ? 0 : ((n * sxy) - (sx * sy)) / denom;
+    const intercept = (sy - (slope * sx)) / n;
+    lr = intercept + (slope * targetIdx);
+  }
+
+  return Math.max(0, (0.6 * wma) + (0.4 * lr));
+}
+
+function fcBuildForecastRows(hourVal) {
+  const zoneHourSeries = {};
+  fcFiltered.forEach(r => {
+    if(isNaN(r.hour) || !FC_HOURS.includes(r.hour)) return;
+    if(!zoneHourSeries[r.zone]) zoneHourSeries[r.zone] = {};
+    zoneHourSeries[r.zone][r.hour] = (zoneHourSeries[r.zone][r.hour] || 0) + r.volume;
+  });
+
+  const targetHours = hourVal === 'all' ? FC_HOURS : [parseInt(hourVal)];
+  const projected = [];
+
+  Object.keys(zoneHourSeries).forEach(zone => {
+    targetHours.forEach(hour => {
+      const modeledVolume = fcGetModelVolume(zoneHourSeries[zone], hour);
+      if(modeledVolume <= 0) return;
+      projected.push({
+        zone,
+        hour,
+        volume: modeledVolume,
+        pickers: Math.max(1, Math.ceil(modeledVolume / (UPH[zone] || 150)))
+      });
+    });
+  });
+
+  return projected;
+}
+
 function applyForecastFilters() {
   if(fcData.length === 0) return;
 
@@ -3522,6 +3592,14 @@ function applyForecastFilters() {
     return true;
   });
 
+  fcProjected = fcBuildForecastRows(hourVal);
+
+  const methodEl = document.getElementById('fc-methodology-info');
+  if(methodEl) {
+    const hourLabel = hourVal === 'all' ? 'All Hours' : fcFormatHour(parseInt(hourVal));
+    methodEl.textContent = `Method: Hybrid forecast (60% WMA of last 3 obs + 40% linear regression trend) · ${hourLabel}`;
+  }
+
   fcBuildKPIs();
   fcDrawZoneMap();
   fcDrawHeatMap();
@@ -3534,7 +3612,7 @@ function fcBuildKPIs() {
   const zoneVolumes = {};
   let totalVol = 0;
   let totalPickers = 0;
-  fcFiltered.forEach(r => {
+  fcProjected.forEach(r => {
     zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume;
     totalVol += r.volume;
     totalPickers += r.pickers;
@@ -3576,7 +3654,7 @@ function fcDrawZoneMap() {
 
   // Aggregate volumes by zone
   const zoneVolumes = {};
-  fcFiltered.forEach(r => { zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume; });
+  fcProjected.forEach(r => { zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume; });
   const maxVol = Math.max(...Object.values(zoneVolumes), 1);
 
   // Coordinate transform
@@ -3662,7 +3740,7 @@ function fcDrawHeatMap() {
 
   // Aggregate by zone
   const zoneVolumes = {};
-  fcFiltered.forEach(r => { zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume; });
+  fcProjected.forEach(r => { zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume; });
   const maxVol = Math.max(...Object.values(zoneVolumes), 1);
 
   // Coordinate transform
@@ -3746,7 +3824,7 @@ function fcBuildStaffingTable() {
   // Aggregate by zone
   const zoneVolumes = {};
   const zonePickers = {};
-  fcFiltered.forEach(r => {
+  fcProjected.forEach(r => {
     zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.volume;
     zonePickers[r.zone] = (zonePickers[r.zone] || 0) + r.pickers;
   });
@@ -3801,16 +3879,9 @@ function fcBuildHourlyChart() {
   if(dayVal !== 'all') labelParts.push(dayVal);
   document.getElementById('fc-hourly-label').textContent = labelParts.length ? labelParts.join(' · ') : 'All Data';
 
-  // Aggregate hourly (ignoring hour filter to show full profile)
-  const subset = fcData.filter(r => {
-    if(catVal !== 'all' && r.category !== catVal) return false;
-    if(dayVal !== 'all' && r.day !== dayVal) return false;
-    return true;
-  });
-
   const hourlyVol = {};
   FC_HOURS.forEach(h => hourlyVol[h] = 0);
-  subset.forEach(r => {
+  fcProjected.forEach(r => {
     if(!isNaN(r.hour) && FC_HOURS.includes(r.hour)) {
       hourlyVol[r.hour] += r.volume;
     }
