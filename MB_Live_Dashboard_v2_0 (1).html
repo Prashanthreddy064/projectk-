@@ -1841,46 +1841,60 @@ function showRefreshToast() {
 // ═══════════════════════════════════════════════
 // KPIs
 // ═══════════════════════════════════════════════
+function formatClockHourLabel(hour) {
+  return hour < 12 ? `${hour}:00 AM` : hour === 12 ? '12:00 PM' : `${hour-12}:00 PM`;
+}
+
 function buildKPIs() {
-  const totalUnits = Object.values(zoneStats).reduce((s,z) => s + z.units, 0);
-  const totalPicks = Object.values(zoneStats).reduce((s,z) => s + z.picks, 0);
-  if(totalPicks === 0) return;
+  const hourlyPD = window._hourlyZonePickerData || {};
+  const activeHourData = selectedHour !== null ? (hourlyPD[selectedHour] || {}) : null;
+
+  const totalUnits = selectedHour !== null
+    ? (hourlyData[selectedHour] || 0)
+    : Object.values(zoneStats).reduce((s,z) => s + z.units, 0);
+  const totalPicks = selectedHour !== null
+    ? txData.filter(r => r.hour === selectedHour).length
+    : Object.values(zoneStats).reduce((s,z) => s + z.picks, 0);
+
+  const totalActiveMins = selectedHour !== null
+    ? Object.values(activeHourData).reduce((s,z) => s + (z.activeMinutes || 0), 0)
+    : Object.values(zoneStats).reduce((s,z) => s + (z.totalPickerHours ? parseFloat(z.totalPickerHours) * 60 : 0), 0);
+  const totalInactiveMins = selectedHour !== null
+    ? Object.values(activeHourData).reduce((s,z) => s + (z.inactiveMinutes || 0), 0)
+    : Object.values(zoneStats).reduce((s,z) => s + (z.inactiveMinutes || 0), 0);
+  const activeZones = selectedHour !== null
+    ? Object.values(zoneStats).filter(z => (z.hourlyUnits && z.hourlyUnits[selectedHour]) > 0).length
+    : Object.keys(zoneStats).length;
 
   document.getElementById('kpi-units').textContent = Math.round(totalUnits).toLocaleString();
   document.getElementById('kpi-picks').textContent = Math.round(totalPicks).toLocaleString();
+  document.getElementById('kpi-upu').textContent = totalPicks > 0 ? (totalUnits / totalPicks).toFixed(2) : '—';
+  document.getElementById('kpi-zones').textContent = activeZones;
 
-  const srcLabel = dataSource === 'default' ? 'daily avg (2-day baseline)' : 'from uploaded file';
+  const srcLabel = selectedHour !== null
+    ? `selected hour · ${formatClockHourLabel(selectedHour)}`
+    : (dataSource === 'default' ? 'daily avg (2-day baseline)' : 'from uploaded file');
   document.getElementById('kpi-units-sub').textContent = srcLabel;
   document.getElementById('kpi-picks-sub').textContent = srcLabel;
 
-  const avgUPU = totalUnits / totalPicks;
-  document.getElementById('kpi-upu').textContent = avgUPU.toFixed(2);
-  document.getElementById('kpi-zones').textContent = Object.keys(zoneStats).length;
-
-  // Blended actual UPH: Σzone_units / Σzone_picker_hours (only when live data available)
   const kpiUphEl = document.getElementById('kpi-blended-uph');
   const kpiUphSub = document.getElementById('kpi-blended-uph-sub');
   if(kpiUphEl) {
-    const zonesWithHours = Object.values(zoneStats).filter(z => z.totalPickerHours > 0);
-    if(zonesWithHours.length > 0) {
-      const totalPH = zonesWithHours.reduce((s,z)=>s + parseFloat(z.totalPickerHours), 0);
-      const totalU  = zonesWithHours.reduce((s,z)=>s+z.units,0);
-      const blendedActual = Math.round(totalU / totalPH);
+    if(totalActiveMins > 0 && totalUnits > 0) {
+      const blendedActual = Math.round(totalUnits / (Math.round(totalActiveMins) / 60));
       kpiUphEl.textContent = blendedActual.toLocaleString();
       kpiUphEl.style.color = blendedActual >= 200 ? '#22c55e' : blendedActual >= 160 ? '#f59e0b' : '#ef4444';
-      if(kpiUphSub) kpiUphSub.textContent = 'vs. 200 target · live calc';
+      if(kpiUphSub) {
+        kpiUphSub.textContent = selectedHour !== null
+          ? `vs. 200 target · ${formatClockHourLabel(selectedHour)}`
+          : 'vs. 200 target · live calc';
+      }
     } else {
-      kpiUphEl.textContent = '200';
-      kpiUphEl.style.color = '';
-      if(kpiUphSub) kpiUphSub.textContent = 'blended target · all zones';
+      kpiUphEl.textContent = selectedHour === null ? '200' : '—';
+      kpiUphEl.style.color = selectedHour === null ? '' : '#475569';
+      if(kpiUphSub) kpiUphSub.textContent = selectedHour === null ? 'blended target · all zones' : 'no picker data for this hour';
     }
   }
-
-  const totalInactiveMins = Object.values(zoneStats).reduce((s,z) => s + (z.inactiveMinutes || 0), 0);
-  const totalActiveMins = Object.values(zoneStats).reduce((s,z) => {
-    const ph = z.totalPickerHours ? parseFloat(z.totalPickerHours) * 60 : 0;
-    return s + ph;
-  }, 0);
 
   const kpiActiveEl = document.getElementById('kpi-active-time');
   const kpiActiveSub = document.getElementById('kpi-active-time-sub');
@@ -1888,7 +1902,11 @@ function buildKPIs() {
     const activeHrs = totalActiveMins / 60;
     kpiActiveEl.textContent = activeHrs > 0 ? activeHrs.toFixed(1) + 'h' : '—';
     kpiActiveEl.style.color = activeHrs > 0 ? '#22c55e' : '';
-    if(kpiActiveSub) kpiActiveSub.textContent = activeHrs > 0 ? 'across all active zones' : 'picker active runtime';
+    if(kpiActiveSub) {
+      kpiActiveSub.textContent = selectedHour !== null
+        ? 'picker active runtime · selected hour'
+        : (activeHrs > 0 ? 'across all active zones' : 'picker active runtime');
+    }
   }
 
   const kpiInactiveEl = document.getElementById('kpi-inactive');
@@ -2038,49 +2056,9 @@ function clearHourFilter() {
   updateBlendedUPHForHour();
 }
 
-// Dynamic Blended UPH KPI — updates based on selected clock hour
+// Dynamic KPI refresh hook for hour selection
 function updateBlendedUPHForHour() {
-  const kpiUphEl = document.getElementById('kpi-blended-uph');
-  const kpiUphSub = document.getElementById('kpi-blended-uph-sub');
-  if (!kpiUphEl) return;
-
-  if (selectedHour === null) {
-    // Full-day blended UPH
-    const zonesWithHours = Object.values(zoneStats).filter(z => z.totalPickerHours > 0);
-    if (zonesWithHours.length > 0) {
-      const totalPH = zonesWithHours.reduce((s, z) => s + parseFloat(z.totalPickerHours), 0);
-      const totalU = zonesWithHours.reduce((s, z) => s + z.units, 0);
-      const blendedActual = Math.round(totalU / totalPH);
-      kpiUphEl.textContent = blendedActual.toLocaleString();
-      kpiUphEl.style.color = blendedActual >= 200 ? '#22c55e' : blendedActual >= 160 ? '#f59e0b' : '#ef4444';
-      if (kpiUphSub) kpiUphSub.textContent = 'vs. 200 target · live calc';
-    } else {
-      kpiUphEl.textContent = '200';
-      kpiUphEl.style.color = '';
-      if (kpiUphSub) kpiUphSub.textContent = 'blended target · all zones';
-    }
-  } else {
-    // Per-hour blended UPH from hourlyZonePickerData
-    const hourlyPD = window._hourlyZonePickerData || {};
-    const hourData = hourlyPD[selectedHour] || {};
-    let totalUnits = 0, totalActiveMins = 0;
-    for (const zData of Object.values(hourData)) {
-      totalUnits += zData.units || 0;
-      totalActiveMins += zData.activeMinutes || 0;
-    }
-    if (totalActiveMins > 0) {
-      const activeHrs = Math.round(totalActiveMins) / 60;
-      const blendedHourly = Math.round(totalUnits / activeHrs);
-      kpiUphEl.textContent = blendedHourly.toLocaleString();
-      kpiUphEl.style.color = blendedHourly >= 200 ? '#22c55e' : blendedHourly >= 160 ? '#f59e0b' : '#ef4444';
-      const hLabel = selectedHour < 12 ? selectedHour + ':00 AM' : selectedHour === 12 ? '12:00 PM' : (selectedHour - 12) + ':00 PM';
-      if (kpiUphSub) kpiUphSub.textContent = 'vs. 200 target · ' + hLabel;
-    } else {
-      kpiUphEl.textContent = '—';
-      kpiUphEl.style.color = '#475569';
-      if (kpiUphSub) kpiUphSub.textContent = 'no picker data for this hour';
-    }
-  }
+  buildKPIs();
 }
 
 // ═══════════════════════════════════════════════
