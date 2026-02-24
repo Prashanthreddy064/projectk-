@@ -3381,6 +3381,111 @@ function fcNormalizeDay(val) {
   return String(val).trim();
 }
 
+function fcDateKeyFromDate(dt) {
+  if(!(dt instanceof Date) || isNaN(dt.getTime())) return '';
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function fcParseDateInfo(value) {
+  if(value == null || value === '') return { day: '', dateKey: '' };
+
+  // Excel serial date (integer-like)
+  if(typeof value === 'number' && isFinite(value) && value > 59) {
+    const dt = new Date(Math.round((value - 25569) * 86400 * 1000));
+    const day = fcNormalizeDay(dt);
+    return { day, dateKey: fcDateKeyFromDate(dt) };
+  }
+
+  const raw = String(value).trim();
+  const parsed = new Date(raw);
+  if(!isNaN(parsed.getTime())) {
+    return { day: fcNormalizeDay(parsed), dateKey: fcDateKeyFromDate(parsed) };
+  }
+
+  return { day: fcNormalizeDay(raw), dateKey: '' };
+}
+
+function fcWeightedMovingAverage(series) {
+  if(!series.length) return 0;
+  const values = series
+    .map(v => Number(v))
+    .filter(v => Number.isFinite(v) && v >= 0);
+  if(!values.length) return 0;
+  const windowSize = Math.min(values.length, 6);
+  const recent = values.slice(-windowSize);
+  let weightedSum = 0;
+  let totalWeight = 0;
+  recent.forEach((v, idx) => {
+    const w = idx + 1;
+    weightedSum += v * w;
+    totalWeight += w;
+  });
+  return totalWeight ? (weightedSum / totalWeight) : 0;
+}
+
+function fcBuildForecastRows(options = {}) {
+  if(fcData.length === 0) return [];
+  const { ignoreHourFilter = false } = options;
+
+  const catVal = document.getElementById('fc-category').value;
+  const dayVal = document.getElementById('fc-day').value;
+  const hourVal = document.getElementById('fc-hour').value;
+  const selectedHour = (!ignoreHourFilter && hourVal !== 'all') ? parseInt(hourVal) : null;
+
+  const bucketMap = new Map();
+  fcData.forEach(r => {
+    if(catVal !== 'all' && r.category !== catVal) return;
+    if(dayVal !== 'all' && r.day !== dayVal) return;
+    if(selectedHour !== null && r.hour !== selectedHour) return;
+    if(isNaN(r.hour)) return;
+
+    const dateKey = r.dateKey || `weekday:${r.day}:sample`;
+    const key = [dateKey, r.day || 'Unknown', r.zone, r.hour].join('|');
+    const curr = bucketMap.get(key) || {
+      dateKey,
+      day: r.day || 'Unknown',
+      zone: r.zone,
+      hour: r.hour,
+      volume: 0,
+      pickers: 0
+    };
+    curr.volume += r.volume || 0;
+    curr.pickers += r.pickers || 0;
+    bucketMap.set(key, curr);
+  });
+
+  const groupedSeries = new Map();
+  [...bucketMap.values()]
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+    .forEach(row => {
+      const key = `${row.zone}|${row.hour}`;
+      if(!groupedSeries.has(key)) groupedSeries.set(key, { zone: row.zone, hour: row.hour, volumes: [], pickers: [] });
+      const s = groupedSeries.get(key);
+      s.volumes.push(row.volume);
+      s.pickers.push(row.pickers);
+    });
+
+  const forecastRows = [];
+  groupedSeries.forEach(series => {
+    const volume = fcWeightedMovingAverage(series.volumes);
+    if(volume <= 0) return;
+    const pickers = fcWeightedMovingAverage(series.pickers);
+    forecastRows.push({
+      category: catVal === 'all' ? 'All Categories' : catVal,
+      day: dayVal === 'all' ? 'All Days' : dayVal,
+      hour: series.hour,
+      zone: series.zone,
+      volume,
+      pickers
+    });
+  });
+
+  return forecastRows;
+}
+
 function fcNormalizeCategory(val) {
   if(!val) return '';
   const s = String(val).trim().toLowerCase();
@@ -3454,11 +3559,11 @@ function handleForecastFile(file) {
       if(!zone || vol === 0) continue;
 
       const category = colCategory >= 0 ? fcNormalizeCategory(cellToText(r[colCategory])) : 'All';
-      const day = colDay >= 0 ? fcNormalizeDay(r[colDay]) : 'All';
+      const dateInfo = colDay >= 0 ? fcParseDateInfo(r[colDay]) : { day: 'All', dateKey: '' };
       const hour = colTime >= 0 ? fcParseHour(r[colTime]) : NaN;
       const pickers = colPickers >= 0 ? (parseFloat(r[colPickers]) || 0) : 0;
 
-      parsed.push({ category, day, hour, zone, volume: vol, pickers });
+      parsed.push({ category, day: dateInfo.day, dateKey: dateInfo.dateKey, hour, zone, volume: vol, pickers });
     }
 
     fcData = parsed;
@@ -3511,16 +3616,7 @@ function fcBuildDropdowns() {
 function applyForecastFilters() {
   if(fcData.length === 0) return;
 
-  const catVal = document.getElementById('fc-category').value;
-  const dayVal = document.getElementById('fc-day').value;
-  const hourVal = document.getElementById('fc-hour').value;
-
-  fcFiltered = fcData.filter(r => {
-    if(catVal !== 'all' && r.category !== catVal) return false;
-    if(dayVal !== 'all' && r.day !== dayVal) return false;
-    if(hourVal !== 'all' && r.hour !== parseInt(hourVal)) return false;
-    return true;
-  });
+  fcFiltered = fcBuildForecastRows();
 
   fcBuildKPIs();
   fcDrawZoneMap();
@@ -3802,18 +3898,11 @@ function fcBuildHourlyChart() {
   document.getElementById('fc-hourly-label').textContent = labelParts.length ? labelParts.join(' · ') : 'All Data';
 
   // Aggregate hourly (ignoring hour filter to show full profile)
-  const subset = fcData.filter(r => {
-    if(catVal !== 'all' && r.category !== catVal) return false;
-    if(dayVal !== 'all' && r.day !== dayVal) return false;
-    return true;
-  });
-
   const hourlyVol = {};
   FC_HOURS.forEach(h => hourlyVol[h] = 0);
-  subset.forEach(r => {
-    if(!isNaN(r.hour) && FC_HOURS.includes(r.hour)) {
-      hourlyVol[r.hour] += r.volume;
-    }
+  const hourlyForecast = fcBuildForecastRows({ ignoreHourFilter: true });
+  hourlyForecast.forEach(r => {
+    if(!isNaN(r.hour) && FC_HOURS.includes(r.hour)) hourlyVol[r.hour] += r.volume;
   });
 
   const maxV = Math.max(...Object.values(hourlyVol), 1);
