@@ -637,7 +637,10 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <div id="sec-heatmap" class="section">
   <div class="map-wrap">
     <div class="card-title">Pick Intensity Heatmap — Transaction Data</div>
-    <div class="map-controls" id="heat-controls"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div class="map-controls" id="heat-controls" style="flex:1 1 640px;"></div>
+      <button class="mctl" type="button" onclick="clearHeatFilters()" style="white-space:nowrap;">Clear All</button>
+    </div>
     <canvas id="heat-canvas"></canvas>
     <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
       <span style="font-size:11px;color:var(--text3)">Low density</span>
@@ -934,6 +937,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
 
     <!-- Filter Controls — Toggle Buttons -->
+    <div style="display:flex;justify-content:flex-end;align-items:center;margin-top:14px;margin-bottom:10px;">
+      <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear All</button>
+    </div>
     <div style="margin-top:14px;">
       <div style="margin-bottom:12px;">
         <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:6px;">Category</label>
@@ -2202,6 +2208,13 @@ function toggleHeatHour(hour) {
   } else {
     heatSelectedHours.push(hour);
   }
+  buildHeatControls();
+  drawHeatMap();
+}
+
+function clearHeatFilters() {
+  heatSelectedZones = ['all'];
+  heatSelectedHours = [];
   buildHeatControls();
   drawHeatMap();
 }
@@ -3622,6 +3635,37 @@ function fcToggleFilter(type, value, btn) {
 
     if(type === 'category') fcFilterCat = value;
     else if(type === 'day') fcFilterDay = value;
+  }
+
+  applyForecastFilters();
+}
+
+function fcClearAllFilters() {
+  if(fcData.length === 0) return;
+  fcFilterCat = 'all';
+  fcFilterDay = 'all';
+  fcFilterHours = [];
+
+  const catDiv = document.getElementById('fc-cat-btns');
+  const dayDiv = document.getElementById('fc-day-btns');
+  const hourDiv = document.getElementById('fc-hour-btns');
+
+  if(catDiv) {
+    catDiv.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
+    const allCatBtn = catDiv.querySelector('button');
+    if(allCatBtn) allCatBtn.classList.add('active');
+  }
+
+  if(dayDiv) {
+    dayDiv.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
+    const allDayBtn = dayDiv.querySelector('button');
+    if(allDayBtn) allDayBtn.classList.add('active');
+  }
+
+  if(hourDiv) {
+    hourDiv.querySelectorAll('[data-hour]').forEach(b => {
+      b.classList.toggle('active', b.getAttribute('data-hour') === 'all');
+    });
   }
 
   applyForecastFilters();
