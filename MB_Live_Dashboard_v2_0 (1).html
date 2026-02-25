@@ -889,21 +889,6 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </button>
   </div>
 
-  <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Shift Breakdown Time Inputs</div>
-    <div class="shift-calc-controls">
-      <div class="plan-field" style="min-width:220px;">
-        <label>Shift 2 First Transaction (Shift Start)</label>
-        <input id="sb-s2-first-tx" type="time" value="14:30">
-      </div>
-      <div class="plan-field" style="min-width:220px;">
-        <label>Shift 1 Last Transaction Time</label>
-        <input id="sb-s1-last-tx" type="time" value="16:00">
-      </div>
-      <button class="shift-calc-btn" type="button" onclick="calculateShiftBreakdown()">Calculate</button>
-    </div>
-  </div>
-
   <div class="kpi-row">
     <div class="kpi" style="--kpi-color:#3b82f6">
       <div class="kpi-lbl">Total Units</div>
@@ -1029,10 +1014,25 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
 <!-- SHIFT BREAKDOWN -->
 <div id="sec-shiftbreakdown" class="section">
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Induct Logic — Shift Time Inputs</div>
+    <div class="shift-calc-controls">
+      <div class="plan-field" style="min-width:220px;">
+        <label>Shift 2 First Transaction (Shift Start)</label>
+        <input id="sb-s2-first-tx" type="time" value="14:30">
+      </div>
+      <div class="plan-field" style="min-width:220px;">
+        <label>Shift 1 Last Transaction Time</label>
+        <input id="sb-s1-last-tx" type="time" value="16:00">
+      </div>
+      <button class="shift-calc-btn" type="button" onclick="calculateShiftBreakdown()">Calculate</button>
+    </div>
+  </div>
+
   <div class="sb-cutoff-note" id="sb-cutoff-note">
     <strong>SHIFT LOGIC</strong> Uses dashboard inputs for <strong>Shift 2 First Transaction</strong> and <strong>Shift 1 Last Transaction</strong>.
     S1 = first pick before <span id="sb-cutoff-label">2:30 PM</span> &nbsp;·&nbsp; S2 = first pick at/after <span id="sb-cutoff-label-2">2:30 PM</span> &nbsp;·&nbsp;
-    <strong>Shared</strong> = <span id="sb-overlap-label">2:30 PM – 4:00 PM</span>
+    <strong>Shared</strong> = <span id="sb-overlap-label">2:30 PM – 4:00 PM</span> &nbsp;·&nbsp; <strong>Individual Shift Units exclude Shared Window picks</strong>
   </div>
 
   <!-- Hero cards: S1, Shared, S2 -->
@@ -2869,23 +2869,21 @@ function buildShiftBreakdown() {
   }
 
   const shiftConfig = getShiftBreakdownConfig();
+  const overlapStart = shiftConfig.s2FirstTxMin;
+  const overlapEnd = shiftConfig.s1LastTxMin;
+  const hasOverlapByConfig = shiftConfig.hasSharedWindow;
 
-  // Step 2: Classify each picker as S1 or S2 based on first pick time
-  const pickers = [];
-  for (const [uid, txs] of Object.entries(pickerMap)) {
-    const sorted = txs.slice().sort((a, b) => (a.hour * 60 + (a.minute || 0)) - (b.hour * 60 + (b.minute || 0)));
-    const firstTxMin = sorted[0].hour * 60 + (sorted[0].minute || 0);
-    const lastTxMin = sorted[sorted.length - 1].hour * 60 + (sorted[sorted.length - 1].minute || 0);
-    const shift = firstTxMin < shiftConfig.s2FirstTxMin ? 's1' : 's2';
+  function txMinute(r) {
+    return r.hour * 60 + (r.minute || 0);
+  }
 
-    // Compute zone-run contributions for this picker
-    const sortedForRuns = sorted.map(r => ({
-      txMin: r.hour * 60 + (r.minute || 0),
-      zone: r.zone || 'No Location',
-      units: r.units
-    }));
-    const contrib = computeZoneRunContributions(sortedForRuns);
+  function summarizePickerWindow(txs, txFilter = () => true) {
+    const filtered = txs
+      .filter(txFilter)
+      .map(r => ({ txMin: txMinute(r), zone: r.zone || 'No Location', units: r.units }));
+    if (!filtered.length) return { totalUnits: 0, activeHours: 0, inactiveHours: 0, uph: 0, picks: 0 };
 
+    const contrib = computeZoneRunContributions(filtered);
     let totalUnits = 0, activeMins = 0, inactiveMins = 0;
     for (const z of Object.values(contrib)) {
       totalUnits += z.units;
@@ -2896,6 +2894,21 @@ function buildShiftBreakdown() {
     const activeHours = Math.round(activeMins) / 60;
     const inactiveHours = Math.round(inactiveMins) / 60;
     const uph = activeHours > 0 ? Math.round(totalUnits / activeHours) : 0;
+    return { totalUnits, activeHours, inactiveHours, uph, picks: filtered.length };
+  }
+
+  // Step 2: Classify each picker as S1 or S2 based on first pick time
+  const pickers = [];
+  for (const [uid, txs] of Object.entries(pickerMap)) {
+    const sorted = txs.slice().sort((a, b) => (a.hour * 60 + (a.minute || 0)) - (b.hour * 60 + (b.minute || 0)));
+    const firstTxMin = sorted[0].hour * 60 + (sorted[0].minute || 0);
+    const lastTxMin = sorted[sorted.length - 1].hour * 60 + (sorted[sorted.length - 1].minute || 0);
+    const shift = firstTxMin < shiftConfig.s2FirstTxMin ? 's1' : 's2';
+
+    const fullMetrics = summarizePickerWindow(sorted);
+    const individualMetrics = shift === 's1'
+      ? summarizePickerWindow(sorted, r => !hasOverlapByConfig || txMinute(r) < overlapStart)
+      : summarizePickerWindow(sorted, r => !hasOverlapByConfig || txMinute(r) > overlapEnd);
 
     // Zone spread
     const zones = {};
@@ -2907,8 +2920,16 @@ function buildShiftBreakdown() {
 
     pickers.push({
       uid, shift, firstTxMin, lastTxMin,
-      totalUnits, activeHours, inactiveHours, uph,
-      picks: sorted.length, primaryZone, zones, txs: sorted
+      totalUnits: fullMetrics.totalUnits,
+      activeHours: fullMetrics.activeHours,
+      inactiveHours: fullMetrics.inactiveHours,
+      uph: fullMetrics.uph,
+      picks: sorted.length,
+      individualUnits: individualMetrics.totalUnits,
+      individualActiveHours: individualMetrics.activeHours,
+      individualInactiveHours: individualMetrics.inactiveHours,
+      individualUPH: individualMetrics.uph,
+      primaryZone, zones, txs: sorted
     });
   }
 
@@ -2917,9 +2938,9 @@ function buildShiftBreakdown() {
   const s2Pickers = pickers.filter(p => p.shift === 's2');
 
   function aggShift(arr) {
-    const totalUnits = arr.reduce((s, p) => s + p.totalUnits, 0);
-    const totalActiveHours = arr.reduce((s, p) => s + p.activeHours, 0);
-    const totalInactiveHours = arr.reduce((s, p) => s + p.inactiveHours, 0);
+    const totalUnits = arr.reduce((s, p) => s + p.individualUnits, 0);
+    const totalActiveHours = arr.reduce((s, p) => s + p.individualActiveHours, 0);
+    const totalInactiveHours = arr.reduce((s, p) => s + p.individualInactiveHours, 0);
     const avgUPH = totalActiveHours > 0 ? Math.round(totalUnits / totalActiveHours) : 0;
     return { count: arr.length, totalUnits, totalActiveHours, totalInactiveHours, avgUPH };
   }
@@ -2929,9 +2950,7 @@ function buildShiftBreakdown() {
 
   // Step 4: Overlap window from dashboard inputs
   // Shared units = from Shift 2 first transaction through Shift 1 last transaction.
-  const overlapStart = shiftConfig.s2FirstTxMin;
-  const overlapEnd   = shiftConfig.s1LastTxMin;
-  const hasOverlap   = shiftConfig.hasSharedWindow && s1Pickers.length > 0 && s2Pickers.length > 0;
+  const hasOverlap = hasOverlapByConfig && s1Pickers.length > 0 && s2Pickers.length > 0;
 
   // Aggregate the shared (overlap) window metrics from ALL pickers
   function aggWindow(pickerSubset, txFilter) {
@@ -2960,7 +2979,7 @@ function buildShiftBreakdown() {
 
   const sharedAgg = hasOverlap
     ? aggWindow(pickers, r => {
-        const m = r.hour * 60 + (r.minute || 0);
+        const m = txMinute(r);
         return m >= overlapStart && m <= overlapEnd;
       })
     : { count: 0, totalUnits: 0, totalActiveHours: 0, totalInactiveHours: 0, avgUPH: 0 };
@@ -2994,16 +3013,16 @@ function buildShiftBreakdown() {
   }
 
   const scenarioS1 = hasOverlap
-    ? computeScenarioUPH(s1Pickers, r => (r.hour * 60 + (r.minute || 0)) < overlapStart)
+    ? computeScenarioUPH(s1Pickers, r => txMinute(r) < overlapStart)
     : computeScenarioUPH(s1Pickers, () => true);
   const scenarioShared = hasOverlap
     ? computeScenarioUPH(pickers, r => {
-        const m = r.hour * 60 + (r.minute || 0);
+        const m = txMinute(r);
         return m >= overlapStart && m <= overlapEnd;
       })
     : { totalUnits: 0, activeHrs: 0, inactiveHrs: 0, uph: 0, pickerCount: 0 };
   const scenarioS2 = hasOverlap
-    ? computeScenarioUPH(s2Pickers, r => (r.hour * 60 + (r.minute || 0)) > overlapEnd)
+    ? computeScenarioUPH(s2Pickers, r => txMinute(r) > overlapEnd)
     : computeScenarioUPH(s2Pickers, () => true);
 
   // Step 5: Render hero cards
@@ -3034,7 +3053,7 @@ function buildShiftBreakdown() {
       </div>
       <div class="sb-hero-body">
         <div class="sb-hero-val" style="color:#3b82f6">${s1Agg.totalUnits.toLocaleString()}</div>
-        <div class="sb-hero-sub">total units · first pick before ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
+        <div class="sb-hero-sub">individual units (shared excluded) · first pick before ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
       </div>
       <div class="sb-metrics-row">
         <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s1Agg.totalActiveHours)}</div></div>
@@ -3066,7 +3085,7 @@ function buildShiftBreakdown() {
       </div>
       <div class="sb-hero-body">
         <div class="sb-hero-val" style="color:#8b5cf6">${s2Agg.totalUnits.toLocaleString()}</div>
-        <div class="sb-hero-sub">total units · first pick at/after ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
+        <div class="sb-hero-sub">individual units (shared excluded) · first pick at/after ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
       </div>
       <div class="sb-metrics-row">
         <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s2Agg.totalActiveHours)}</div></div>
@@ -3111,13 +3130,13 @@ function buildShiftBreakdown() {
   // Step 9: Render picker table
   const filter = document.getElementById('sb-shift-filter')?.value || 'all';
   const filtered = filter === 'all' ? pickers : pickers.filter(p => p.shift === filter);
-  filtered.sort((a, b) => b.totalUnits - a.totalUnits);
+  filtered.sort((a, b) => b.individualUnits - a.individualUnits);
 
   const countEl = document.getElementById('sb-picker-count');
   if (countEl) countEl.textContent = `${filtered.length} pickers`;
 
   const tbl = document.getElementById('sb-picker-table');
-  const maxUnits = Math.max(...filtered.map(p => p.totalUnits), 1);
+  const maxUnits = Math.max(...filtered.map(p => p.individualUnits), 1);
 
   let html = `<thead><tr>
     <th>Picker</th>
@@ -3134,22 +3153,22 @@ function buildShiftBreakdown() {
   </tr></thead><tbody>`;
 
   for (const p of filtered) {
-    const barPct = (p.totalUnits / maxUnits * 100).toFixed(0);
-    const uphColor = p.uph >= 200 ? '#22c55e' : p.uph >= 150 ? '#f59e0b' : '#ef4444';
+    const barPct = (p.individualUnits / maxUnits * 100).toFixed(0);
+    const uphColor = p.individualUPH >= 200 ? '#22c55e' : p.individualUPH >= 150 ? '#f59e0b' : '#ef4444';
     const shiftColor = p.shift === 's1' ? '#3b82f6' : '#8b5cf6';
     const zoneColor = ZONE_COLORS[p.primaryZone] || '#64748b';
-    const inactiveColor = p.inactiveHours > 1 ? '#ef4444' : p.inactiveHours > 0.5 ? '#f59e0b' : '#22c55e';
+    const inactiveColor = p.individualInactiveHours > 1 ? '#ef4444' : p.individualInactiveHours > 0.5 ? '#f59e0b' : '#22c55e';
 
     html += `<tr>
       <td style="color:var(--text);font-weight:600;">${p.uid}</td>
       <td><span class="sb-shift-tag ${p.shift}"><span style="width:5px;height:5px;border-radius:50%;background:${shiftColor};display:inline-block;"></span>${p.shift === 's1' ? 'S1' : 'S2'}</span></td>
       <td>${fmtTime(p.firstTxMin)}</td>
       <td>${fmtTime(p.lastTxMin)}</td>
-      <td style="font-weight:700;color:var(--text);">${p.totalUnits.toLocaleString()}</td>
+      <td style="font-weight:700;color:var(--text);">${p.individualUnits.toLocaleString()}</td>
       <td>${p.picks.toLocaleString()}</td>
-      <td style="color:#22c55e">${p.activeHours.toFixed(2)}</td>
-      <td style="color:${inactiveColor};font-weight:600;">${p.inactiveHours.toFixed(2)}</td>
-      <td style="color:${uphColor};font-weight:700;">${p.uph.toLocaleString()}</td>
+      <td style="color:#22c55e">${p.individualActiveHours.toFixed(2)}</td>
+      <td style="color:${inactiveColor};font-weight:600;">${p.individualInactiveHours.toFixed(2)}</td>
+      <td style="color:${uphColor};font-weight:700;">${p.individualUPH.toLocaleString()}</td>
       <td><span class="zpill" style="background:${zoneColor}18;color:${zoneColor};font-size:10px;"><span style="width:5px;height:5px;border-radius:50%;background:${zoneColor};display:inline-block;"></span>${p.primaryZone}</span></td>
       <td style="position:relative;min-width:80px;">
         <div class="sb-bar-bg"></div>
