@@ -679,6 +679,48 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 .sb-table tbody tr:hover {
   background: rgba(59,130,246,0.04);
 }
+.sb-picker-name {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  color: var(--text);
+}
+.sb-zone-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.sb-zone-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.sb-volume-cell {
+  min-width: 150px;
+}
+.sb-volume-track {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(59,130,246,0.15);
+  overflow: hidden;
+  position: relative;
+}
+.sb-volume-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+.sb-volume-label {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text3);
+  font-family: 'IBM Plex Mono', monospace;
+}
 .sb-shift-tag {
   display: inline-flex;
   align-items: center;
@@ -1031,14 +1073,6 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <!-- Populated by JS -->
   </div>
 
-  <!-- UPH Range Breakdown -->
-  <div class="card" style="margin-bottom:20px;">
-    <div class="card-title">UPH Performance — Picker Breakdown by Range</div>
-    <div class="sb-uph-scenarios" id="sb-uph-scenarios">
-      <!-- Populated by JS -->
-    </div>
-  </div>
-
   <!-- Distribution chart + picker summary -->
   <div class="sb-detail-grid">
     <div class="card" style="margin-bottom:0;">
@@ -1054,10 +1088,10 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
   </div>
 
-  <!-- UPH bucket summary table -->
+  <!-- Individual picker breakdown table -->
   <div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div class="card-title" style="margin-bottom:0;">UPH Bucket Summary</div>
+      <div class="card-title" style="margin-bottom:0;">Individual Picker Breakdown</div>
       <div style="display:flex;align-items:center;gap:10px;">
         <select id="sb-shift-filter" onchange="buildShiftBreakdown()"
           style="background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);font-size:11px;padding:5px 10px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
@@ -1069,7 +1103,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       </div>
     </div>
     <div class="sb-table-wrap" style="max-height:480px;overflow-y:auto;">
-      <table class="sb-table" id="sb-bucket-table">
+      <table class="sb-table" id="sb-picker-table">
         <!-- Populated by JS -->
       </table>
     </div>
@@ -3371,15 +3405,6 @@ function buildShiftBreakdown() {
   const s1Pickers = pickers.filter(p => p.shift === 's1');
   const s2Pickers = pickers.filter(p => p.shift === 's2');
 
-  const uphRanges = [
-    { label: '200+ UPH', test: v => v >= 200 },
-    { label: '175 – 199 UPH', test: v => v >= 175 && v < 200 },
-    { label: '150 – 174 UPH', test: v => v >= 150 && v < 175 },
-    { label: '125 – 149 UPH', test: v => v >= 125 && v < 150 },
-    { label: '100 – 124 UPH', test: v => v >= 100 && v < 125 },
-    { label: 'Below 100 UPH', test: v => v < 100 }
-  ];
-
   function aggShift(arr) {
     const totalUnits = arr.reduce((s, p) => s + p.individualUnits, 0);
     const totalActiveHours = arr.reduce((s, p) => s + p.individualActiveHours, 0);
@@ -3542,155 +3567,73 @@ function buildShiftBreakdown() {
     </div>
   `;
 
-  // Step 6: Render detailed picker UPH breakdown by shift window and UPH range
-  const scenarioEl = document.getElementById('sb-uph-scenarios');
-  const overlapLabel = hasOverlap ? `${fmtTime(overlapStart)} – ${fmtTime(overlapEnd)}` : 'No overlap window';
-  function collectScenarioPickers(pickerSubset, txFilter) {
-    const rows = [];
-    for (const p of pickerSubset) {
-      const filtered = p.txs.filter(txFilter).map(r => ({
-        txMin: r.hour * 60 + (r.minute || 0),
-        zone: r.zone || 'No Location',
-        units: r.units
-      }));
-      if (!filtered.length) continue;
-
-      const contrib = computeZoneRunContributions(filtered);
-      let totalUnits = 0, activeMins = 0, inactiveMins = 0;
-      const zoneNames = [];
-      for (const [zoneName, zoneData] of Object.entries(contrib)) {
-        totalUnits += zoneData.units;
-        activeMins += zoneData.activeMinutes;
-        inactiveMins += zoneData.inactiveMinutes;
-        zoneNames.push(zoneName);
-      }
-
-      const activeHours = Math.round(activeMins) / 60;
-      const inactiveHours = Math.round(inactiveMins) / 60;
-      const uph = calcUPHFromOverviewFormula(totalUnits, activeMins);
-
-      rows.push({
-        uid: p.uid,
-        shift: p.shift,
-        zones: zoneNames.sort().join(', '),
-        totalUnits,
-        activeHours,
-        inactiveHours,
-        uph
-      });
-    }
-    return rows.sort((a, b) => b.uph - a.uph);
-  }
-
-  const scenarios = [
-    {
-      title: 'Shift 1 (S1)',
-      desc: hasOverlap ? `All pickers · before ${fmtTime(overlapStart)}` : 'S1 pickers · full shift',
-      rows: hasOverlap ? collectScenarioPickers(pickers, r => txMinute(r) < overlapStart) : collectScenarioPickers(s1Pickers, () => true)
-    },
-    {
-      title: 'Shared (Overlap)',
-      desc: hasOverlap ? `All pickers · overlap ${overlapLabel}` : 'No overlap window detected',
-      rows: hasOverlap ? collectScenarioPickers(pickers, r => {
-        const m = txMinute(r);
-        return m >= overlapStart && m <= overlapEnd;
-      }) : []
-    },
-    {
-      title: 'Shift 2 (S2)',
-      desc: hasOverlap ? `All pickers · after ${fmtTime(overlapEnd)}` : 'S2 pickers · full shift',
-      rows: hasOverlap ? collectScenarioPickers(pickers, r => txMinute(r) > overlapEnd) : collectScenarioPickers(s2Pickers, () => true)
-    }
-  ];
-
-  scenarioEl.innerHTML = scenarios.map(s => {
-    const bucketRows = uphRanges.map(range => {
-      const members = s.rows.filter(r => range.test(r.uph));
-      const pickerCount = members.length;
-      const totalUnits = members.reduce((sum, r) => sum + (r.totalUnits || 0), 0);
-      const totalActiveMinutes = members.reduce((sum, r) => sum + ((r.activeHours || 0) * 60), 0);
-      const totalInactiveHours = members.reduce((sum, r) => sum + (r.inactiveHours || 0), 0);
-      const uph = calcUPHFromOverviewFormula(totalUnits, totalActiveMinutes);
-      return {
-        label: range.label,
-        pickerCount,
-        totalActiveHours: totalActiveMinutes / 60,
-        totalInactiveHours,
-        totalUnits,
-        uph
-      };
-    });
-
-    const body = bucketRows.map(r => {
-      const uphColor = r.uph >= 200 ? '#22c55e' : r.uph >= 150 ? '#f59e0b' : '#ef4444';
-      return `<tr>
-        <td style="font-weight:700;color:var(--text);">${r.label}</td>
-        <td>${r.pickerCount}</td>
-        <td style="color:#22c55e;">${r.totalActiveHours.toFixed(2)}</td>
-        <td style="color:#ef4444;">${r.totalInactiveHours.toFixed(2)}</td>
-        <td style="font-weight:700;color:var(--text);">${Math.round(r.totalUnits).toLocaleString()}</td>
-        <td style="font-weight:700;color:${uphColor};">${r.uph.toLocaleString()}</td>
-      </tr>`;
-    }).join('');
-
-    return `
-      <div class="card" style="margin-bottom:12px;border:1px solid rgba(148,163,184,.2);">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;">
-          <div class="card-title" style="margin-bottom:0;">${s.title}</div>
-          <div style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">${s.desc}</div>
-        </div>
-        <div class="sb-table-wrap" style="max-height:260px;margin-top:10px;">
-          <table class="sb-table">
-            <thead><tr><th>UPH Bucket</th><th>Pickers</th><th>Total Active Hrs</th><th>Total Inactive Hrs</th><th>Total Units</th><th>UPH</th></tr></thead>
-            <tbody>${body}</tbody>
-          </table>
-        </div>
-      </div>`;
-  }).join('');
-
   // Step 7: Render donut chart
   drawShiftDonut(s1Agg.count, s2Agg.count);
 
   // Step 8: Render comparison bar chart (S1 vs Shared vs S2)
   drawShiftComparisonChart(s1Agg, sharedAgg, s2Agg);
 
-  // Step 9: Render UPH bucket summary table
+  // Step 9: Render individual picker table
   const filter = document.getElementById('sb-shift-filter')?.value || 'all';
   const filtered = filter === 'all' ? pickers : pickers.filter(p => p.shift === filter);
 
   const countEl = document.getElementById('sb-picker-count');
   if (countEl) countEl.textContent = `${filtered.length} pickers`;
 
-  const tbl = document.getElementById('sb-bucket-table');
+  const tbl = document.getElementById('sb-picker-table');
+  const sortedRows = filtered.slice().sort((a, b) => b.totalUnits - a.totalUnits);
+  const maxUnits = sortedRows[0]?.totalUnits || 1;
 
-  const bucketRows = uphRanges.map(range => {
-    const members = filtered.filter(p => range.test(p.individualUPH || 0));
-    const pickerCount = members.length;
-    const totalUnits = members.reduce((sum, p) => sum + (p.individualUnits || 0), 0);
-    const totalActiveMinutes = members.reduce((sum, p) => sum + ((p.individualActiveHours || 0) * 60), 0);
-    const totalInactiveHours = members.reduce((sum, p) => sum + (p.individualInactiveHours || 0), 0);
-    const uph = calcUPHFromOverviewFormula(totalUnits, totalActiveMinutes);
-    return { label: range.label, pickerCount, totalUnits, totalActiveHours: totalActiveMinutes / 60, totalInactiveHours, uph };
-  });
+  function uphColor(uph) {
+    if (uph >= 250) return '#22c55e';
+    if (uph >= 200) return '#16a34a';
+    if (uph >= 160) return '#f59e0b';
+    return '#ef4444';
+  }
+
+  function zoneChip(zoneName) {
+    const zone = String(zoneName || '').trim();
+    const lower = zone.toLowerCase();
+    if (lower.includes('zone 1')) return { bg: 'rgba(37,99,235,0.15)', fg: '#3b82f6', dot: '#3b82f6', label: 'Zone 1' };
+    if (lower.includes('zone 2')) return { bg: 'rgba(34,197,94,0.15)', fg: '#22c55e', dot: '#22c55e', label: 'Zone 2' };
+    if (lower.includes('zone 3')) return { bg: 'rgba(245,158,11,0.15)', fg: '#f59e0b', dot: '#f59e0b', label: 'Zone 3' };
+    if (lower.includes('paint')) return { bg: 'rgba(239,68,68,0.15)', fg: '#ef4444', dot: '#ef4444', label: 'Paint' };
+    return { bg: 'rgba(148,163,184,0.15)', fg: '#94a3b8', dot: '#94a3b8', label: zone || 'No Location' };
+  }
 
   let html = `<thead><tr>
-    <th>UPH Bucket</th>
-    <th>Pickers</th>
-    <th>Total Active Hrs</th>
-    <th>Total Inactive Hrs</th>
+    <th>Picker</th>
+    <th>Shift</th>
+    <th>First Pick</th>
+    <th>Last Pick</th>
     <th>Total Units</th>
+    <th>Picks</th>
+    <th>Active Hrs</th>
+    <th>Inactive Hrs</th>
     <th>UPH</th>
+    <th>Primary Zone</th>
+    <th>Volume</th>
   </tr></thead><tbody>`;
 
-  bucketRows.forEach(r => {
-    const uphColor = r.uph >= 200 ? '#22c55e' : r.uph >= 160 ? '#f59e0b' : '#ef4444';
+  sortedRows.forEach(p => {
+    const zone = zoneChip(p.primaryZone);
+    const pct = Math.max(0, Math.min(100, Math.round((p.totalUnits / maxUnits) * 100)));
+    const shiftDot = p.shift === 's1' ? '#3b82f6' : '#8b5cf6';
     html += `<tr>
-      <td style="font-weight:700;color:var(--text);">${r.label}</td>
-      <td>${r.pickerCount}</td>
-      <td style="color:#22c55e;">${r.totalActiveHours.toFixed(2)}</td>
-      <td style="color:#ef4444;">${r.totalInactiveHours.toFixed(2)}</td>
-      <td style="font-weight:700;color:var(--text);">${Math.round(r.totalUnits).toLocaleString()}</td>
-      <td style="font-weight:700;color:${uphColor};">${r.uph.toLocaleString()}</td>
+      <td class="sb-picker-name">${p.uid}</td>
+      <td><span class="sb-shift-tag ${p.shift}" style="text-transform:uppercase;"><span style="color:${shiftDot}">&#9679;</span>${p.shift}</span></td>
+      <td style="color:#93c5fd;">${fmtTime(p.firstTxMin)}</td>
+      <td style="color:#93c5fd;">${fmtTime(p.lastTxMin)}</td>
+      <td style="font-weight:700;color:var(--text);">${Math.round(p.totalUnits).toLocaleString()}</td>
+      <td>${p.picks.toLocaleString()}</td>
+      <td style="font-weight:700;color:#22c55e;">${p.activeHours.toFixed(2)}</td>
+      <td style="font-weight:700;color:${p.inactiveHours >= 1.2 ? '#ef4444' : p.inactiveHours >= 0.6 ? '#f59e0b' : '#22c55e'};">${p.inactiveHours.toFixed(2)}</td>
+      <td style="font-weight:700;color:${uphColor(p.uph)};">${p.uph.toLocaleString()}</td>
+      <td><span class="sb-zone-badge" style="background:${zone.bg};color:${zone.fg};"><span class="sb-zone-dot" style="background:${zone.dot};"></span>${zone.label}</span></td>
+      <td class="sb-volume-cell">
+        <div class="sb-volume-track"><div class="sb-volume-fill" style="width:${pct}%;background:${p.shift === 's1' ? '#3b82f6' : '#8b5cf6'};"></div></div>
+        <div class="sb-volume-label">${pct}%</div>
+      </td>
     </tr>`;
   });
 
