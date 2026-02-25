@@ -529,27 +529,6 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 }
 .loading-bar.show { display: block; }
 
-/* ─── FORECAST ───────────────────────────── */
-#fc-drop-zone {
-  border: 1.5px dashed var(--border2);
-  border-radius: 8px;
-  padding: 10px 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  background: var(--surf1);
-  position: relative;
-}
-#fc-drop-zone:hover {
-  border-color: var(--cyan);
-  background: rgba(6,182,212,0.06);
-}
-#fc-drop-zone input[type=file] {
-  position: absolute; inset: 0; opacity: 0; cursor: pointer;
-}
-
 /* ─── SHIFT BREAKDOWN ─────────────────────── */
 .sb-hero-grid {
   display: grid;
@@ -1380,9 +1359,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <!-- Forecast Excel File Upload -->
     <div class="drop-zone" id="fc-drop-zone" style="margin-bottom:14px;">
       <input type="file" id="fc-file-input" accept=".xlsx,.xls" onchange="handleForecastFile(this.files[0])">
-      <div class="drop-icon">📊</div>
+      <div class="drop-icon">📂</div>
       <div class="drop-text">
-        <strong>Excel File Upload · Drop Forecast file here</strong>
+        <strong>Drop updated Excel file here</strong>
         <span>Sheet: "Forecast Data" · Columns: Actual Start Time, X, Y, Completed Units, User ID, Date, Day, Category</span>
       </div>
     </div>
@@ -1393,26 +1372,30 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
 
     <!-- Filter Controls — Toggle Buttons -->
-    <div style="display:flex;justify-content:flex-end;align-items:center;margin-top:14px;margin-bottom:10px;">
-      <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear All</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;margin-bottom:10px;">
+      <div id="fc-refresh-window-label" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">Window: All days · all hours</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="mctl" type="button" onclick="fcRefreshToCurrentWindow()">Refresh</button>
+        <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear All</button>
+      </div>
     </div>
     <div style="margin-top:14px;">
       <div style="margin-bottom:12px;">
         <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:6px;">Category</label>
         <div id="fc-cat-btns" style="display:flex;flex-wrap:wrap;gap:6px;">
-          <button class="mctl active" onclick="fcToggleFilter('category','all',this)">All</button>
+          <button class="mctl active" data-category="all" onclick="fcToggleFilter('category','all',this)">All</button>
         </div>
       </div>
       <div style="margin-bottom:12px;">
         <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:6px;">Day</label>
         <div id="fc-day-btns" style="display:flex;flex-wrap:wrap;gap:6px;">
-          <button class="mctl active" onclick="fcToggleFilter('day','all',this)">All</button>
+          <button class="mctl active" data-day="all" onclick="fcToggleFilter('day','all',this)">All Days</button>
         </div>
       </div>
       <div style="margin-bottom:12px;">
         <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:6px;">Hour <span style="text-transform:none;letter-spacing:0;color:var(--text3);font-size:9px;">(single or multi-select)</span></label>
         <div id="fc-hour-btns" style="display:flex;flex-wrap:wrap;gap:6px;">
-          <button class="mctl active" onclick="fcToggleFilter('hour','all',this)">All</button>
+          <button class="mctl active" data-hour="all" onclick="fcToggleFilter('hour','all',this)">All</button>
         </div>
       </div>
     </div>
@@ -5036,32 +5019,71 @@ function fcToggleFilter(type, value, btn) {
 
 function fcClearAllFilters() {
   if(fcData.length === 0) return;
-  fcFilterCat = 'all';
-  fcFilterDay = 'all';
+  fcSetSingleFilter('category', 'all');
+  fcSetSingleFilter('day', 'all');
   fcFilterHours = [];
+  fcSyncHourButtons();
+  fcUpdateRefreshWindowLabel();
+  applyForecastFilters();
+}
 
-  const catDiv = document.getElementById('fc-cat-btns');
-  const dayDiv = document.getElementById('fc-day-btns');
+
+function fcSetSingleFilter(type, value) {
+  const containerId = type === 'category' ? 'fc-cat-btns' : 'fc-day-btns';
+  const dataAttr = type === 'category' ? 'data-category' : 'data-day';
+  const container = document.getElementById(containerId);
+  if(container) {
+    container.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
+    let target = container.querySelector(`[${dataAttr}="${value}"]`);
+    if(!target && value === 'all') target = container.querySelector('button');
+    if(target) target.classList.add('active');
+  }
+  if(type === 'category') fcFilterCat = value;
+  else fcFilterDay = value;
+}
+
+function fcSyncHourButtons() {
   const hourDiv = document.getElementById('fc-hour-btns');
+  if(!hourDiv) return;
+  hourDiv.querySelectorAll('[data-hour]').forEach(b => {
+    const hv = b.getAttribute('data-hour');
+    if(hv === 'all') b.classList.toggle('active', fcFilterHours.length === 0);
+    else b.classList.toggle('active', fcFilterHours.includes(parseInt(hv, 10)));
+  });
+}
 
-  if(catDiv) {
-    catDiv.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
-    const allCatBtn = catDiv.querySelector('button');
-    if(allCatBtn) allCatBtn.classList.add('active');
+function fcUpdateRefreshWindowLabel() {
+  const label = document.getElementById('fc-refresh-window-label');
+  if(!label) return;
+  const dayLabel = fcFilterDay === 'all' ? 'All days' : fcFilterDay;
+  const hourLabel = fcFilterHours.length
+    ? fcFilterHours.slice().sort((a,b) => ((a < 6 ? a + 24 : a) - (b < 6 ? b + 24 : b))).map(fcFormatHour).join(' → ')
+    : 'all hours';
+  label.textContent = `Window: ${dayLabel} · ${hourLabel}`;
+}
+
+function fcRefreshToCurrentWindow() {
+  if(fcData.length === 0) return;
+
+  const now = new Date();
+  const startHour = now.getHours();
+  const targetHours = [startHour, (startHour + 1) % 24, (startHour + 2) % 24];
+  const availableDays = new Set(fcData.map(r => r.day).filter(Boolean));
+  const currentDay = FC_DAY_ORDER[now.getDay()] || 'all';
+  const endHour = (startHour + 3) % 24;
+  const wrapsMidnight = endHour <= startHour;
+
+  if(wrapsMidnight) {
+    fcSetSingleFilter('day', 'all');
+  } else if(availableDays.has(currentDay)) {
+    fcSetSingleFilter('day', currentDay);
+  } else {
+    fcSetSingleFilter('day', 'all');
   }
 
-  if(dayDiv) {
-    dayDiv.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
-    const allDayBtn = dayDiv.querySelector('button');
-    if(allDayBtn) allDayBtn.classList.add('active');
-  }
-
-  if(hourDiv) {
-    hourDiv.querySelectorAll('[data-hour]').forEach(b => {
-      b.classList.toggle('active', b.getAttribute('data-hour') === 'all');
-    });
-  }
-
+  fcFilterHours = targetHours;
+  fcSyncHourButtons();
+  fcUpdateRefreshWindowLabel();
   applyForecastFilters();
 }
 
@@ -5069,11 +5091,12 @@ function fcBuildToggleButtons() {
   // Category buttons
   const cats = [...new Set(fcData.map(r => r.category))].filter(Boolean).sort();
   const catDiv = document.getElementById('fc-cat-btns');
-  catDiv.innerHTML = '<button class="mctl active" onclick="fcToggleFilter(\'category\',\'all\',this)">All</button>';
+  catDiv.innerHTML = '<button class="mctl active" data-category="all" onclick="fcToggleFilter(\'category\',\'all\',this)">All</button>';
   cats.forEach(c => {
     const btn = document.createElement('button');
     btn.className = 'mctl';
     btn.textContent = c;
+    btn.setAttribute('data-category', c);
     btn.onclick = function() { fcToggleFilter('category', c, this); };
     catDiv.appendChild(btn);
   });
@@ -5087,11 +5110,12 @@ function fcBuildToggleButtons() {
     return a.localeCompare(b);
   });
   const dayDiv = document.getElementById('fc-day-btns');
-  dayDiv.innerHTML = '<button class="mctl active" onclick="fcToggleFilter(\'day\',\'all\',this)">All</button>';
+  dayDiv.innerHTML = '<button class="mctl active" data-day="all" onclick="fcToggleFilter(\'day\',\'all\',this)">All Days</button>';
   days.forEach(d => {
     const btn = document.createElement('button');
     btn.className = 'mctl';
     btn.textContent = d;
+    btn.setAttribute('data-day', d);
     btn.onclick = function() { fcToggleFilter('day', d, this); };
     dayDiv.appendChild(btn);
   });
@@ -5118,6 +5142,7 @@ function fcBuildToggleButtons() {
   fcFilterCat = 'all';
   fcFilterDay = 'all';
   fcFilterHours = [];
+  fcUpdateRefreshWindowLabel();
 }
 
 // ─── File Parsing ────────────────────────────
@@ -5263,6 +5288,7 @@ function fcBuildKPIs() {
     parts.push(sorted.map(fcFormatHour).join(', '));
   }
   document.getElementById('fc-kpi-volume-sub').textContent = parts.length ? parts.join(' · ') : 'all data';
+  fcUpdateRefreshWindowLabel();
 }
 
 // ─── Zone Map (Overview style) ───────────────
