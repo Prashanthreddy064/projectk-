@@ -3686,35 +3686,76 @@ function buildShiftBreakdown() {
   buildBucketUPHTable(pickers);
 }
 
-function buildBucketUPHTable(pickers) {
+function buildBucketUPHTable(pickers = []) {
   const table = document.getElementById('sb-bucket-uph-table');
   if (!table) return;
 
   const view = document.getElementById('sb-bucket-filter')?.value || 'overall';
   const ranges = [
-    { label: '200+', min: 200, max: Infinity },
-    { label: '175 – 199 UPH', min: 175, max: 200 },
-    { label: '150 – 175 UPH', min: 150, max: 175 },
-    { label: '125 – 150 UPH', min: 125, max: 150 },
-    { label: '100 – 125 UPH', min: 100, max: 125 },
-    { label: 'Below 100 UPH', min: -Infinity, max: 100 }
+    { label: '200+ UPH', min: 200, max: Infinity },
+    { label: '175 – 199 UPH', min: 175, max: 199 },
+    { label: '150 – 174 UPH', min: 150, max: 174 },
+    { label: '125 – 149 UPH', min: 125, max: 149 },
+    { label: '100 – 124 UPH', min: 100, max: 124 },
+    { label: 'Below 100 UPH', min: -Infinity, max: 99 }
   ];
+
+  function toSafeNumber(v, fallback = 0) {
+    return Number.isFinite(Number(v)) ? Number(v) : fallback;
+  }
+
+  function normalizeMetric(metric) {
+    if (!metric) return null;
+    const picks = Math.max(0, Math.round(toSafeNumber(metric.picks, 0)));
+    if (picks <= 0) return null;
+
+    const units = Math.max(0, toSafeNumber(metric.units, 0));
+    const zoneCount = Math.max(0, Math.round(toSafeNumber(metric.zoneCount, 0)));
+    const activeHours = Math.max(0, toSafeNumber(metric.activeHours, 0));
+    const providedUPH = toSafeNumber(metric.uph, NaN);
+    const fallbackUPH = activeHours > 0 ? Math.round(units / activeHours) : 0;
+    const uph = Number.isFinite(providedUPH) ? Math.max(0, Math.round(providedUPH)) : fallbackUPH;
+
+    return { uph, units, picks, zoneCount };
+  }
 
   function pickerMetric(p) {
     if (view === 's1') {
-      if (p.shift !== 's1' || p.individualPicks <= 0) return null;
-      return { uph: p.individualUPH, units: p.individualUnits, picks: p.individualPicks, zoneCount: p.individualZoneCount };
+      if (p.shift !== 's1') return null;
+      return normalizeMetric({
+        uph: p.individualUPH,
+        units: p.individualUnits,
+        picks: p.individualPicks,
+        zoneCount: p.individualZoneCount,
+        activeHours: p.individualActiveHours
+      });
     }
     if (view === 's2') {
-      if (p.shift !== 's2' || p.individualPicks <= 0) return null;
-      return { uph: p.individualUPH, units: p.individualUnits, picks: p.individualPicks, zoneCount: p.individualZoneCount };
+      if (p.shift !== 's2') return null;
+      return normalizeMetric({
+        uph: p.individualUPH,
+        units: p.individualUnits,
+        picks: p.individualPicks,
+        zoneCount: p.individualZoneCount,
+        activeHours: p.individualActiveHours
+      });
     }
     if (view === 'shared') {
-      if (p.sharedPicks <= 0) return null;
-      return { uph: p.sharedUPH, units: p.sharedUnits, picks: p.sharedPicks, zoneCount: p.sharedZoneCount };
+      return normalizeMetric({
+        uph: p.sharedUPH,
+        units: p.sharedUnits,
+        picks: p.sharedPicks,
+        zoneCount: p.sharedZoneCount,
+        activeHours: p.sharedActiveHours
+      });
     }
-    if (p.picks <= 0) return null;
-    return { uph: p.uph, units: p.totalUnits, picks: p.picks, zoneCount: p.overallZoneCount };
+    return normalizeMetric({
+      uph: p.uph,
+      units: p.totalUnits,
+      picks: p.picks,
+      zoneCount: p.overallZoneCount,
+      activeHours: p.activeHours
+    });
   }
 
   const bucketStats = ranges.map(r => ({ ...r, pickerCount: 0, totalZones: 0, totalUPH: 0, totalUnits: 0, totalPicks: 0 }));
@@ -3722,7 +3763,7 @@ function buildBucketUPHTable(pickers) {
   pickers.forEach(p => {
     const m = pickerMetric(p);
     if (!m) return;
-    const bucket = bucketStats.find(b => m.uph >= b.min && m.uph < b.max);
+    const bucket = bucketStats.find(b => m.uph >= b.min && m.uph <= b.max);
     if (!bucket) return;
     bucket.pickerCount++;
     bucket.totalZones += m.zoneCount;
@@ -3734,7 +3775,7 @@ function buildBucketUPHTable(pickers) {
   const viewLabel = view === 'overall' ? 'Overall' : view.toUpperCase();
   let html = `<thead><tr>
     <th>UPH Range (${viewLabel})</th>
-    <th>Count of Picker</th>
+    <th>Picker Count</th>
     <th>Number of Zones</th>
     <th>Average UPH</th>
     <th>Total Units</th>
