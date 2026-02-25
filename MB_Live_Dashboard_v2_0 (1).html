@@ -1136,6 +1136,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <div id="sec-zonestats" class="section">
   <div class="card">
     <div class="card-title">Detailed Zone Statistics — From Loaded Data</div>
+    <div id="zstats-controls" style="margin-bottom:14px;"></div>
     <table id="zstats-table"></table>
   </div>
 </div>
@@ -1537,6 +1538,7 @@ let hourlyData = {};    // hour -> units
 let dataSource = 'default';   // 'default' | 'dropped'
 let heatSelectedZones = ['all'];
 let heatSelectedIntervals = [];
+let zoneStatsSelectedIntervals = [];
 let droppedFileName = '';
 let uploadedTxAll = [];
 let selectedOpsDate = '';
@@ -1999,6 +2001,7 @@ function assignZonesAndBuild(rows, filename) {
     } else {
       uploadedTxAll = rows;
       dataSource = 'dropped';
+      zoneStatsSelectedIntervals = [];
       droppedFileName = filename;
       updateOpsDateSelector();
       updateOpsMetadataLabels();
@@ -2230,6 +2233,7 @@ function loadDefaults() {
   hourlyData = hd;
   gridData   = DEFAULT_GRID;
   dataSource = 'default';
+  zoneStatsSelectedIntervals = [];
   renderAll();
   updateLastRefreshed();
 }
@@ -2252,6 +2256,7 @@ function renderAll() {
   runSectionUpdate('zone-map', drawZoneMap);
   runSectionUpdate('heatmap-controls', buildHeatControls);
   runSectionUpdate('heatmap-canvas', drawHeatMap);
+  runSectionUpdate('zone-stats-controls', buildZoneStatsControls);
   runSectionUpdate('zone-stats', buildZoneStats);
   runSectionUpdate('shift-breakdown', buildShiftBreakdown);
   runSectionUpdate('pick-path', buildPickerList);
@@ -2919,6 +2924,7 @@ function toggleHeatInterval(intervalKey) {
 function clearHeatFilters() {
   heatSelectedZones = ['all'];
   heatSelectedIntervals = [];
+  zoneStatsSelectedIntervals = [];
   buildHeatControls();
   drawHeatMap();
 }
@@ -3014,14 +3020,71 @@ function drawHeatMap() {
 // ═══════════════════════════════════════════════
 // ZONE STATS TABLE
 // ═══════════════════════════════════════════════
+function getZoneStatsIntervals() {
+  if(dataSource !== 'dropped' || !txData.length) return [];
+  return buildThreeHourIntervals(txData.map(r => r.hour));
+}
+
+function buildZoneStatsControls() {
+  const controls = document.getElementById('zstats-controls');
+  if(!controls) return;
+
+  const hasLive = dataSource === 'dropped' && txData.length;
+  const intervals = getZoneStatsIntervals();
+
+  if(!hasLive) {
+    zoneStatsSelectedIntervals = [];
+    controls.innerHTML = `<div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">Upload transaction data to enable 3-hour interval filtering.</div>`;
+    return;
+  }
+
+  zoneStatsSelectedIntervals = zoneStatsSelectedIntervals.filter(sel => intervals.some(i => i.key === sel.key));
+
+  const intervalSummary = zoneStatsSelectedIntervals.length
+    ? zoneStatsSelectedIntervals.map(formatIntervalLabel).join(' + ')
+    : 'All 3-hour intervals';
+
+  controls.innerHTML = `
+    <div style="background:rgba(255,255,255,0.04);border:1px solid #1e293b;border-radius:8px;padding:12px 16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text3);">⏱ 3-HOUR INTERVAL SELECTOR</span>
+        <span style="font-size:12px;font-family:'IBM Plex Mono',monospace;color:var(--accent);font-weight:600;">${intervalSummary}</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${intervals.map(interval => `<button class="mctl${zoneStatsSelectedIntervals.some(x => x.key === interval.key)?' active':''}" data-interval="${interval.key}" onclick="toggleZoneStatsInterval('${interval.key}')">${formatIntervalLabel(interval)}</button>`).join('')}
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'IBM Plex Mono',monospace;">Time Selection: 3-hour interval single/multi-select (same behavior as Intensity Map).</div>
+    </div>`;
+}
+
+function toggleZoneStatsInterval(intervalKey) {
+  if(dataSource !== 'dropped') return;
+  const intervals = getZoneStatsIntervals();
+  const hit = intervals.find(i => i.key === intervalKey);
+  if(!hit) return;
+  const idx = zoneStatsSelectedIntervals.findIndex(i => i.key === intervalKey);
+  if(idx >= 0) {
+    zoneStatsSelectedIntervals.splice(idx, 1);
+  } else {
+    zoneStatsSelectedIntervals.push(hit);
+    zoneStatsSelectedIntervals.sort((a, b) => a.opStart - b.opStart);
+  }
+  buildZoneStatsControls();
+  buildZoneStats();
+}
+
 function buildZoneStats() {
   const tbl = document.getElementById('zstats-table');
 
   if(dataSource === 'dropped' && txData.length) {
-    const intervals = buildThreeHourIntervals(txData.map(r => r.hour));
+    const intervals = getZoneStatsIntervals();
+    const selectedKeys = new Set(zoneStatsSelectedIntervals.map(i => i.key));
+    const activeIntervals = selectedKeys.size
+      ? intervals.filter(i => selectedKeys.has(i.key))
+      : intervals;
     const grouped = [];
 
-    intervals.forEach(interval => {
+    activeIntervals.forEach(interval => {
       const hoursSet = new Set(interval.hours);
       const intervalRows = txData.filter(r => hoursSet.has(r.hour));
       if(!intervalRows.length) return;
@@ -3043,6 +3106,11 @@ function buildZoneStats() {
     });
 
     grouped.sort((a, b) => b.units - a.units);
+
+    if(!grouped.length) {
+      tbl.innerHTML = '<tbody><tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px;">No zone activity for the selected 3-hour interval(s).</td></tr></tbody>';
+      return;
+    }
 
     let h = `<thead><tr><th>Interval</th><th>Zone</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>S1 Units</th><th>S2 Units</th><th>Calculated Pickers</th></tr></thead><tbody>`;
     grouped.forEach(row => {
