@@ -1611,19 +1611,25 @@ function updateOpsDateSelector() {
 }
 
 function applyOpsFilters() {
-  if(!uploadedTxAll.length) return;
   const filtered = uploadedTxAll.filter(r => {
     if(selectedOpsDate && r.dateValue !== selectedOpsDate) return false;
     return true;
   });
+
   txData = filtered;
   buildAllData();
   renderAll();
   updateOpsMetadataLabels();
+
   document.getElementById('row-count').textContent = filtered.length.toLocaleString();
   const categoryText = document.getElementById('ops-category-value')?.textContent || '—';
   const dayText = document.getElementById('ops-day-value')?.textContent || '—';
   document.getElementById('date-range').textContent = selectedOpsDate ? `${selectedOpsDate} · ${categoryText} · ${dayText}` : (droppedFileName || 'Uploaded file');
+
+  if(!filtered.length) {
+    showRefreshToast('⚠️ No valid transaction rows found in uploaded file for the selected date.');
+  }
+
   updateLastRefreshed();
 }
 
@@ -1864,6 +1870,8 @@ function setProgress(pct) {
 
 function handleFile(file) {
   if(!file) return;
+  const fileInput = document.getElementById('file-input');
+  if(fileInput) fileInput.value = '';
   isOpsDataProcessing = true;
   pendingShiftBreakdownCalc = false;
   setProgress(0);
@@ -2002,6 +2010,8 @@ function assignZonesAndBuild(rows, filename) {
       uploadedTxAll = rows;
       dataSource = 'dropped';
       zoneStatsSelectedIntervals = [];
+      selectedHour = null;
+      selectedHourWindow = null;
       droppedFileName = filename;
       updateOpsDateSelector();
       updateOpsMetadataLabels();
