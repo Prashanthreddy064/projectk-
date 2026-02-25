@@ -1557,6 +1557,8 @@ let heatSelectedHours = [];
 let droppedFileName = '';
 let uploadedTxAll = [];
 let selectedOpsDate = '';
+let isOpsDataProcessing = false;
+let pendingShiftBreakdownCalc = false;
 
 function formatDayOfWeek(dateValue) {
   if(!dateValue) return '—';
@@ -1868,11 +1870,14 @@ function setProgress(pct) {
 
 function handleFile(file) {
   if(!file) return;
+  isOpsDataProcessing = true;
+  pendingShiftBreakdownCalc = false;
   setProgress(0);
   const reader = new FileReader();
   reader.onload = e => {
     setProgress(30);
     setTimeout(() => {
+      try {
       const wb = XLSX.read(e.target.result, {type:'array'});
       const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('drop')) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
@@ -1967,7 +1972,20 @@ function handleFile(file) {
       
       // Assign zones in chunks
       assignZonesAndBuild(newTx, file.name);
+      } catch(err) {
+        isOpsDataProcessing = false;
+        pendingShiftBreakdownCalc = false;
+        setProgress(100);
+        showRefreshToast('⚠️ Upload parse failed. Please verify the sheet/columns and try again.');
+        console.error('handleFile parse error', err);
+      }
     }, 10);
+  };
+  reader.onerror = () => {
+    isOpsDataProcessing = false;
+    pendingShiftBreakdownCalc = false;
+    setProgress(100);
+    showRefreshToast('⚠️ File read failed. Please try re-uploading the file.');
   };
   reader.readAsArrayBuffer(file);
 }
@@ -1994,6 +2012,15 @@ function assignZonesAndBuild(rows, filename) {
       updateOpsMetadataLabels();
       applyOpsFilters();
       setProgress(100);
+      isOpsDataProcessing = false;
+      if(pendingShiftBreakdownCalc) {
+        pendingShiftBreakdownCalc = false;
+        setTimeout(() => {
+          renderAll();
+          updateLastRefreshed();
+          showRefreshToast();
+        }, 350);
+      }
     }
   }
   processChunk();
@@ -2290,7 +2317,7 @@ function updateDataBadge() {
   }
 }
 
-function showRefreshToast() {
+function showRefreshToast(message) {
   let t = document.getElementById('refresh-toast');
   if(!t) {
     t = document.createElement('div');
@@ -2310,7 +2337,7 @@ function showRefreshToast() {
     document.body.appendChild(t);
   }
   const src = dataSource === 'default' ? 'Default data' : droppedFileName;
-  t.innerHTML = `✓ All tabs refreshed &nbsp;·&nbsp; <span style="color:var(--cyan)">${src}</span>`;
+  t.innerHTML = message || `✓ All tabs refreshed &nbsp;·&nbsp; <span style="color:var(--cyan)">${src}</span>`;
   t.style.opacity = '1';
   clearTimeout(t._hide);
   t._hide = setTimeout(() => { t.style.opacity = '0'; }, 3000);
@@ -3036,6 +3063,11 @@ function getShiftBreakdownConfig() {
 }
 
 function calculateShiftBreakdown() {
+  if(isOpsDataProcessing) {
+    pendingShiftBreakdownCalc = true;
+    showRefreshToast('Calculating queued · waiting for uploaded data processing to finish');
+    return;
+  }
   renderAll();
   updateLastRefreshed();
   showRefreshToast();
