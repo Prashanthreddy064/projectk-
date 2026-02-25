@@ -1459,7 +1459,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div class="card-title">Zone Volume & Staffing — Forecast Data</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
       Volume and required staffing guidance per zone based on the selected Category, Day, and Hour.
-      Required Hours = Volume ÷ Zone UPH. Required Pickers = ceil(Required Hours), minimum 1 picker where volume exists.
+      Required Hours = Volume ÷ Zone UPH. Required Pickers = ceil(Required Hours ÷ Selected Hours Filter); if no hour filter is selected, the range from first pick hour to last pick hour is used (supports next-day hours like 2 AM).
     </p>
     <table id="fc-staffing-table">
       <thead>
@@ -1536,7 +1536,7 @@ let zoneStats = {};     // by zone
 let hourlyData = {};    // hour -> units
 let dataSource = 'default';   // 'default' | 'dropped'
 let heatSelectedZones = ['all'];
-let heatSelectedHours = [];
+let heatSelectedIntervals = [];
 let droppedFileName = '';
 let uploadedTxAll = [];
 let selectedOpsDate = '';
@@ -2840,6 +2840,11 @@ function fmt12(h) {
   return (h-12)+' PM';
 }
 
+function getHeatIntervals() {
+  if(dataSource !== 'dropped' || !txData.length) return [];
+  return buildThreeHourIntervals(txData.map(r => r.hour));
+}
+
 function buildHeatControls() {
   const div = document.getElementById('heat-controls');
   const zones = ['all', ...Object.keys(ZONE_COLORS)];
@@ -2847,13 +2852,11 @@ function buildHeatControls() {
   const zoneSummary = heatSelectedZones.includes('all')
     ? 'All Zones'
     : heatSelectedZones.join(' + ');
-  const hourSummary = heatSelectedHours.length
-    ? heatSelectedHours
-        .slice()
-        .sort((a,b)=>a-b)
-        .map(h => fmt12(h))
-        .join(' + ')
-    : 'All Hours';
+  const intervals = getHeatIntervals();
+  const intervalSummary = heatSelectedIntervals.length
+    ? heatSelectedIntervals.map(formatIntervalLabel).join(' + ')
+    : 'All 3-hour intervals';
+
   div.innerHTML = `
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
       ${zones.map(z=>`<button class="mctl heat-zone-btn${heatSelectedZones.includes(z)?' active':''}" data-zone="${z}" onclick="toggleHeatZone('${z}')">${fmtHeatZoneLabel(z)}</button>`).join('')}
@@ -2861,15 +2864,15 @@ function buildHeatControls() {
     <div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">Zone Selection: single or multi-select</div>
     <div style="background:rgba(255,255,255,0.04);border:1px solid #1e293b;border-radius:8px;padding:12px 16px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <span style="font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text3);">⏱ HOURLY SELECTOR</span>
-        <span id="heat-time-label" style="font-size:12px;font-family:'IBM Plex Mono',monospace;color:var(--accent);font-weight:600;">${hourSummary}</span>
+        <span style="font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text3);">⏱ 3-HOUR INTERVAL SELECTOR</span>
+        <span id="heat-time-label" style="font-size:12px;font-family:'IBM Plex Mono',monospace;color:var(--accent);font-weight:600;">${intervalSummary}</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">
-        ${Array.from({length:24},(_,h)=>`<button class="mctl heat-hour-btn${heatSelectedHours.includes(h)?' active':''}" data-hour="${h}" onclick="toggleHeatHour(${h})" ${!hasLive?'disabled':''}>${fmt12(h)}</button>`).join('')}
+        ${intervals.map(interval => `<button class="mctl heat-hour-btn${heatSelectedIntervals.some(x => x.key === interval.key)?' active':''}" data-interval="${interval.key}" onclick="toggleHeatInterval('${interval.key}')" ${!hasLive?'disabled':''}>${formatIntervalLabel(interval)}</button>`).join('')}
       </div>
-      <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'IBM Plex Mono',monospace;">Time Selection: single hour or multi-select (combined intensity view)</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;font-family:'IBM Plex Mono',monospace;">Time Selection: 3-hour interval single/multi-select (combined intensity view)</div>
       <div id="heat-zone-label" style="font-size:10px;color:var(--text3);margin-top:6px;font-family:'IBM Plex Mono',monospace;">Zones: ${zoneSummary}</div>
-      ${!hasLive ? '<div style="font-size:10px;color:var(--text3);margin-top:6px;font-family:\'IBM Plex Mono\',monospace;">⚠ Upload transaction data to enable time filtering</div>' : ''}
+      ${!hasLive ? '<div style="font-size:10px;color:var(--text3);margin-top:6px;font-family:IBM Plex Mono,monospace;">⚠ Upload transaction data to enable interval filtering</div>' : ''}
     </div>`;
 }
 
@@ -2889,12 +2892,17 @@ function toggleHeatZone(zone) {
   drawHeatMap();
 }
 
-function toggleHeatHour(hour) {
+function toggleHeatInterval(intervalKey) {
   if(dataSource !== 'dropped') return;
-  if(heatSelectedHours.includes(hour)) {
-    heatSelectedHours = heatSelectedHours.filter(h => h !== hour);
+  const intervals = getHeatIntervals();
+  const hit = intervals.find(i => i.key === intervalKey);
+  if(!hit) return;
+  const idx = heatSelectedIntervals.findIndex(i => i.key === intervalKey);
+  if(idx >= 0) {
+    heatSelectedIntervals.splice(idx, 1);
   } else {
-    heatSelectedHours.push(hour);
+    heatSelectedIntervals.push(hit);
+    heatSelectedIntervals.sort((a, b) => a.opStart - b.opStart);
   }
   buildHeatControls();
   drawHeatMap();
@@ -2902,17 +2910,18 @@ function toggleHeatHour(hour) {
 
 function clearHeatFilters() {
   heatSelectedZones = ['all'];
-  heatSelectedHours = [];
+  heatSelectedIntervals = [];
   buildHeatControls();
   drawHeatMap();
 }
 
 function buildFilteredGrid() {
   if(dataSource !== 'dropped' || !txData.length) return gridData;
+  const intervalHours = new Set(heatSelectedIntervals.flatMap(i => i.hours));
   const RES = 2;
   const gm = {};
   for(const r of txData) {
-    if(heatSelectedHours.length && !heatSelectedHours.includes(r.hour)) continue;
+    if(intervalHours.size && !intervalHours.has(r.hour)) continue;
     if(r.isNA) continue;
     const zoneKey = r.zone || 'No Location';
     if(!heatSelectedZones.includes('all') && !heatSelectedZones.includes(zoneKey)) continue;
@@ -2999,13 +3008,62 @@ function drawHeatMap() {
 // ═══════════════════════════════════════════════
 function buildZoneStats() {
   const tbl = document.getElementById('zstats-table');
+
+  if(dataSource === 'dropped' && txData.length) {
+    const intervals = buildThreeHourIntervals(txData.map(r => r.hour));
+    const grouped = [];
+
+    intervals.forEach(interval => {
+      const hoursSet = new Set(interval.hours);
+      const intervalRows = txData.filter(r => hoursSet.has(r.hour));
+      if(!intervalRows.length) return;
+
+      const byZone = {};
+      intervalRows.forEach(r => {
+        const zone = r.zone || 'No Location';
+        if(!byZone[zone]) byZone[zone] = { units: 0, picks: 0, s1: 0, s2: 0 };
+        byZone[zone].units += r.units || 0;
+        byZone[zone].picks += 1;
+        const shift = classifyShift(r.hour, r.minute || 0);
+        if(shift === 's1') byZone[zone].s1 += r.units || 0;
+        else byZone[zone].s2 += r.units || 0;
+      });
+
+      Object.entries(byZone).forEach(([zone, d]) => {
+        grouped.push({ interval, zone, ...d });
+      });
+    });
+
+    grouped.sort((a, b) => b.units - a.units);
+
+    let h = `<thead><tr><th>Interval</th><th>Zone</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>S1 Units</th><th>S2 Units</th><th>Calculated Pickers</th></tr></thead><tbody>`;
+    grouped.forEach(row => {
+      const c = ZONE_COLORS[row.zone]||'#64748b';
+      const uph = UPH[row.zone]||150;
+      const calcPickers = Math.round(row.units / uph);
+      h += `<tr>
+        <td class="mono" style="color:var(--text2)">${formatIntervalLabel(row.interval)}</td>
+        <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${row.zone}</span></td>
+        <td class="mono">${Math.round(row.units).toLocaleString()}</td>
+        <td class="mono">${row.picks.toLocaleString()}</td>
+        <td class="mono">${row.picks > 0 ? (row.units / row.picks).toFixed(2) : '—'}</td>
+        <td class="mono">${Math.round(row.s1).toLocaleString()}</td>
+        <td class="mono">${Math.round(row.s2).toLocaleString()}</td>
+        <td class="mono" style="font-weight:700;color:${c}">${calcPickers}</td>
+      </tr>`;
+    });
+
+    tbl.innerHTML = h + '</tbody>';
+    return;
+  }
+
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
   let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>S1 Units</th><th>S2 Units</th><th>S1 Pickers (calc)</th><th>S2 Pickers (calc)</th><th>S1 Actual</th><th>S2 Actual</th></tr></thead><tbody>`;
   entries.forEach(([z,d]) => {
     const c = ZONE_COLORS[z]||'#64748b';
     const uph = UPH[z]||150;
-    const s1c = (d.s1/(uph*8)).toFixed(2);
-    const s2c = (d.s2/(uph*8)).toFixed(2);
+    const s1c = Math.round(d.s1/(uph*8));
+    const s2c = Math.round(d.s2/(uph*8));
     const st = STEADY[z]||{s1:1,s2:1};
     const actualUPH = d.actualUPH != null ? d.actualUPH.toLocaleString() : '<span style="color:var(--text3)">—</span>';
     const uphColor = d.actualUPH != null ? (d.actualUPH >= uph ? '#22c55e' : d.actualUPH >= uph*0.8 ? '#f59e0b' : '#ef4444') : '';
@@ -4743,6 +4801,44 @@ const FC_HOURS = [];
   FC_HOURS.push(0); FC_HOURS.push(1); FC_HOURS.push(2);
 })();
 
+function opHourIndex(hour) {
+  return hour < 6 ? hour + 24 : hour;
+}
+
+function sortByOpHour(a, b) {
+  return opHourIndex(a) - opHourIndex(b);
+}
+
+function buildThreeHourIntervals(hours) {
+  const validHours = (hours || []).filter(h => Number.isInteger(h));
+  if(!validHours.length) return [];
+
+  const uniq = [...new Set(validHours)].sort(sortByOpHour);
+  const startOp = opHourIndex(uniq[0]);
+  const endOp = opHourIndex(uniq[uniq.length - 1]);
+  const intervals = [];
+
+  for(let start = startOp; start <= endOp; start += 3) {
+    const bucketHours = [start % 24, (start + 1) % 24, (start + 2) % 24];
+    intervals.push({
+      key: `${start % 24}-${(start + 3) % 24}`,
+      startHour: start % 24,
+      endHour: (start + 3) % 24,
+      opStart: start,
+      opEnd: start + 3,
+      hours: bucketHours
+    });
+  }
+
+  return intervals;
+}
+
+function formatIntervalLabel(interval) {
+  if(!interval) return '';
+  const fmt = h => String(h).padStart(2, '0') + ':00';
+  return `${fmt(interval.startHour)}–${fmt(interval.endHour)}`;
+}
+
 function fcFormatHour(h) {
   if(h === 0) return '12:00 AM';
   if(h < 12) return h + ':00 AM';
@@ -5057,7 +5153,7 @@ function fcUpdateRefreshWindowLabel() {
   if(!label) return;
   const dayLabel = fcFilterDay === 'all' ? 'All days' : fcFilterDay;
   const hourLabel = fcFilterHours.length
-    ? fcFilterHours.slice().sort((a,b) => ((a < 6 ? a + 24 : a) - (b < 6 ? b + 24 : b))).map(fcFormatHour).join(' → ')
+    ? fcFilterHours.slice().sort(sortByOpHour).map(fcFormatHour).join(' → ')
     : 'all hours';
   label.textContent = `Window: ${dayLabel} · ${hourLabel}`;
 }
@@ -5284,7 +5380,7 @@ function fcBuildKPIs() {
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
   if(fcFilterDay !== 'all') parts.push(fcFilterDay);
   if(fcFilterHours.length > 0) {
-    const sorted = fcFilterHours.slice().sort((a,b) => ((a < 6 ? a + 24 : a) - (b < 6 ? b + 24 : b)));
+    const sorted = fcFilterHours.slice().sort(sortByOpHour);
     parts.push(sorted.map(fcFormatHour).join(', '));
   }
   document.getElementById('fc-kpi-volume-sub').textContent = parts.length ? parts.join(' · ') : 'all data';
@@ -5451,6 +5547,19 @@ function fcBuildStaffingTable() {
   let totalPick = 0;
   let totalRequiredHours = 0;
 
+  const selectedHoursCount = fcFilterHours.length;
+  let effectiveHoursFilter = selectedHoursCount;
+  if(effectiveHoursFilter === 0) {
+    const availableHours = [...new Set(fcFiltered.map(r => r.hour).filter(h => Number.isInteger(h)))].sort(sortByOpHour);
+    if(availableHours.length) {
+      const firstOp = opHourIndex(availableHours[0]);
+      const lastOp = opHourIndex(availableHours[availableHours.length - 1]);
+      effectiveHoursFilter = Math.max(1, (lastOp - firstOp) + 1);
+    } else {
+      effectiveHoursFilter = 1;
+    }
+  }
+
   const allZones = Array.from(new Set([...Object.keys(UPH), ...Object.keys(zoneVolumes)]));
   const sorted = allZones
     .map(zone => [zone, zoneVolumes[zone] || 0])
@@ -5462,7 +5571,7 @@ function fcBuildStaffingTable() {
     const share = totalVol > 0 ? ((vol / totalVol) * 100).toFixed(1) : '0.0';
     const uph = UPH[zone] || 150;
     const requiredHours = vol > 0 ? (vol / uph) : 0;
-    const pickersRequired = vol > 0 ? Math.max(1, Math.ceil(requiredHours)) : 0;
+    const pickersRequired = vol > 0 ? Math.max(1, Math.ceil(requiredHours / effectiveHoursFilter)) : 0;
     totalPick += pickersRequired;
     const barPct = (vol / maxVol * 100).toFixed(1);
     totalRequiredHours += requiredHours;
