@@ -1108,6 +1108,27 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       </table>
     </div>
   </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap;">
+      <div class="card-title" style="margin-bottom:0;">Bucket UPH Table</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <label for="sb-bucket-filter" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;">View</label>
+        <select id="sb-bucket-filter" onchange="buildShiftBreakdown()"
+          style="background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);font-size:11px;padding:5px 10px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
+          <option value="overall">Overall</option>
+          <option value="s1">S1</option>
+          <option value="s2">S2</option>
+          <option value="shared">Shared</option>
+        </select>
+      </div>
+    </div>
+    <div class="sb-table-wrap" style="max-height:380px;overflow-y:auto;">
+      <table class="sb-table" id="sb-bucket-uph-table">
+        <!-- Populated by JS -->
+      </table>
+    </div>
+  </div>
 </div>
 
 <!-- PICK PATH -->
@@ -3377,6 +3398,20 @@ function buildShiftBreakdown() {
     const individualMetrics = shift === 's1'
       ? summarizePickerWindow(sorted, r => !hasOverlapByConfig || txMinute(r) < overlapStart)
       : summarizePickerWindow(sorted, r => !hasOverlapByConfig || txMinute(r) > overlapEnd);
+    const sharedMetrics = hasOverlapByConfig
+      ? summarizePickerWindow(sorted, r => {
+          const m = txMinute(r);
+          return m >= overlapStart && m <= overlapEnd;
+        })
+      : { totalUnits: 0, activeHours: 0, inactiveHours: 0, uph: 0, picks: 0 };
+
+    const fullZones = new Set(sorted.map(r => r.zone || 'No Location'));
+    const individualZones = new Set(sorted
+      .filter(r => shift === 's1' ? (!hasOverlapByConfig || txMinute(r) < overlapStart) : (!hasOverlapByConfig || txMinute(r) > overlapEnd))
+      .map(r => r.zone || 'No Location'));
+    const sharedZones = new Set(sorted
+      .filter(r => hasOverlapByConfig && txMinute(r) >= overlapStart && txMinute(r) <= overlapEnd)
+      .map(r => r.zone || 'No Location'));
 
     // Zone spread
     const zones = {};
@@ -3397,6 +3432,15 @@ function buildShiftBreakdown() {
       individualActiveHours: individualMetrics.activeHours,
       individualInactiveHours: individualMetrics.inactiveHours,
       individualUPH: individualMetrics.uph,
+      individualPicks: individualMetrics.picks,
+      individualZoneCount: individualZones.size,
+      sharedUnits: sharedMetrics.totalUnits,
+      sharedActiveHours: sharedMetrics.activeHours,
+      sharedInactiveHours: sharedMetrics.inactiveHours,
+      sharedUPH: sharedMetrics.uph,
+      sharedPicks: sharedMetrics.picks,
+      sharedZoneCount: sharedZones.size,
+      overallZoneCount: fullZones.size,
       primaryZone, zones, txs: sorted
     });
   }
@@ -3638,6 +3682,78 @@ function buildShiftBreakdown() {
   });
 
   tbl.innerHTML = html + '</tbody>';
+
+  buildBucketUPHTable(pickers);
+}
+
+function buildBucketUPHTable(pickers) {
+  const table = document.getElementById('sb-bucket-uph-table');
+  if (!table) return;
+
+  const view = document.getElementById('sb-bucket-filter')?.value || 'overall';
+  const ranges = [
+    { label: '200+', min: 200, max: Infinity },
+    { label: '175 – 199 UPH', min: 175, max: 200 },
+    { label: '150 – 175 UPH', min: 150, max: 175 },
+    { label: '125 – 150 UPH', min: 125, max: 150 },
+    { label: '100 – 125 UPH', min: 100, max: 125 },
+    { label: 'Below 100 UPH', min: -Infinity, max: 100 }
+  ];
+
+  function pickerMetric(p) {
+    if (view === 's1') {
+      if (p.shift !== 's1' || p.individualPicks <= 0) return null;
+      return { uph: p.individualUPH, units: p.individualUnits, picks: p.individualPicks, zoneCount: p.individualZoneCount };
+    }
+    if (view === 's2') {
+      if (p.shift !== 's2' || p.individualPicks <= 0) return null;
+      return { uph: p.individualUPH, units: p.individualUnits, picks: p.individualPicks, zoneCount: p.individualZoneCount };
+    }
+    if (view === 'shared') {
+      if (p.sharedPicks <= 0) return null;
+      return { uph: p.sharedUPH, units: p.sharedUnits, picks: p.sharedPicks, zoneCount: p.sharedZoneCount };
+    }
+    if (p.picks <= 0) return null;
+    return { uph: p.uph, units: p.totalUnits, picks: p.picks, zoneCount: p.overallZoneCount };
+  }
+
+  const bucketStats = ranges.map(r => ({ ...r, pickerCount: 0, totalZones: 0, totalUPH: 0, totalUnits: 0, totalPicks: 0 }));
+
+  pickers.forEach(p => {
+    const m = pickerMetric(p);
+    if (!m) return;
+    const bucket = bucketStats.find(b => m.uph >= b.min && m.uph < b.max);
+    if (!bucket) return;
+    bucket.pickerCount++;
+    bucket.totalZones += m.zoneCount;
+    bucket.totalUPH += m.uph;
+    bucket.totalUnits += m.units;
+    bucket.totalPicks += m.picks;
+  });
+
+  const viewLabel = view === 'overall' ? 'Overall' : view.toUpperCase();
+  let html = `<thead><tr>
+    <th>UPH Range (${viewLabel})</th>
+    <th>Count of Picker</th>
+    <th>Number of Zones</th>
+    <th>Average UPH</th>
+    <th>Total Units</th>
+    <th>Total Picks</th>
+  </tr></thead><tbody>`;
+
+  bucketStats.forEach(b => {
+    const avgUPH = b.pickerCount ? Math.round(b.totalUPH / b.pickerCount) : 0;
+    html += `<tr>
+      <td style="font-weight:700;color:var(--text);">${b.label}</td>
+      <td>${b.pickerCount.toLocaleString()}</td>
+      <td>${b.totalZones.toLocaleString()}</td>
+      <td style="font-weight:700;color:${uphColor(avgUPH)};">${avgUPH.toLocaleString()}</td>
+      <td>${Math.round(b.totalUnits).toLocaleString()}</td>
+      <td>${b.totalPicks.toLocaleString()}</td>
+    </tr>`;
+  });
+
+  table.innerHTML = html + '</tbody>';
 }
 
 function drawShiftDonut(s1Count, s2Count) {
