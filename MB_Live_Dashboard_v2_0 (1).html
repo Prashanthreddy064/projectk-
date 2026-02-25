@@ -961,7 +961,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div class="card-title" style="margin-bottom:0">Zone Volume Breakdown <span id="ov-hour-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
       <div style="display:flex;align-items:center;gap:10px;">
-        <button id="ov-clear-hour" onclick="clearHourFilter()" style="display:none;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:6px;padding:4px 10px;font-size:10px;color:#ef4444;cursor:pointer;font-family:'IBM Plex Mono',monospace;letter-spacing:.05em;">✕ Clear Hour Filter</button>
+        <button id="ov-clear-hour" onclick="clearHourFilter()" style="display:none;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:6px;padding:4px 10px;font-size:10px;color:#ef4444;cursor:pointer;font-family:'IBM Plex Mono',monospace;letter-spacing:.05em;">✕ Clear Time Filter</button>
         <span id="table-row-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
       </div>
     </div>
@@ -1075,10 +1075,10 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
   </div>
 
-  <!-- Detailed picker table -->
+  <!-- UPH bucket summary table -->
   <div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div class="card-title" style="margin-bottom:0;">Individual Picker Breakdown</div>
+      <div class="card-title" style="margin-bottom:0;">UPH Bucket Summary</div>
       <div style="display:flex;align-items:center;gap:10px;">
         <select id="sb-shift-filter" onchange="buildShiftBreakdown()"
           style="background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);font-size:11px;padding:5px 10px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
@@ -1090,7 +1090,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       </div>
     </div>
     <div class="sb-table-wrap" style="max-height:480px;overflow-y:auto;">
-      <table class="sb-table" id="sb-picker-table">
+      <table class="sb-table" id="sb-bucket-table">
         <!-- Populated by JS -->
       </table>
     </div>
@@ -1377,12 +1377,12 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       Select a Category, Day, and Hour to view the predicted zone volume map, heat density, and staffing needs for that specific window.
     </p>
 
-    <!-- Forecast file drop zone -->
+    <!-- Forecast Excel File Upload -->
     <div class="drop-zone" id="fc-drop-zone" style="margin-bottom:14px;">
       <input type="file" id="fc-file-input" accept=".xlsx,.xls" onchange="handleForecastFile(this.files[0])">
       <div class="drop-icon">📊</div>
       <div class="drop-text">
-        <strong>Drop Forecast Excel file here</strong>
+        <strong>Excel File Upload · Drop Forecast file here</strong>
         <span>Sheet: "Forecast Data" · Columns: Actual Start Time, X, Y, Completed Units, User ID, Date, Day, Category</span>
       </div>
     </div>
@@ -2253,8 +2253,10 @@ function refreshOverview(btn) {
 
   // Brief flash to show activity, then re-render everything
   setTimeout(() => {
+    selectedHour = null;
+    selectedHourWindow = getThreeHourWindowByTimestamp(new Date());
     renderAll();
-    updateLastRefreshed();
+    updateLastRefreshed(selectedHourWindow.ts);
     btn.disabled = false;
     btn.style.opacity = '';
 
@@ -2270,11 +2272,10 @@ function refreshOverview(btn) {
   }, 80);
 }
 
-function updateLastRefreshed() {
+function updateLastRefreshed(ts = new Date()) {
   const el = document.getElementById('last-refreshed');
   if(!el) return;
-  const now = new Date();
-  el.textContent = now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  el.textContent = ts.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
 }
 
 function updateDataBadge() {
@@ -2326,22 +2327,50 @@ function buildKPIs() {
   const hourlyPD = window._hourlyZonePickerData || {};
   const activeHourData = selectedHour !== null ? (hourlyPD[selectedHour] || {}) : null;
 
+  const useWindow = selectedHourWindow && selectedHour === null;
+  const windowRows = useWindow ? txData.filter(r => hourInWindow(r.hour, selectedHourWindow)) : [];
+
   const totalUnits = selectedHour !== null
     ? (hourlyData[selectedHour] || 0)
-    : Object.values(zoneStats).reduce((s,z) => s + z.units, 0);
+    : useWindow
+      ? windowRows.reduce((sum, r) => sum + (r.units || 0), 0)
+      : Object.values(zoneStats).reduce((s,z) => s + z.units, 0);
   const totalPicks = selectedHour !== null
     ? txData.filter(r => r.hour === selectedHour).length
-    : Object.values(zoneStats).reduce((s,z) => s + z.picks, 0);
+    : useWindow
+      ? windowRows.length
+      : Object.values(zoneStats).reduce((s,z) => s + z.picks, 0);
 
-  const totalActiveMins = selectedHour !== null
+  let totalActiveMins = selectedHour !== null
     ? Object.values(activeHourData).reduce((s,z) => s + (z.activeMinutes || 0), 0)
     : Object.values(zoneStats).reduce((s,z) => s + (z.totalPickerHours ? parseFloat(z.totalPickerHours) * 60 : 0), 0);
-  const totalInactiveMins = selectedHour !== null
+  let totalInactiveMins = selectedHour !== null
     ? Object.values(activeHourData).reduce((s,z) => s + (z.inactiveMinutes || 0), 0)
     : Object.values(zoneStats).reduce((s,z) => s + (z.inactiveMinutes || 0), 0);
   const activeZones = selectedHour !== null
     ? Object.values(zoneStats).filter(z => (z.hourlyUnits && z.hourlyUnits[selectedHour]) > 0).length
-    : Object.keys(zoneStats).length;
+    : useWindow
+      ? new Set(windowRows.map(r => r.zone || 'No Location')).size
+      : Object.keys(zoneStats).length;
+
+  if(useWindow) {
+    const byUser = {};
+    windowRows.forEach(r => {
+      const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
+      if(!byUser[uid]) byUser[uid] = [];
+      byUser[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone: r.zone || 'No Location', units: r.units || 0 });
+    });
+
+    totalActiveMins = 0;
+    totalInactiveMins = 0;
+    Object.values(byUser).forEach(txs => {
+      const contrib = computeZoneRunContributions(txs.sort((a,b)=>a.txMin-b.txMin));
+      Object.values(contrib).forEach(z => {
+        totalActiveMins += z.activeMinutes || 0;
+        totalInactiveMins += z.inactiveMinutes || 0;
+      });
+    });
+  }
 
   document.getElementById('kpi-units').textContent = Math.round(totalUnits).toLocaleString();
   document.getElementById('kpi-picks').textContent = Math.round(totalPicks).toLocaleString();
@@ -2350,7 +2379,9 @@ function buildKPIs() {
 
   const srcLabel = selectedHour !== null
     ? `selected hour · ${formatClockHourLabel(selectedHour)}`
-    : (dataSource === 'default' ? 'daily avg (2-day baseline)' : 'from uploaded file');
+    : useWindow
+      ? `auto-refresh window · ${formatWindowLabel(selectedHourWindow)}`
+      : (dataSource === 'default' ? 'daily avg (2-day baseline)' : 'from uploaded file');
   document.getElementById('kpi-units-sub').textContent = srcLabel;
   document.getElementById('kpi-picks-sub').textContent = srcLabel;
 
@@ -2358,7 +2389,7 @@ function buildKPIs() {
   const kpiUphSub = document.getElementById('kpi-blended-uph-sub');
   if(kpiUphEl) {
     if(totalActiveMins > 0 && totalUnits > 0) {
-      const blendedActual = Math.round(totalUnits / (Math.round(totalActiveMins) / 60));
+      const blendedActual = calcUPHFromOverviewFormula(totalUnits, totalActiveMins);
       kpiUphEl.textContent = blendedActual.toLocaleString();
       kpiUphEl.style.color = blendedActual >= 200 ? '#22c55e' : blendedActual >= 160 ? '#f59e0b' : '#ef4444';
       if(kpiUphSub) {
@@ -2447,6 +2478,7 @@ function buildHourlyChart() {
       }
     }
     // Toggle: click same bar again = deselect
+    selectedHourWindow = null;
     selectedHour = (hit !== null && hit === selectedHour) ? null : hit;
     drawHourlyChart(cv);
     buildOvTable(); // re-render zone table with new filter
@@ -2527,6 +2559,7 @@ function drawHourlyChart(canvas) {
 
 function clearHourFilter() {
   selectedHour = null;
+  selectedHourWindow = null;
   const cv = document.getElementById('hourly-canvas');
   if(cv) drawHourlyChart(cv);
   buildOvTable();
@@ -2536,6 +2569,37 @@ function clearHourFilter() {
 // Dynamic KPI refresh hook for hour selection
 function updateBlendedUPHForHour() {
   buildKPIs();
+}
+
+function calcUPHFromOverviewFormula(totalUnits, activeMinutes) {
+  if(!(totalUnits > 0) || !(activeMinutes > 0)) return 0;
+  const roundedActiveHours = Math.round(activeMinutes) / 60;
+  if(!(roundedActiveHours > 0)) return 0;
+  return Math.round(totalUnits / roundedActiveHours);
+}
+
+function getThreeHourWindowByTimestamp(ts = new Date()) {
+  const endHour = ts.getHours();
+  const startHour = (endHour + 22) % 24;
+  const hours = [startHour, (startHour + 1) % 24, endHour];
+  return { startHour, endHour, hours, ts };
+}
+
+function hourInWindow(hour, windowCfg) {
+  if(!windowCfg) return false;
+  return windowCfg.hours.includes(hour);
+}
+
+function formatHourShort(hour) {
+  if(hour === 0) return '12AM';
+  if(hour < 12) return `${hour}AM`;
+  if(hour === 12) return '12PM';
+  return `${hour - 12}PM`;
+}
+
+function formatWindowLabel(windowCfg) {
+  if(!windowCfg) return '';
+  return `${formatHourShort(windowCfg.startHour)}–${formatHourShort(windowCfg.endHour)} (${windowCfg.hours.length}h)`;
 }
 
 // ═══════════════════════════════════════════════
@@ -2552,6 +2616,7 @@ function buildOvTable() {
   if(dataSource === 'dropped' && txData.length) {
     let rows = txData;
     if(selectedHour !== null) rows = rows.filter(r => r.hour === selectedHour);
+    else if(selectedHourWindow) rows = rows.filter(r => hourInWindow(r.hour, selectedHourWindow));
     const classified = classifyTxByShiftWindows(rows);
     entries = Object.entries(classified).sort((a,b)=>b[1].totalUnits-a[1].totalUnits);
   } else {
@@ -2572,6 +2637,9 @@ function buildOvTable() {
   if(selectedHour !== null) {
     const hLabel = selectedHour < 12 ? `${selectedHour}:00 AM` : selectedHour === 12 ? '12:00 PM' : `${selectedHour-12}:00 PM`;
     if(lbl) lbl.textContent = '— ' + hLabel;
+    if(clrBtn) clrBtn.style.display = '';
+  } else if(selectedHourWindow) {
+    if(lbl) lbl.textContent = '— ' + formatWindowLabel(selectedHourWindow);
     if(clrBtn) clrBtn.style.display = '';
   } else {
     if(lbl) lbl.textContent = '';
@@ -3009,7 +3077,7 @@ function buildShiftBreakdown() {
 
     const activeHours = Math.round(activeMins) / 60;
     const inactiveHours = Math.round(inactiveMins) / 60;
-    const uph = activeHours > 0 ? Math.round(totalUnits / activeHours) : 0;
+    const uph = calcUPHFromOverviewFormula(totalUnits, activeMins);
     return { totalUnits, activeHours, inactiveHours, uph, picks: filtered.length };
   }
 
@@ -3124,7 +3192,7 @@ function buildShiftBreakdown() {
     }
     const activeHrs = Math.round(activeMins) / 60;
     const inactiveHrs = Math.round(inactiveMins) / 60;
-    const uph = activeHrs > 0 ? Math.round(totalUnits / activeHrs) : 0;
+    const uph = calcUPHFromOverviewFormula(totalUnits, activeMins);
     return { totalUnits, activeHrs, inactiveHrs, uph, pickerCount: activeCount };
   }
 
@@ -3238,7 +3306,7 @@ function buildShiftBreakdown() {
 
       const activeHours = Math.round(activeMins) / 60;
       const inactiveHours = Math.round(inactiveMins) / 60;
-      const uph = activeHours > 0 ? (totalUnits / activeHours) : 0;
+      const uph = calcUPHFromOverviewFormula(totalUnits, activeMins);
       const targetActiveHours = totalUnits / TARGET_UPH;
 
       rows.push({
@@ -3328,56 +3396,45 @@ function buildShiftBreakdown() {
   // Step 8: Render comparison bar chart (S1 vs Shared vs S2)
   drawShiftComparisonChart(s1Agg, sharedAgg, s2Agg);
 
-  // Step 9: Render picker table
+  // Step 9: Render UPH bucket summary table
   const filter = document.getElementById('sb-shift-filter')?.value || 'all';
   const filtered = filter === 'all' ? pickers : pickers.filter(p => p.shift === filter);
-  filtered.sort((a, b) => b.individualUnits - a.individualUnits);
 
   const countEl = document.getElementById('sb-picker-count');
   if (countEl) countEl.textContent = `${filtered.length} pickers`;
 
-  const tbl = document.getElementById('sb-picker-table');
-  const maxUnits = Math.max(...filtered.map(p => p.individualUnits), 1);
+  const tbl = document.getElementById('sb-bucket-table');
+
+  const bucketRows = uphRanges.map(range => {
+    const members = filtered.filter(p => range.test(p.individualUPH || 0));
+    const pickerCount = members.length;
+    const totalUnits = members.reduce((sum, p) => sum + (p.individualUnits || 0), 0);
+    const totalActiveMinutes = members.reduce((sum, p) => sum + ((p.individualActiveHours || 0) * 60), 0);
+    const totalInactiveHours = members.reduce((sum, p) => sum + (p.individualInactiveHours || 0), 0);
+    const uph = calcUPHFromOverviewFormula(totalUnits, totalActiveMinutes);
+    return { label: range.label, pickerCount, totalUnits, totalActiveHours: totalActiveMinutes / 60, totalInactiveHours, uph };
+  });
 
   let html = `<thead><tr>
-    <th>Picker</th>
-    <th>Shift</th>
-    <th>First Pick</th>
-    <th>Last Pick</th>
+    <th>UPH Bucket</th>
+    <th>Pickers</th>
+    <th>Total Active Hrs</th>
+    <th>Total Inactive Hrs</th>
     <th>Total Units</th>
-    <th>Picks</th>
-    <th>Active Hrs</th>
-    <th>Inactive Hrs</th>
     <th>UPH</th>
-    <th>Primary Zone</th>
-    <th>Volume</th>
   </tr></thead><tbody>`;
 
-  for (const p of filtered) {
-    const barPct = (p.individualUnits / maxUnits * 100).toFixed(0);
-    const uphColor = p.individualUPH >= 200 ? '#22c55e' : p.individualUPH >= 150 ? '#f59e0b' : '#ef4444';
-    const shiftColor = p.shift === 's1' ? '#3b82f6' : '#8b5cf6';
-    const zoneColor = ZONE_COLORS[p.primaryZone] || '#64748b';
-    const inactiveColor = p.individualInactiveHours > 1 ? '#ef4444' : p.individualInactiveHours > 0.5 ? '#f59e0b' : '#22c55e';
-
+  bucketRows.forEach(r => {
+    const uphColor = r.uph >= 200 ? '#22c55e' : r.uph >= 160 ? '#f59e0b' : '#ef4444';
     html += `<tr>
-      <td style="color:var(--text);font-weight:600;">${p.uid}</td>
-      <td><span class="sb-shift-tag ${p.shift}"><span style="width:5px;height:5px;border-radius:50%;background:${shiftColor};display:inline-block;"></span>${p.shift === 's1' ? 'S1' : 'S2'}</span></td>
-      <td>${fmtTime(p.firstTxMin)}</td>
-      <td>${fmtTime(p.lastTxMin)}</td>
-      <td style="font-weight:700;color:var(--text);">${p.individualUnits.toLocaleString()}</td>
-      <td>${p.picks.toLocaleString()}</td>
-      <td style="color:#22c55e">${p.individualActiveHours.toFixed(2)}</td>
-      <td style="color:${inactiveColor};font-weight:600;">${p.individualInactiveHours.toFixed(2)}</td>
-      <td style="color:${uphColor};font-weight:700;">${p.individualUPH.toLocaleString()}</td>
-      <td><span class="zpill" style="background:${zoneColor}18;color:${zoneColor};font-size:10px;"><span style="width:5px;height:5px;border-radius:50%;background:${zoneColor};display:inline-block;"></span>${p.primaryZone}</span></td>
-      <td style="position:relative;min-width:80px;">
-        <div class="sb-bar-bg"></div>
-        <div class="sb-bar-fg" style="width:${barPct}%;background:${shiftColor};"></div>
-        <span style="position:relative;z-index:1;font-size:10px;color:var(--text3);">${barPct}%</span>
-      </td>
+      <td style="font-weight:700;color:var(--text);">${r.label}</td>
+      <td>${r.pickerCount}</td>
+      <td style="color:#22c55e;">${r.totalActiveHours.toFixed(2)}</td>
+      <td style="color:#ef4444;">${r.totalInactiveHours.toFixed(2)}</td>
+      <td style="font-weight:700;color:var(--text);">${Math.round(r.totalUnits).toLocaleString()}</td>
+      <td style="font-weight:700;color:${uphColor};">${r.uph.toLocaleString()}</td>
     </tr>`;
-  }
+  });
 
   tbl.innerHTML = html + '</tbody>';
 }
@@ -4098,6 +4155,7 @@ function buildUPHGapBars() {
 // ═══════════════════════════════════════════════
 let ppCurrentUser = '';
 let selectedHour = null; // null = all hours; number = filter ov-table to that hour
+let selectedHourWindow = null; // refresh-driven rolling 3-hour window
 let hourlyBarRects = []; // [{h, x, y, w, h2}] used for click detection
 const HOURLY_AXIS_HOURS = Array.from({length:24}, (_, idx) => (idx + 5) % 24);
 
