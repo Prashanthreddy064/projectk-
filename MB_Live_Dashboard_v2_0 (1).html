@@ -5877,6 +5877,7 @@ document.querySelectorAll('.tab').forEach(tab => {
       if(id==='zonemap') drawZoneMap();
       if(id==='heatmap') { buildHeatControls(); drawHeatMap(); }
       if(id==='overview') buildHourlyChart();
+      if(id==='zonestats') { buildZoneStatsControls(); buildZoneStats(); }
       if(id==='uphtargets') buildUPHTargets();
       if(id==='pickpath') { drawPickPathCanvas([], ppCurrentUser); if(ppCurrentUser) renderPickPath(); }
       if(id==='shiftbreakdown' && txData.length > 0) { buildShiftBreakdown(); }
