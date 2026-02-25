@@ -4671,8 +4671,8 @@ function renderPickPath() {
     const normalizedFilterHour = filterHour === 24 ? 0 : (filterHour === 25 ? 1 : (filterHour === 26 ? 2 : filterHour));
     rows = rows.filter(r => r.hour === normalizedFilterHour);
   }
-  // Sort by time
-  rows = rows.slice().sort((a,b) => (a.hour*60+a.minute) - (b.hour*60+b.minute));
+  // Sort by operational time (6 AM through 2 AM next day)
+  rows = rows.slice().sort((a,b) => normalizeOperationalMinute(a.hour, a.minute) - normalizeOperationalMinute(b.hour, b.minute));
 
   if(!rows.length) {
     kpiDiv.innerHTML = '<span style="color:var(--text3);font-size:11px;">No data for selected filter</span>';
@@ -4692,7 +4692,7 @@ function renderPickPath() {
 
   // Build sortedTx for the shared helper (rows are already sorted)
   const ppSortedTx = rows.map(r => ({ 
-    txMin: r.hour*60+(r.minute||0), 
+    txMin: normalizeOperationalMinute(r.hour, r.minute), 
     zone: r.zone, 
     units: r.units 
   }));
