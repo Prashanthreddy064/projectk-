@@ -858,10 +858,10 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <select id="ops-date-filter" onchange="handleOpsDateChange()" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;">
       <option value="">Upload file first</option>
     </select>
-    <label for="ops-category-filter" style="display:block;margin-top:8px;">Category (Column H)</label>
-    <select id="ops-category-filter" onchange="handleOpsCategoryChange()" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;">
-      <option value="all">All</option>
-    </select>
+    <label style="display:block;margin-top:8px;">Category (Column H)</label>
+    <div id="ops-category-value" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;min-height:28px;display:flex;align-items:center;">—</div>
+    <label style="display:block;margin-top:8px;">Day of Week (from Column F Date)</label>
+    <div id="ops-day-value" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;min-height:28px;display:flex;align-items:center;">—</div>
   </div>
   <div class="drop-hint">
     Expected columns (A–H):<br>
@@ -1052,9 +1052,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <!-- Populated by JS -->
   </div>
 
-  <!-- UPH Scenario Cards -->
+  <!-- UPH Range Breakdown -->
   <div class="card" style="margin-bottom:20px;">
-    <div class="card-title">UPH Performance by Scenario</div>
+    <div class="card-title">UPH Performance — Picker Breakdown by Range</div>
     <div class="sb-uph-scenarios" id="sb-uph-scenarios">
       <!-- Populated by JS -->
     </div>
@@ -1557,7 +1557,34 @@ let heatSelectedHours = [];
 let droppedFileName = '';
 let uploadedTxAll = [];
 let selectedOpsDate = '';
-let selectedOpsCategory = 'all';
+
+function formatDayOfWeek(dateValue) {
+  if(!dateValue) return '—';
+  const d = new Date(`${dateValue}T00:00:00`);
+  if(Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(undefined, { weekday: 'long' });
+}
+
+function updateOpsMetadataLabels() {
+  const categoryLabel = document.getElementById('ops-category-value');
+  const dayLabel = document.getElementById('ops-day-value');
+  if(!categoryLabel || !dayLabel) return;
+
+  const dateRows = selectedOpsDate
+    ? uploadedTxAll.filter(r => r.dateValue === selectedOpsDate)
+    : uploadedTxAll;
+  const categories = [...new Set(dateRows.map(r => r.promoType).filter(Boolean))];
+
+  if(!categories.length) {
+    categoryLabel.textContent = '—';
+  } else if(categories.length === 1) {
+    categoryLabel.textContent = categories[0];
+  } else {
+    categoryLabel.textContent = categories.join(', ');
+  }
+
+  dayLabel.textContent = formatDayOfWeek(selectedOpsDate);
+}
 
 function parseOpsDateValue(cell) {
   if(cell == null || cell === '') return '';
@@ -1596,40 +1623,25 @@ function updateOpsDateSelector() {
   select.value = selectedOpsDate;
 }
 
-function updateOpsCategorySelector() {
-  const select = document.getElementById('ops-category-filter');
-  if(!select) return;
-  const categories = [...new Set(uploadedTxAll.filter(r => r.dateValue === selectedOpsDate).map(r => r.promoType).filter(Boolean))];
-  const opts = ['all', ...categories];
-  select.innerHTML = opts.map(v => `<option value="${v}">${v === 'all' ? 'All' : v}</option>`).join('');
-  if(!opts.includes(selectedOpsCategory)) selectedOpsCategory = categories.length === 1 ? categories[0] : 'all';
-  select.value = selectedOpsCategory;
-}
-
 function applyOpsFilters() {
   if(!uploadedTxAll.length) return;
   const filtered = uploadedTxAll.filter(r => {
     if(selectedOpsDate && r.dateValue !== selectedOpsDate) return false;
-    if(selectedOpsCategory !== 'all' && r.promoType !== selectedOpsCategory) return false;
     return true;
   });
   txData = filtered;
   buildAllData();
   renderAll();
+  updateOpsMetadataLabels();
   document.getElementById('row-count').textContent = filtered.length.toLocaleString();
-  document.getElementById('date-range').textContent = selectedOpsDate ? `${selectedOpsDate} · ${selectedOpsCategory === 'all' ? 'All' : selectedOpsCategory}` : (droppedFileName || 'Uploaded file');
+  const categoryText = document.getElementById('ops-category-value')?.textContent || '—';
+  const dayText = document.getElementById('ops-day-value')?.textContent || '—';
+  document.getElementById('date-range').textContent = selectedOpsDate ? `${selectedOpsDate} · ${categoryText} · ${dayText}` : (droppedFileName || 'Uploaded file');
   updateLastRefreshed();
 }
 
 function handleOpsDateChange() {
   selectedOpsDate = document.getElementById('ops-date-filter')?.value || '';
-  selectedOpsCategory = 'all';
-  updateOpsCategorySelector();
-  applyOpsFilters();
-}
-
-function handleOpsCategoryChange() {
-  selectedOpsCategory = document.getElementById('ops-category-filter')?.value || 'all';
   applyOpsFilters();
 }
 
@@ -1979,7 +1991,7 @@ function assignZonesAndBuild(rows, filename) {
       dataSource = 'dropped';
       droppedFileName = filename;
       updateOpsDateSelector();
-      updateOpsCategorySelector();
+      updateOpsMetadataLabels();
       applyOpsFilters();
       setProgress(100);
     }
@@ -3199,29 +3211,114 @@ function buildShiftBreakdown() {
     </div>
   `;
 
-  // Step 6: Render UPH scenario cards
+  // Step 6: Render detailed picker UPH breakdown by shift window and UPH range
   const scenarioEl = document.getElementById('sb-uph-scenarios');
-  const overlapLabel = hasOverlap ? `${fmtTime(overlapStart)} – ${fmtTime(overlapEnd)}` : 'no overlap';
+  const overlapLabel = hasOverlap ? `${fmtTime(overlapStart)} – ${fmtTime(overlapEnd)}` : 'No overlap window';
+  const TARGET_UPH = 200;
+
+  function collectScenarioPickers(pickerSubset, txFilter) {
+    const rows = [];
+    for (const p of pickerSubset) {
+      const filtered = p.txs.filter(txFilter).map(r => ({
+        txMin: r.hour * 60 + (r.minute || 0),
+        zone: r.zone || 'No Location',
+        units: r.units
+      }));
+      if (!filtered.length) continue;
+
+      const contrib = computeZoneRunContributions(filtered);
+      let totalUnits = 0, activeMins = 0, inactiveMins = 0;
+      const zoneNames = [];
+      for (const [zoneName, zoneData] of Object.entries(contrib)) {
+        totalUnits += zoneData.units;
+        activeMins += zoneData.activeMinutes;
+        inactiveMins += zoneData.inactiveMinutes;
+        zoneNames.push(zoneName);
+      }
+
+      const activeHours = Math.round(activeMins) / 60;
+      const inactiveHours = Math.round(inactiveMins) / 60;
+      const uph = activeHours > 0 ? (totalUnits / activeHours) : 0;
+      const targetActiveHours = totalUnits / TARGET_UPH;
+
+      rows.push({
+        uid: p.uid,
+        shift: p.shift,
+        zones: zoneNames.sort().join(', '),
+        totalUnits,
+        activeHours,
+        inactiveHours,
+        uph,
+        targetActiveHours
+      });
+    }
+    return rows.sort((a, b) => b.uph - a.uph);
+  }
+
+  const uphRanges = [
+    { label: '175 – 200 UPH', test: v => v >= 175 },
+    { label: '150 – 175 UPH', test: v => v >= 150 && v < 175 },
+    { label: '125 – 150 UPH', test: v => v >= 125 && v < 150 },
+    { label: '100 – 125 UPH', test: v => v >= 100 && v < 125 },
+    { label: 'Below 100 UPH', test: v => v < 100 }
+  ];
+
   const scenarios = [
-    { label: 'S1 Individual', desc: hasOverlap ? `S1 pickers · before ${fmtTime(overlapStart)}` : 'S1 pickers · full shift', data: scenarioS1, color: '#3b82f6' },
-    { label: 'S1 & S2 Shared', desc: hasOverlap ? `all pickers · overlap ${overlapLabel}` : 'no overlap window detected', data: scenarioShared, color: '#f59e0b' },
-    { label: 'S2 Individual', desc: hasOverlap ? `S2 pickers · after ${fmtTime(overlapEnd)}` : 'S2 pickers · full shift', data: scenarioS2, color: '#8b5cf6' }
+    {
+      title: 'Shift 1 (S1)',
+      desc: hasOverlap ? `S1 pickers · before ${fmtTime(overlapStart)}` : 'S1 pickers · full shift',
+      rows: hasOverlap ? collectScenarioPickers(s1Pickers, r => txMinute(r) < overlapStart) : collectScenarioPickers(s1Pickers, () => true)
+    },
+    {
+      title: 'Shared (Overlap)',
+      desc: hasOverlap ? `All pickers · overlap ${overlapLabel}` : 'No overlap window detected',
+      rows: hasOverlap ? collectScenarioPickers(pickers, r => {
+        const m = txMinute(r);
+        return m >= overlapStart && m <= overlapEnd;
+      }) : []
+    },
+    {
+      title: 'Shift 2 (S2)',
+      desc: hasOverlap ? `S2 pickers · after ${fmtTime(overlapEnd)}` : 'S2 pickers · full shift',
+      rows: hasOverlap ? collectScenarioPickers(s2Pickers, r => txMinute(r) > overlapEnd) : collectScenarioPickers(s2Pickers, () => true)
+    }
   ];
 
   scenarioEl.innerHTML = scenarios.map(s => {
-    const uphColor = s.data.uph >= 200 ? '#22c55e' : s.data.uph >= 150 ? '#f59e0b' : '#ef4444';
+    const sections = uphRanges.map(range => {
+      const inRange = s.rows.filter(r => range.test(r.uph));
+      if (!inRange.length) {
+        return `<div style="margin-top:8px;"><div style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;">${range.label} (0)</div><div style="font-size:11px;color:var(--text3);padding:6px 0;">No pickers in this range.</div></div>`;
+      }
+      const body = inRange.map(r => `
+        <tr>
+          <td style="font-weight:600;color:var(--text);">${r.uid}</td>
+          <td>${r.zones || 'No Location'}</td>
+          <td>${r.activeHours.toFixed(2)}</td>
+          <td>${r.inactiveHours.toFixed(2)}</td>
+          <td>${r.targetActiveHours.toFixed(2)}</td>
+          <td style="font-weight:700;color:${r.uph >= 175 ? '#22c55e' : r.uph >= 125 ? '#f59e0b' : '#ef4444'};">${Math.round(r.uph)}</td>
+        </tr>
+      `).join('');
+      return `
+        <div style="margin-top:10px;">
+          <div style="font-size:11px;color:var(--text);font-family:'IBM Plex Mono',monospace;margin-bottom:6px;">${range.label} (${inRange.length})</div>
+          <div class="sb-table-wrap" style="max-height:220px;">
+            <table class="sb-table">
+              <thead><tr><th>Picker</th><th>Zones</th><th>Active Hrs</th><th>Inactive Hrs</th><th>Target Active Hrs</th><th>UPH</th></tr></thead>
+              <tbody>${body}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }).join('');
+
     return `
-      <div class="sb-scenario-card" style="--sc-color:${s.color}">
-        <div class="sb-scenario-header">${s.label}</div>
-        <div class="sb-scenario-body">
-          <div class="sb-scenario-uph" style="color:${uphColor}">${s.data.uph.toLocaleString()}</div>
-          <div class="sb-scenario-sub">${s.desc}</div>
+      <div class="card" style="margin-bottom:12px;border:1px solid rgba(148,163,184,.2);">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;">
+          <div class="card-title" style="margin-bottom:0;">${s.title}</div>
+          <div style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">${s.desc}</div>
         </div>
-        <div class="sb-scenario-metrics">
-          <div class="sb-scenario-metric"><div class="sb-scenario-metric-lbl">Units</div><div class="sb-scenario-metric-val" style="color:${s.color}">${s.data.totalUnits.toLocaleString()}</div></div>
-          <div class="sb-scenario-metric"><div class="sb-scenario-metric-lbl">Active Hrs</div><div class="sb-scenario-metric-val" style="color:#22c55e">${fmtHrs(s.data.activeHrs)}</div></div>
-          <div class="sb-scenario-metric"><div class="sb-scenario-metric-lbl">Inactive Hrs</div><div class="sb-scenario-metric-val" style="color:#ef4444">${fmtHrs(s.data.inactiveHrs)}</div></div>
-        </div>
+        ${sections}
       </div>`;
   }).join('');
 
