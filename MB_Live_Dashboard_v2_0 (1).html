@@ -973,7 +973,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
         </div>
         <div class="ov-shift-times">
           <div class="plan-field"><label>Start</label><input id="ov-s1-start" type="time" value="06:00" onchange="updateOverviewShiftWindows()"></div>
-          <div class="plan-field"><label>End</label><input id="ov-s1-end" type="time" value="14:00" onchange="updateOverviewShiftWindows()"></div>
+          <div class="plan-field"><label>End</label><input id="ov-s1-end" type="time" value="15:45" onchange="updateOverviewShiftWindows()"></div>
         </div>
       </div>
       <div class="ov-shift-card" id="ov-shift-card-s2">
@@ -982,8 +982,8 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <span style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">Independent window</span>
         </div>
         <div class="ov-shift-times">
-          <div class="plan-field"><label>Start</label><input id="ov-s2-start" type="time" value="14:00" onchange="updateOverviewShiftWindows()"></div>
-          <div class="plan-field"><label>End</label><input id="ov-s2-end" type="time" value="22:00" onchange="updateOverviewShiftWindows()"></div>
+          <div class="plan-field"><label>Start</label><input id="ov-s2-start" type="time" value="15:45" onchange="updateOverviewShiftWindows()"></div>
+          <div class="plan-field"><label>End</label><input id="ov-s2-end" type="time" value="01:00" onchange="updateOverviewShiftWindows()"></div>
         </div>
       </div>
     </div>
@@ -1691,18 +1691,27 @@ function hhmmToMinute(v, fallback = 0) {
   return ((h % 24 + 24) % 24) * 60 + Math.min(Math.max(m, 0), 59);
 }
 
+const OVERVIEW_SHIFT_DEFAULTS = {
+  s1: { start: '06:00', end: '15:45' },
+  s2: { start: '15:45', end: '01:00' }
+};
+
 function getOverviewShiftWindows() {
   return ['s1','s2'].map((key, i) => {
     const base = SHIFT_WINDOWS[key];
-    const startStr = document.getElementById(`ov-${key}-start`)?.value || `${String(base.start%24).padStart(2,'0')}:00`;
-    const endStr = document.getElementById(`ov-${key}-end`)?.value || `${String(base.end%24).padStart(2,'0')}:00`;
+    const defaults = OVERVIEW_SHIFT_DEFAULTS[key] || {
+      start: `${String(base.start%24).padStart(2,'0')}:00`,
+      end: `${String(base.end%24).padStart(2,'0')}:00`
+    };
+    const startStr = document.getElementById(`ov-${key}-start`)?.value || defaults.start;
+    const endStr = document.getElementById(`ov-${key}-end`)?.value || defaults.end;
     return {
       key,
       label:`S${i+1}`,
       startStr,
       endStr,
-      startMin: hhmmToMinute(startStr, (base.start%24)*60),
-      endMin: hhmmToMinute(endStr, (base.end%24)*60)
+      startMin: hhmmToMinute(startStr, hhmmToMinute(defaults.start, (base.start%24)*60)),
+      endMin: hhmmToMinute(endStr, hhmmToMinute(defaults.end, (base.end%24)*60))
     };
   });
 }
@@ -2693,9 +2702,9 @@ function buildOvTable() {
     <th>Total Picks</th>
     <th>Avg Units/Pick</th>
     <th>S1 Independent</th>
-    <th>S1 Shared</th>
+    <th>S1</th>
     <th>S2 Independent</th>
-    <th>S2 Shared</th>
+    <th>S2</th>
     <th>Volume Share</th>
   </tr></thead><tbody>`;
 
