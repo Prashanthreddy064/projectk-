@@ -849,12 +849,24 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div class="drop-icon">📂</div>
     <div class="drop-text">
       <strong>Drop updated Excel file here</strong>
-      <span>Sheet: "drop the data" · Columns: Time of transaction, x, y, Units</span>
+      <span>Sheet: "drop the data" · Columns: Time of transaction, x, y, Units, Date, Promo Type</span>
     </div>
   </div>
+  <div class="drop-hint" style="min-width:240px;">
+    Dashboard filters:<br>
+    <label for="ops-date-filter" style="display:block;margin-top:4px;">Date (Column F)</label>
+    <select id="ops-date-filter" onchange="handleOpsDateChange()" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;">
+      <option value="">Upload file first</option>
+    </select>
+    <label for="ops-category-filter" style="display:block;margin-top:8px;">Category (Column H)</label>
+    <select id="ops-category-filter" onchange="handleOpsCategoryChange()" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;">
+      <option value="all">All</option>
+    </select>
+  </div>
   <div class="drop-hint">
-    Expected columns (A–E):<br>
+    Expected columns (A–H):<br>
     <strong style="color:var(--cyan)">A</strong> Time · <strong style="color:var(--cyan)">B</strong> x · <strong style="color:var(--cyan)">C</strong> y · <strong style="color:var(--cyan)">D</strong> Units · <strong style="color:var(--cyan)">E</strong> User ID
+    · <strong style="color:var(--cyan)">F</strong> Date · <strong style="color:var(--cyan)">H</strong> Promo Type
   </div>
 </div>
 
@@ -1543,6 +1555,84 @@ let dataSource = 'default';   // 'default' | 'dropped'
 let heatSelectedZones = ['all'];
 let heatSelectedHours = [];
 let droppedFileName = '';
+let uploadedTxAll = [];
+let selectedOpsDate = '';
+let selectedOpsCategory = 'all';
+
+function parseOpsDateValue(cell) {
+  if(cell == null || cell === '') return '';
+  if(typeof cell === 'number' && Number.isFinite(cell)) {
+    const dateObj = XLSX.SSF.parse_date_code(cell);
+    if(dateObj && dateObj.y) {
+      return `${String(dateObj.y).padStart(4,'0')}-${String(dateObj.m).padStart(2,'0')}-${String(dateObj.d).padStart(2,'0')}`;
+    }
+  }
+  if(Object.prototype.toString.call(cell) === '[object Date]' && !isNaN(cell.getTime())) {
+    return `${cell.getFullYear()}-${String(cell.getMonth()+1).padStart(2,'0')}-${String(cell.getDate()).padStart(2,'0')}`;
+  }
+  return String(cell).trim();
+}
+
+function normalizePromoType(value) {
+  const raw = (value == null) ? '' : String(value).trim();
+  if(!raw) return 'Unknown';
+  const compact = raw.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if(compact.includes('nonpromo') || compact === 'non' || compact === 'np') return 'Non-Promo';
+  if(compact.includes('promo') || compact === 'p') return 'Promo';
+  return raw;
+}
+
+function updateOpsDateSelector() {
+  const select = document.getElementById('ops-date-filter');
+  if(!select) return;
+  const dates = [...new Set(uploadedTxAll.map(r => r.dateValue).filter(Boolean))].sort();
+  if(!dates.length) {
+    select.innerHTML = '<option value="">Upload file first</option>';
+    selectedOpsDate = '';
+    return;
+  }
+  select.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+  if(!selectedOpsDate || !dates.includes(selectedOpsDate)) selectedOpsDate = dates[0];
+  select.value = selectedOpsDate;
+}
+
+function updateOpsCategorySelector() {
+  const select = document.getElementById('ops-category-filter');
+  if(!select) return;
+  const categories = [...new Set(uploadedTxAll.filter(r => r.dateValue === selectedOpsDate).map(r => r.promoType).filter(Boolean))];
+  const opts = ['all', ...categories];
+  select.innerHTML = opts.map(v => `<option value="${v}">${v === 'all' ? 'All' : v}</option>`).join('');
+  if(!opts.includes(selectedOpsCategory)) selectedOpsCategory = categories.length === 1 ? categories[0] : 'all';
+  select.value = selectedOpsCategory;
+}
+
+function applyOpsFilters() {
+  if(!uploadedTxAll.length) return;
+  const filtered = uploadedTxAll.filter(r => {
+    if(selectedOpsDate && r.dateValue !== selectedOpsDate) return false;
+    if(selectedOpsCategory !== 'all' && r.promoType !== selectedOpsCategory) return false;
+    return true;
+  });
+  txData = filtered;
+  buildAllData();
+  renderAll();
+  document.getElementById('row-count').textContent = filtered.length.toLocaleString();
+  document.getElementById('date-range').textContent = selectedOpsDate ? `${selectedOpsDate} · ${selectedOpsCategory === 'all' ? 'All' : selectedOpsCategory}` : (droppedFileName || 'Uploaded file');
+  updateLastRefreshed();
+}
+
+function handleOpsDateChange() {
+  selectedOpsDate = document.getElementById('ops-date-filter')?.value || '';
+  selectedOpsCategory = 'all';
+  updateOpsCategorySelector();
+  applyOpsFilters();
+}
+
+function handleOpsCategoryChange() {
+  selectedOpsCategory = document.getElementById('ops-category-filter')?.value || 'all';
+  applyOpsFilters();
+}
+
   function parseTimeInputToHour(v, fallbackHour) {
   if(!v || typeof v !== 'string' || !v.includes(':')) return fallbackHour;
   const [h,m] = v.split(':').map(Number);
@@ -1792,7 +1882,7 @@ function handleFile(file) {
       // Support "complete dashboard" exports by locating the actual header row/columns
       // instead of assuming A–E are always Time, X, Y, Units, User ID.
       let headerRowIdx = 0;
-      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4;
+      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colPromo = 7;
       for(let i = 0; i < Math.min(rows.length, 30); i++) {
         const hdr = (rows[i] || []).map(normalizeHeader);
         const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'time']);
@@ -1807,6 +1897,10 @@ function handleFile(file) {
           colUnits = unitsIdx;
           const userIdx = findFirstMatch(hdr, ['user id', 'userid', 'user']);
           if(userIdx >= 0) colUser = userIdx;
+          const dateIdx = findFirstMatch(hdr, ['date']);
+          if(dateIdx >= 0) colDate = dateIdx;
+          const promoIdx = findFirstMatch(hdr, ['promo type', 'promo', 'category', 'type']);
+          if(promoIdx >= 0) colPromo = promoIdx;
           break;
         }
       }
@@ -1853,7 +1947,9 @@ function handleFile(file) {
         }
         // User ID from col E
         const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
-        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA});
+        const dateValue = parseOpsDateValue(r[colDate]);
+        const promoType = normalizePromoType(r[colPromo]);
+        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType});
       }
       setProgress(80);
       
@@ -1879,15 +1975,13 @@ function assignZonesAndBuild(rows, filename) {
     if(i < rows.length) {
       setTimeout(processChunk, 0);
     } else {
-      txData = rows;
-      buildAllData();
+      uploadedTxAll = rows;
       dataSource = 'dropped';
       droppedFileName = filename;
+      updateOpsDateSelector();
+      updateOpsCategorySelector();
+      applyOpsFilters();
       setProgress(100);
-      document.getElementById('row-count').textContent = rows.length.toLocaleString();
-      document.getElementById('date-range').textContent = filename;
-      renderAll();
-      updateLastRefreshed();
     }
   }
   processChunk();
