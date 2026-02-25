@@ -3115,6 +3115,7 @@ function buildZoneStats() {
 
     const classified = classifyTxByShiftWindows(scopedRows);
     const byZone = {};
+    const zonePickerSet = {};
     const pickerTx = {};
 
     Object.entries(classified).forEach(([zone, stats]) => {
@@ -3148,6 +3149,8 @@ function buildZoneStats() {
       }
 
       const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
+      if(!zonePickerSet[zone]) zonePickerSet[zone] = new Set();
+      zonePickerSet[zone].add(uid);
       if(!pickerTx[uid]) pickerTx[uid] = [];
       pickerTx[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone, units: toNumber(r.units) });
     });
@@ -3189,13 +3192,14 @@ function buildZoneStats() {
           pickerHours,
           inactiveMinutes: toNumber(d.inactiveMinutes),
           actualUPH: pickerHours > 0 ? Math.round(units / pickerHours) : 0,
+          actualPickers: zonePickerSet[zone]?.size || 0,
           calculatedPickers,
           uphTarget
         };
       })
       .sort((a, b) => b.units - a.units);
 
-    let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive Hrs</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers (Required Pickers)</th></tr></thead><tbody>`;
+    let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Actual Pickers</th><th>Picker·Hrs</th><th>Inactive Hrs</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers (Required Pickers)</th></tr></thead><tbody>`;
     entries.forEach(d => {
       const c = ZONE_COLORS[d.zone] || '#64748b';
       const uph = d.uphTarget;
@@ -3208,6 +3212,7 @@ function buildZoneStats() {
         <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${d.zone}</span></td>
         <td class="mono">${uph}</td>
         <td class="mono" style="color:${uphColor};font-weight:${d.actualUPH>0?'700':'400'}">${d.actualUPH.toLocaleString()}</td>
+        <td class="mono" style="font-weight:600;color:var(--text)">${d.actualPickers}</td>
         <td class="mono" style="color:var(--text3)">${d.pickerHours.toFixed(2)}</td>
         <td class="mono" style="color:${inactiveMins > 0 ? '#ef4444' : 'var(--text3)'};font-weight:${inactiveMins > 0 ? '600' : '400'}">${inactiveDisplay}</td>
         <td class="mono">${Math.round(d.units).toLocaleString()}</td>
@@ -3223,7 +3228,7 @@ function buildZoneStats() {
 
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
   const defaultIntervalHours = 3;
-  let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers (Required Pickers)</th></tr></thead><tbody>`;
+  let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Actual Pickers</th><th>Picker·Hrs</th><th>Inactive</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers (Required Pickers)</th></tr></thead><tbody>`;
   entries.forEach(([z,d]) => {
     const c = ZONE_COLORS[z]||'#64748b';
     const uph = UPH[z]||150;
@@ -3241,6 +3246,7 @@ function buildZoneStats() {
       <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span></td>
       <td class="mono">${uph}</td>
       <td class="mono" style="color:${uphColor};font-weight:${actualUPHValue>0?'700':'400'}">${actualUPH}</td>
+      <td class="mono" style="font-weight:600;color:var(--text)">${toNumber(d.pickerCount)}</td>
       <td class="mono" style="color:var(--text3)">${d.totalPickerHours != null ? d.totalPickerHours : '0.00'}</td>
       <td class="mono" style="color:${inactiveColor};font-weight:600">${inactiveMins > 0 ? inactiveDisplay : '0m'}</td>
       <td class="mono">${Math.round(totalUnits).toLocaleString()}</td>
@@ -3361,7 +3367,7 @@ function buildShiftBreakdown() {
     });
   }
 
-  // Step 3: Aggregate per-shift metrics
+  // Step 3: Aggregate picker cohorts (classification by first pick)
   const s1Pickers = pickers.filter(p => p.shift === 's1');
   const s2Pickers = pickers.filter(p => p.shift === 's2');
 
@@ -3382,12 +3388,9 @@ function buildShiftBreakdown() {
     return { count: arr.length, totalUnits, totalActiveHours, totalInactiveHours, avgUPH };
   }
 
-  const s1Agg = aggShift(s1Pickers);
-  const s2Agg = aggShift(s2Pickers);
-
   // Step 4: Overlap window from dashboard inputs
   // Shared units = from Shift 2 first transaction through Shift 1 last transaction.
-  const hasOverlap = hasOverlapByConfig && s1Pickers.length > 0 && s2Pickers.length > 0;
+  const hasOverlap = hasOverlapByConfig;
 
   // Aggregate the shared (overlap) window metrics from ALL pickers
   function aggWindow(pickerSubset, txFilter) {
@@ -3422,9 +3425,9 @@ function buildShiftBreakdown() {
     : { count: 0, totalUnits: 0, totalActiveHours: 0, totalInactiveHours: 0, avgUPH: 0 };
 
   // Step 5: Compute UPH scenarios using the overlap window
-  // S1 Individual: S1 pickers, txs BEFORE the overlap starts (exclusive S1 hours)
+  // S1 Individual: ALL pickers, txs BEFORE the overlap starts (exclusive S1 window)
   // S1 & S2 Shared: ALL pickers, txs DURING the overlap window
-  // S2 Individual: S2 pickers, txs AFTER the overlap ends (exclusive S2 hours)
+  // S2 Individual: ALL pickers, txs AFTER the overlap ends (exclusive S2 window)
   function computeScenarioUPH(pickerSubset, txFilter) {
     let totalUnits = 0, activeMins = 0, inactiveMins = 0;
     let activeCount = 0;
@@ -3450,7 +3453,7 @@ function buildShiftBreakdown() {
   }
 
   const scenarioS1 = hasOverlap
-    ? computeScenarioUPH(s1Pickers, r => txMinute(r) < overlapStart)
+    ? computeScenarioUPH(pickers, r => txMinute(r) < overlapStart)
     : computeScenarioUPH(s1Pickers, () => true);
   const scenarioShared = hasOverlap
     ? computeScenarioUPH(pickers, r => {
@@ -3459,8 +3462,15 @@ function buildShiftBreakdown() {
       })
     : { totalUnits: 0, activeHrs: 0, inactiveHrs: 0, uph: 0, pickerCount: 0 };
   const scenarioS2 = hasOverlap
-    ? computeScenarioUPH(s2Pickers, r => txMinute(r) > overlapEnd)
+    ? computeScenarioUPH(pickers, r => txMinute(r) > overlapEnd)
     : computeScenarioUPH(s2Pickers, () => true);
+
+  const s1Agg = hasOverlap
+    ? { count: scenarioS1.pickerCount, totalUnits: scenarioS1.totalUnits, totalActiveHours: scenarioS1.activeHrs, totalInactiveHours: scenarioS1.inactiveHrs, avgUPH: scenarioS1.uph }
+    : aggShift(s1Pickers);
+  const s2Agg = hasOverlap
+    ? { count: scenarioS2.pickerCount, totalUnits: scenarioS2.totalUnits, totalActiveHours: scenarioS2.activeHrs, totalInactiveHours: scenarioS2.inactiveHrs, avgUPH: scenarioS2.uph }
+    : aggShift(s2Pickers);
 
   // Step 5: Render hero cards
   const heroGrid = document.getElementById('sb-hero-grid');
@@ -3490,7 +3500,7 @@ function buildShiftBreakdown() {
       </div>
       <div class="sb-hero-body">
         <div class="sb-hero-val" style="color:#3b82f6">${s1Agg.totalUnits.toLocaleString()}</div>
-        <div class="sb-hero-sub">individual units (shared excluded) · first pick before ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
+        <div class="sb-hero-sub">${hasOverlap ? `units before ${fmtTime(overlapStart)} · shared excluded` : `individual units · first pick before ${fmtTime(shiftConfig.s2FirstTxMin)}`}</div>
       </div>
       <div class="sb-metrics-row">
         <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s1Agg.totalActiveHours)}</div></div>
@@ -3522,7 +3532,7 @@ function buildShiftBreakdown() {
       </div>
       <div class="sb-hero-body">
         <div class="sb-hero-val" style="color:#8b5cf6">${s2Agg.totalUnits.toLocaleString()}</div>
-        <div class="sb-hero-sub">individual units (shared excluded) · first pick at/after ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
+        <div class="sb-hero-sub">${hasOverlap ? `units after ${fmtTime(overlapEnd)} · shared excluded` : `individual units · first pick at/after ${fmtTime(shiftConfig.s2FirstTxMin)}`}</div>
       </div>
       <div class="sb-metrics-row">
         <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s2Agg.totalActiveHours)}</div></div>
@@ -3575,8 +3585,8 @@ function buildShiftBreakdown() {
   const scenarios = [
     {
       title: 'Shift 1 (S1)',
-      desc: hasOverlap ? `S1 pickers · before ${fmtTime(overlapStart)}` : 'S1 pickers · full shift',
-      rows: hasOverlap ? collectScenarioPickers(s1Pickers, r => txMinute(r) < overlapStart) : collectScenarioPickers(s1Pickers, () => true)
+      desc: hasOverlap ? `All pickers · before ${fmtTime(overlapStart)}` : 'S1 pickers · full shift',
+      rows: hasOverlap ? collectScenarioPickers(pickers, r => txMinute(r) < overlapStart) : collectScenarioPickers(s1Pickers, () => true)
     },
     {
       title: 'Shared (Overlap)',
@@ -3588,8 +3598,8 @@ function buildShiftBreakdown() {
     },
     {
       title: 'Shift 2 (S2)',
-      desc: hasOverlap ? `S2 pickers · after ${fmtTime(overlapEnd)}` : 'S2 pickers · full shift',
-      rows: hasOverlap ? collectScenarioPickers(s2Pickers, r => txMinute(r) > overlapEnd) : collectScenarioPickers(s2Pickers, () => true)
+      desc: hasOverlap ? `All pickers · after ${fmtTime(overlapEnd)}` : 'S2 pickers · full shift',
+      rows: hasOverlap ? collectScenarioPickers(pickers, r => txMinute(r) > overlapEnd) : collectScenarioPickers(s2Pickers, () => true)
     }
   ];
 
