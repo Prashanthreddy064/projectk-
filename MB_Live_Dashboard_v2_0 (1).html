@@ -867,7 +867,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <button class="tab" data-sec="zonestats">Zone Stats</button>
   <button class="tab" data-sec="shiftbreakdown">Shift Breakdown</button>
   <button class="tab" data-sec="pickpath">Pick Path</button>
-  <button class="tab" data-sec="uphtargets">UPH Targets</button>
+  <button class="tab" data-sec="uphtargets">Target Pick Path</button>
   <button class="tab" data-sec="staffing">Staffing Plan</button>
   <button class="tab" data-sec="ramp">Ramp Plan</button>
   <button class="tab" data-sec="forecast">Forecast</button>
@@ -1154,9 +1154,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
     <div class="card" style="margin-bottom:0">
-      <div class="card-title">How to Reach Target UPH — Picker Allocation</div>
+      <div class="card-title">Target Pick Path — Target UPH Zone Guidance</div>
       <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;margin-bottom:14px;">
-        Required pickers per zone = Zone Units ÷ (Target UPH × Shift Hours). Actual UPH is shown when live data is loaded — gaps indicate where allocation changes are needed.
+        Required pickers per zone = Zone Units ÷ (Target UPH × Shift Hours). Use this guidance to keep associates in the right zones to stay on track for target UPH.
       </p>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
         <label style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">SHIFT HRS</label>
@@ -1173,20 +1173,30 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
 
     <div class="card" style="margin-bottom:0">
-      <div class="card-title">Recommended Pick Path — Optimized Zone Traversal</div>
+      <div class="card-title">Optimized Sequence — Nearest X/Y Travel Path</div>
       <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;margin-bottom:10px;">
-        Nearest-neighbor route starting from highest-volume zone. Minimizes travel distance across the warehouse floor.
+        Calculates the most efficient zone sequence from the associate starting zone, then follows nearest X/Y zone centroids to reduce travel time.
       </p>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+        <label style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">START ZONE</label>
+        <select id="uph-start-zone" onchange="buildUPHTargets()" style="background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);font-size:11px;padding:5px 10px;font-family:'IBM Plex Mono',monospace;min-width:180px;"></select>
+      </div>
       <canvas id="uph-path-canvas" style="display:block;border-radius:6px;overflow:hidden;"></canvas>
       <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">
-        <span style="color:var(--green)">① START</span><span>→ route follows volume-weighted nearest neighbor →</span><span style="color:var(--red)">FINISH</span>
+        <span style="color:var(--green)">① START</span><span>→ route follows nearest X/Y centroid hops →</span><span style="color:var(--red)">FINISH</span>
       </div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-title">Step-by-Step Pick Path Guidance</div>
+    <div class="card-title">Zone Guidance — Step-by-Step Target Pick Path</div>
     <div id="uph-path-steps" style="display:flex;flex-wrap:wrap;gap:12px;padding-top:4px;"></div>
+  </div>
+
+
+  <div class="card">
+    <div class="card-title">Associate List — Assigned Zones & Active Hours (Optimized Path)</div>
+    <table id="uph-associate-table"></table>
   </div>
 
   <div class="card">
@@ -3560,6 +3570,7 @@ function buildUPHTargets() {
   drawUPHPickPath();
   buildUPHPathSteps();
   buildUPHGapBars();
+  buildUPHAssociateTable();
 }
 
 function buildUPHAllocTable() {
@@ -3631,21 +3642,19 @@ function buildUPHAllocTable() {
   tbl.innerHTML = h;
 }
 
-function getOptimalZoneOrder() {
-  // Nearest-neighbor traversal starting from highest-volume zone
+function getOptimalZoneOrder(startZone = null) {
   const zones = Object.keys(zoneStats).filter(z => ZONE_BOUNDS[z]);
   if(zones.length === 0) return [];
-  
-  // Sort starting zone by volume
+
   const sorted = [...zones].sort((a,b) => (zoneStats[b]?.units||0) - (zoneStats[a]?.units||0));
+  const preferredStart = startZone && zones.includes(startZone) ? startZone : sorted[0];
   const visited = new Set();
   const route = [];
-  
-  let current = sorted[0];
+
+  let current = preferredStart;
   while(route.length < zones.length) {
     route.push(current);
     visited.add(current);
-    // Find nearest unvisited zone by centroid distance
     const b = ZONE_BOUNDS[current];
     let bestDist = Infinity, bestNext = null;
     for(const z of zones) {
@@ -3659,6 +3668,24 @@ function getOptimalZoneOrder() {
     current = bestNext;
   }
   return route;
+}
+
+function getUPHSelectedStartZone() {
+  const sel = document.getElementById('uph-start-zone');
+  if(!sel) return null;
+  const value = sel.value || '';
+  return value === '__auto__' ? null : value;
+}
+
+function populateUPHStartZoneOptions() {
+  const sel = document.getElementById('uph-start-zone');
+  if(!sel) return;
+  const routeZones = Object.keys(zoneStats).filter(z => ZONE_BOUNDS[z]);
+  const selected = sel.value || '__auto__';
+  const byVolume = [...routeZones].sort((a,b) => (zoneStats[b]?.units||0) - (zoneStats[a]?.units||0));
+  sel.innerHTML = `<option value="__auto__">Auto (highest volume)</option>` +
+    byVolume.map(z => `<option value="${z}">${z}</option>`).join('');
+  if([...sel.options].some(opt => opt.value === selected)) sel.value = selected;
 }
 
 function drawUPHPickPath() {
@@ -3684,7 +3711,8 @@ function drawUPHPickPath() {
     ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1));
   });
 
-  const route = getOptimalZoneOrder();
+  populateUPHStartZoneOptions();
+  const route = getOptimalZoneOrder(getUPHSelectedStartZone());
   if(route.length < 2) {
     ctx.fillStyle='#334155'; ctx.font='13px Syne'; ctx.textAlign='center';
     ctx.fillText('No zone data available', W/2, H/2); return;
@@ -3750,7 +3778,7 @@ function drawUPHPickPath() {
 function buildUPHPathSteps() {
   const div = document.getElementById('uph-path-steps');
   if(!div) return;
-  const route = getOptimalZoneOrder();
+  const route = getOptimalZoneOrder(getUPHSelectedStartZone());
   div.innerHTML = route.map((z,i) => {
     const c = ZONE_COLORS[z]||'#64748b';
     const d = zoneStats[z]||{};
@@ -3776,6 +3804,57 @@ function buildUPHPathSteps() {
       ${connector}
     </div>`;
   }).join('');
+}
+
+function buildUPHAssociateTable() {
+  const tbl = document.getElementById('uph-associate-table');
+  if(!tbl) return;
+  const route = getOptimalZoneOrder(getUPHSelectedStartZone());
+  if(!txData.length || !route.length) {
+    tbl.innerHTML = `<thead><tr><th>Associate</th><th>Starting Zone</th><th>Assigned Zones (Optimized)</th><th>Active Hours</th></tr></thead><tbody><tr><td colspan="4" style="text-align:center;color:var(--text3);padding:18px;">Upload live data to generate associate zone guidance.</td></tr></tbody>`;
+    return;
+  }
+
+  const routeIndex = Object.fromEntries(route.map((z, i) => [z, i]));
+  const byUser = {};
+  txData.forEach(r => {
+    const uid = (r.userId || 'Unknown').trim() || 'Unknown';
+    if(!byUser[uid]) byUser[uid] = { rows: [], zoneUnits: {} };
+    byUser[uid].rows.push(r);
+    byUser[uid].zoneUnits[r.zone] = (byUser[uid].zoneUnits[r.zone] || 0) + (r.units || 0);
+  });
+
+  const users = Object.entries(byUser).map(([uid, data]) => {
+    const sortedRows = data.rows.slice().sort((a,b) => normalizeOperationalMinute(a.hour, a.minute) - normalizeOperationalMinute(b.hour, b.minute));
+    const startZone = sortedRows[0]?.zone || 'No Location';
+    let activeMins = 0;
+    for(let i=1; i<sortedRows.length; i++) {
+      const prev = normalizeOperationalMinute(sortedRows[i-1].hour, sortedRows[i-1].minute);
+      const next = normalizeOperationalMinute(sortedRows[i].hour, sortedRows[i].minute);
+      const gap = Math.max(0, next - prev);
+      if(gap <= INACTIVE_THRESHOLD) activeMins += gap;
+    }
+    const assignedZones = Object.keys(data.zoneUnits)
+      .sort((a,b) => (routeIndex[a] ?? 999) - (routeIndex[b] ?? 999) || data.zoneUnits[b] - data.zoneUnits[a]);
+    return { uid, startZone, assignedZones, activeHours: activeMins / 60 };
+  }).sort((a,b) => b.activeHours - a.activeHours);
+
+  let h = `<thead><tr><th>Associate</th><th>Starting Zone</th><th>Assigned Zones (Optimized)</th><th>Active Hours</th></tr></thead><tbody>`;
+  users.forEach(u => {
+    const zoneBadges = u.assignedZones.map(z => {
+      const c = ZONE_COLORS[z] || '#64748b';
+      return `<span class="zpill" style="background:${c}18;color:${c};font-size:10px;margin:2px 4px 2px 0;"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span>`;
+    }).join('');
+    const sc = ZONE_COLORS[u.startZone] || '#64748b';
+    h += `<tr>
+      <td class="mono">${u.uid}</td>
+      <td><span class="zpill" style="background:${sc}18;color:${sc};font-size:11px"><span style="width:5px;height:5px;border-radius:50%;background:${sc};display:inline-block"></span>${u.startZone}</span></td>
+      <td>${zoneBadges || '<span style="color:var(--text3)">—</span>'}</td>
+      <td class="mono" style="font-weight:700;color:#93c5fd;">${u.activeHours.toFixed(2)}h</td>
+    </tr>`;
+  });
+  h += '</tbody>';
+  tbl.innerHTML = h;
 }
 
 function buildUPHGapBars() {
