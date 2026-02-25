@@ -3101,25 +3101,38 @@ function buildZoneStats() {
       ? intervals.filter(i => selectedKeys.has(i.key))
       : intervals;
     const intervalHours = new Set(activeIntervals.flatMap(i => i.hours));
+    const selectedIntervalHours = Math.max(1, intervalHours.size || 3);
 
-    // Keep Detailed Zone Statistics synced with the same hour filters used by Loaded Data table.
     let scopedRows = txData.slice();
-    if(selectedHour !== null) {
-      scopedRows = scopedRows.filter(r => r.hour === selectedHour);
-    } else if(selectedHourWindow) {
-      scopedRows = scopedRows.filter(r => hourInWindow(r.hour, selectedHourWindow));
-    }
     if(intervalHours.size) {
       scopedRows = scopedRows.filter(r => intervalHours.has(r.hour));
     }
 
     if(!scopedRows.length) {
-      tbl.innerHTML = '<tbody><tr><td colspan="10" style="text-align:center;color:var(--text3);padding:16px;">No zone activity for the selected filter combination.</td></tr></tbody>';
+      tbl.innerHTML = '<tbody><tr><td colspan="9" style="text-align:center;color:var(--text3);padding:16px;">No zone activity for the selected 3-hour interval(s).</td></tr></tbody>';
       return;
     }
 
+    const classified = classifyTxByShiftWindows(scopedRows);
     const byZone = {};
     const pickerTx = {};
+
+    Object.entries(classified).forEach(([zone, stats]) => {
+      byZone[zone] = {
+        units: toNumber(stats.totalUnits),
+        picks: toNumber(stats.totalPicks),
+        independent: {
+          s1: toNumber(stats.independent?.s1),
+          s2: toNumber(stats.independent?.s2)
+        },
+        shared: {
+          s1: toNumber(stats.shared?.s1),
+          s2: toNumber(stats.shared?.s2)
+        },
+        activeMinutes: 0,
+        inactiveMinutes: 0
+      };
+    });
 
     scopedRows.forEach(r => {
       const zone = r.zone || 'No Location';
@@ -3127,33 +3140,16 @@ function buildZoneStats() {
         byZone[zone] = {
           units: 0,
           picks: 0,
-          s1Units: 0,
-          s2Units: 0,
+          independent: { s1: 0, s2: 0 },
+          shared: { s1: 0, s2: 0 },
           activeMinutes: 0,
-          inactiveMinutes: 0,
-          actualPickers: new Set(),
-          s1ActualPickers: new Set(),
-          s2ActualPickers: new Set()
+          inactiveMinutes: 0
         };
       }
 
-      const units = toNumber(r.units);
-      byZone[zone].units += units;
-      byZone[zone].picks += 1;
-
-      const shift = classifyShift(r.hour, r.minute || 0);
       const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
-      if(shift === 's1') {
-        byZone[zone].s1Units += units;
-        byZone[zone].s1ActualPickers.add(uid);
-      } else if(shift === 's2') {
-        byZone[zone].s2Units += units;
-        byZone[zone].s2ActualPickers.add(uid);
-      }
-      byZone[zone].actualPickers.add(uid);
-
       if(!pickerTx[uid]) pickerTx[uid] = [];
-      pickerTx[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone, units });
+      pickerTx[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone, units: toNumber(r.units) });
     });
 
     Object.values(pickerTx).forEach(txs => {
@@ -3163,13 +3159,10 @@ function buildZoneStats() {
           byZone[zone] = {
             units: 0,
             picks: 0,
-            s1Units: 0,
-            s2Units: 0,
+            independent: { s1: 0, s2: 0 },
+            shared: { s1: 0, s2: 0 },
             activeMinutes: 0,
-            inactiveMinutes: 0,
-            actualPickers: new Set(),
-            s1ActualPickers: new Set(),
-            s2ActualPickers: new Set()
+            inactiveMinutes: 0
           };
         }
         byZone[zone].activeMinutes += toNumber(stats.activeMinutes);
@@ -3183,29 +3176,26 @@ function buildZoneStats() {
         const pickerHours = roundedActiveMins > 0 ? roundedActiveMins / 60 : 0;
         const units = toNumber(d.units);
         const picks = toNumber(d.picks);
-        const s1Units = toNumber(d.s1Units);
-        const s2Units = toNumber(d.s2Units);
         const uphTarget = toNumber(UPH[zone]) || 150;
-        const requiredPickersS1 = uphTarget > 0 && s1Units > 0 ? Math.max(1, Math.ceil(s1Units / (uphTarget * 8))) : 0;
-        const requiredPickersS2 = uphTarget > 0 && s2Units > 0 ? Math.max(1, Math.ceil(s2Units / (uphTarget * 8))) : 0;
+        const requiredHours = uphTarget > 0 ? (units / uphTarget) : 0;
+        const calculatedPickers = requiredHours > 0
+          ? Math.max(1, Math.ceil(requiredHours / selectedIntervalHours))
+          : 0;
 
         return {
           zone,
           units,
           picks,
-          s1Units,
-          s2Units,
           pickerHours,
           inactiveMinutes: toNumber(d.inactiveMinutes),
           actualUPH: pickerHours > 0 ? Math.round(units / pickerHours) : 0,
-          calculatedPickers: requiredPickersS1 + requiredPickersS2,
-          actualPickers: d.actualPickers ? d.actualPickers.size : 0,
+          calculatedPickers,
           uphTarget
         };
       })
       .sort((a, b) => b.units - a.units);
 
-    let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive Hrs</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers</th><th>Actual Pickers</th></tr></thead><tbody>`;
+    let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive Hrs</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers (Required Pickers)</th></tr></thead><tbody>`;
     entries.forEach(d => {
       const c = ZONE_COLORS[d.zone] || '#64748b';
       const uph = d.uphTarget;
@@ -3224,7 +3214,6 @@ function buildZoneStats() {
         <td class="mono">${Math.round(d.picks).toLocaleString()}</td>
         <td class="mono">${d.picks > 0 ? (d.units / d.picks).toFixed(2) : '0.00'}</td>
         <td class="mono" style="color:var(--text3)">${d.calculatedPickers}</td>
-        <td class="mono" style="color:${c};font-weight:700">${d.actualPickers}</td>
       </tr>`;
     });
 
@@ -3233,25 +3222,21 @@ function buildZoneStats() {
   }
 
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
-  let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers</th><th>Actual Pickers</th></tr></thead><tbody>`;
+  const defaultIntervalHours = 3;
+  let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers (Required Pickers)</th></tr></thead><tbody>`;
   entries.forEach(([z,d]) => {
     const c = ZONE_COLORS[z]||'#64748b';
     const uph = UPH[z]||150;
-    const s1Units = toNumber(d.s1);
-    const s2Units = toNumber(d.s2);
-    const s1c = uph > 0 && s1Units > 0 ? Math.max(1, Math.ceil(s1Units/(uph*8))) : 0;
-    const s2c = uph > 0 && s2Units > 0 ? Math.max(1, Math.ceil(s2Units/(uph*8))) : 0;
-    const calculatedPickers = s1c + s2c;
-    const st = STEADY[z]||{s1:1,s2:1};
-    const actualPickers = toNumber(st.s1) + toNumber(st.s2);
+    const totalUnits = toNumber(d.units);
+    const totalPicks = toNumber(d.picks);
+    const requiredHours = uph > 0 ? (totalUnits / uph) : 0;
+    const calculatedPickers = requiredHours > 0 ? Math.max(1, Math.ceil(requiredHours / defaultIntervalHours)) : 0;
     const actualUPHValue = toNumber(d.actualUPH);
     const actualUPH = actualUPHValue > 0 ? actualUPHValue.toLocaleString() : '0';
     const uphColor = actualUPHValue > 0 ? (actualUPHValue >= uph ? '#22c55e' : actualUPHValue >= uph*0.8 ? '#f59e0b' : '#ef4444') : 'var(--text3)';
     const inactiveMins = Math.round(toNumber(d.inactiveMinutes));
     const inactiveDisplay = inactiveMins >= 60 ? (inactiveMins/60).toFixed(1) + 'h' : inactiveMins + 'm';
     const inactiveColor = inactiveMins > 10 ? '#ef4444' : inactiveMins > 5 ? '#f59e0b' : '#22c55e';
-    const totalUnits = toNumber(d.units);
-    const totalPicks = toNumber(d.picks);
     h += `<tr>
       <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span></td>
       <td class="mono">${uph}</td>
@@ -3262,7 +3247,6 @@ function buildZoneStats() {
       <td class="mono">${Math.round(totalPicks).toLocaleString()}</td>
       <td class="mono">${totalPicks > 0 ? (totalUnits/totalPicks).toFixed(2) : '0.00'}</td>
       <td class="mono" style="color:var(--text3)">${Number.isFinite(calculatedPickers) ? calculatedPickers : 0}</td>
-      <td class="mono" style="color:${c};font-weight:700">${actualPickers}</td>
     </tr>`;
   });
   tbl.innerHTML = h + '</tbody>';
