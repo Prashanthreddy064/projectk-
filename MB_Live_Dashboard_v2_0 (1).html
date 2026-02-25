@@ -1129,6 +1129,27 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       </table>
     </div>
   </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap;">
+      <div class="card-title" style="margin-bottom:0;">UPH Bucket Summary</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <select id="sb-uph-summary-filter" onchange="buildShiftBreakdown()"
+          style="background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);font-size:11px;padding:5px 10px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
+          <option value="all">All Shifts</option>
+          <option value="s1">S1 Only</option>
+          <option value="s2">S2 Only</option>
+          <option value="shared">Shared Window</option>
+        </select>
+        <span id="sb-uph-summary-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+      </div>
+    </div>
+    <div class="sb-table-wrap" style="max-height:380px;overflow-y:auto;">
+      <table class="sb-table" id="sb-uph-summary-table">
+        <!-- Populated by JS -->
+      </table>
+    </div>
+  </div>
 </div>
 
 <!-- PICK PATH -->
@@ -3346,6 +3367,12 @@ function calculateShiftBreakdown() {
   showRefreshToast();
 }
 
+function getSBUPHColor(uph) {
+  if (uph >= 250) return '#22c55e';
+  if (uph >= 175) return '#f59e0b';
+  return '#ef4444';
+}
+
 function buildShiftBreakdown() {
   if (!txData.length) return;
 
@@ -3628,13 +3655,6 @@ function buildShiftBreakdown() {
   const sortedRows = filtered.slice().sort((a, b) => b.totalUnits - a.totalUnits);
   const maxUnits = sortedRows[0]?.totalUnits || 1;
 
-  function uphColor(uph) {
-    if (uph >= 250) return '#22c55e';
-    if (uph >= 200) return '#16a34a';
-    if (uph >= 160) return '#f59e0b';
-    return '#ef4444';
-  }
-
   function zoneChip(zoneName) {
     const zone = String(zoneName || '').trim();
     const lower = zone.toLowerCase();
@@ -3672,7 +3692,7 @@ function buildShiftBreakdown() {
       <td>${p.picks.toLocaleString()}</td>
       <td style="font-weight:700;color:#22c55e;">${p.activeHours.toFixed(2)}</td>
       <td style="font-weight:700;color:${p.inactiveHours >= 1.2 ? '#ef4444' : p.inactiveHours >= 0.6 ? '#f59e0b' : '#22c55e'};">${p.inactiveHours.toFixed(2)}</td>
-      <td style="font-weight:700;color:${uphColor(p.uph)};">${p.uph.toLocaleString()}</td>
+      <td style="font-weight:700;color:${getSBUPHColor(p.uph)};">${p.uph.toLocaleString()}</td>
       <td><span class="sb-zone-badge" style="background:${zone.bg};color:${zone.fg};"><span class="sb-zone-dot" style="background:${zone.dot};"></span>${zone.label}</span></td>
       <td class="sb-volume-cell">
         <div class="sb-volume-track"><div class="sb-volume-fill" style="width:${pct}%;background:${p.shift === 's1' ? '#3b82f6' : '#8b5cf6'};"></div></div>
@@ -3684,6 +3704,7 @@ function buildShiftBreakdown() {
   tbl.innerHTML = html + '</tbody>';
 
   buildBucketUPHTable(pickers);
+  buildUPHBucketSummaryTable(pickers);
 }
 
 function buildBucketUPHTable(pickers = []) {
@@ -3788,9 +3809,91 @@ function buildBucketUPHTable(pickers = []) {
       <td style="font-weight:700;color:var(--text);">${b.label}</td>
       <td>${b.pickerCount.toLocaleString()}</td>
       <td>${b.totalZones.toLocaleString()}</td>
-      <td style="font-weight:700;color:${uphColor(avgUPH)};">${avgUPH.toLocaleString()}</td>
+      <td style="font-weight:700;color:${getSBUPHColor(avgUPH)};">${avgUPH.toLocaleString()}</td>
       <td>${Math.round(b.totalUnits).toLocaleString()}</td>
       <td>${b.totalPicks.toLocaleString()}</td>
+    </tr>`;
+  });
+
+  table.innerHTML = html + '</tbody>';
+}
+
+function buildUPHBucketSummaryTable(pickers = []) {
+  const table = document.getElementById('sb-uph-summary-table');
+  if (!table) return;
+
+  const filter = document.getElementById('sb-uph-summary-filter')?.value || 'all';
+  const ranges = [
+    { label: '200+ UPH', min: 200, max: Infinity },
+    { label: '175 – 199 UPH', min: 175, max: 199 },
+    { label: '150 – 174 UPH', min: 150, max: 174 },
+    { label: '125 – 149 UPH', min: 125, max: 149 },
+    { label: '100 – 124 UPH', min: 100, max: 124 },
+    { label: 'Below 100 UPH', min: -Infinity, max: 99 }
+  ];
+
+  function pickerMetric(p) {
+    if (filter === 's1') {
+      if (p.shift !== 's1') return null;
+      return { pickers: 1, activeHours: p.individualActiveHours, inactiveHours: p.individualInactiveHours, units: p.individualUnits };
+    }
+    if (filter === 's2') {
+      if (p.shift !== 's2') return null;
+      return { pickers: 1, activeHours: p.individualActiveHours, inactiveHours: p.individualInactiveHours, units: p.individualUnits };
+    }
+    if (filter === 'shared') {
+      return { pickers: 1, activeHours: p.sharedActiveHours, inactiveHours: p.sharedInactiveHours, units: p.sharedUnits };
+    }
+    return { pickers: 1, activeHours: p.activeHours, inactiveHours: p.inactiveHours, units: p.totalUnits };
+  }
+
+  const bucketStats = ranges.map(r => ({ ...r, pickers: 0, activeHours: 0, inactiveHours: 0, units: 0, uph: 0 }));
+
+  pickers.forEach(p => {
+    const metric = pickerMetric(p);
+    if (!metric) return;
+
+    const activeHours = Number(metric.activeHours) || 0;
+    const inactiveHours = Number(metric.inactiveHours) || 0;
+    const units = Number(metric.units) || 0;
+    const uph = activeHours > 0 ? Math.round(units / activeHours) : 0;
+
+    const bucket = bucketStats.find(b => uph >= b.min && uph <= b.max);
+    if (!bucket) return;
+
+    bucket.pickers += Number(metric.pickers) || 0;
+    bucket.activeHours += activeHours;
+    bucket.inactiveHours += inactiveHours;
+    bucket.units += units;
+  });
+
+  bucketStats.forEach(b => {
+    b.uph = b.activeHours > 0 ? Math.round(b.units / b.activeHours) : 0;
+  });
+
+  const totalPickers = bucketStats.reduce((sum, b) => sum + b.pickers, 0);
+  const pickerCountLabel = document.getElementById('sb-uph-summary-count');
+  if (pickerCountLabel) {
+    pickerCountLabel.textContent = `${totalPickers.toLocaleString()} pickers`;
+  }
+
+  let html = `<thead><tr>
+    <th>UPH Bucket</th>
+    <th>Pickers</th>
+    <th>Total Active Hrs</th>
+    <th>Total Inactive Hrs</th>
+    <th>Total Units</th>
+    <th>UPH</th>
+  </tr></thead><tbody>`;
+
+  bucketStats.forEach(b => {
+    html += `<tr>
+      <td style="font-weight:700;color:var(--text);">${b.label}</td>
+      <td>${b.pickers.toLocaleString()}</td>
+      <td style="font-weight:700;color:#22c55e;">${b.activeHours.toFixed(2)}</td>
+      <td style="font-weight:700;color:#ef4444;">${b.inactiveHours.toFixed(2)}</td>
+      <td style="font-weight:700;color:var(--text);">${Math.round(b.units).toLocaleString()}</td>
+      <td style="font-weight:700;color:${getSBUPHColor(b.uph)};">${b.uph.toLocaleString()}</td>
     </tr>`;
   });
 
