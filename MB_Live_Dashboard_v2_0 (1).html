@@ -3082,50 +3082,81 @@ function buildZoneStats() {
     const activeIntervals = selectedKeys.size
       ? intervals.filter(i => selectedKeys.has(i.key))
       : intervals;
-    const grouped = [];
+    const selectedHours = new Set(activeIntervals.flatMap(i => i.hours));
+    const scopedRows = selectedHours.size
+      ? txData.filter(r => selectedHours.has(r.hour))
+      : txData.slice();
 
-    activeIntervals.forEach(interval => {
-      const hoursSet = new Set(interval.hours);
-      const intervalRows = txData.filter(r => hoursSet.has(r.hour));
-      if(!intervalRows.length) return;
-
-      const byZone = {};
-      intervalRows.forEach(r => {
-        const zone = r.zone || 'No Location';
-        if(!byZone[zone]) byZone[zone] = { units: 0, picks: 0, s1: 0, s2: 0 };
-        byZone[zone].units += r.units || 0;
-        byZone[zone].picks += 1;
-        const shift = classifyShift(r.hour, r.minute || 0);
-        if(shift === 's1') byZone[zone].s1 += r.units || 0;
-        else byZone[zone].s2 += r.units || 0;
-      });
-
-      Object.entries(byZone).forEach(([zone, d]) => {
-        grouped.push({ interval, zone, ...d });
-      });
-    });
-
-    grouped.sort((a, b) => b.units - a.units);
-
-    if(!grouped.length) {
-      tbl.innerHTML = '<tbody><tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px;">No zone activity for the selected 3-hour interval(s).</td></tr></tbody>';
+    if(!scopedRows.length) {
+      tbl.innerHTML = '<tbody><tr><td colspan="14" style="text-align:center;color:var(--text3);padding:16px;">No zone activity for the selected 3-hour interval(s).</td></tr></tbody>';
       return;
     }
 
-    let h = `<thead><tr><th>Interval</th><th>Zone</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>S1 Units</th><th>S2 Units</th><th>Calculated Pickers</th></tr></thead><tbody>`;
-    grouped.forEach(row => {
-      const c = ZONE_COLORS[row.zone]||'#64748b';
-      const uph = UPH[row.zone]||150;
-      const calcPickers = Math.round(row.units / uph);
+    const byZone = {};
+    const pickerTx = {};
+
+    scopedRows.forEach(r => {
+      const zone = r.zone || 'No Location';
+      if(!byZone[zone]) byZone[zone] = { units: 0, picks: 0, s1: 0, s2: 0, activeMinutes: 0, inactiveMinutes: 0 };
+      byZone[zone].units += r.units || 0;
+      byZone[zone].picks += 1;
+
+      const shift = classifyShift(r.hour, r.minute || 0);
+      if(shift === 's1') byZone[zone].s1 += r.units || 0;
+      else if(shift === 's2') byZone[zone].s2 += r.units || 0;
+
+      const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
+      if(!pickerTx[uid]) pickerTx[uid] = [];
+      pickerTx[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone, units: r.units || 0 });
+    });
+
+    Object.values(pickerTx).forEach(txs => {
+      const contrib = computeZoneRunContributions(txs.sort((a,b) => a.txMin - b.txMin));
+      Object.entries(contrib).forEach(([zone, stats]) => {
+        if(!byZone[zone]) byZone[zone] = { units: 0, picks: 0, s1: 0, s2: 0, activeMinutes: 0, inactiveMinutes: 0 };
+        byZone[zone].activeMinutes += stats.activeMinutes || 0;
+        byZone[zone].inactiveMinutes += stats.inactiveMinutes || 0;
+      });
+    });
+
+    const entries = Object.entries(byZone)
+      .map(([zone, d]) => {
+        const roundedActiveMins = Math.round(d.activeMinutes || 0);
+        const pickerHours = roundedActiveMins > 0 ? roundedActiveMins / 60 : 0;
+        return {
+          zone,
+          ...d,
+          pickerHours,
+          actualUPH: pickerHours > 0 ? Math.round(d.units / pickerHours) : null
+        };
+      })
+      .sort((a, b) => b.units - a.units);
+
+    let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive Hrs</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>S1 Units</th><th>S2 Units</th><th>S1 Pickers (calc)</th><th>S2 Pickers (calc)</th><th>S1 Actual</th><th>S2 Actual</th></tr></thead><tbody>`;
+    entries.forEach(d => {
+      const c = ZONE_COLORS[d.zone]||'#64748b';
+      const uph = UPH[d.zone]||150;
+      const s1c = Math.round(d.s1/(uph*8));
+      const s2c = Math.round(d.s2/(uph*8));
+      const st = STEADY[d.zone]||{s1:1,s2:1};
+      const uphColor = d.actualUPH != null ? (d.actualUPH >= uph ? '#22c55e' : d.actualUPH >= uph*0.8 ? '#f59e0b' : '#ef4444') : '';
+      const inactiveMins = Math.round(d.inactiveMinutes || 0);
+      const inactiveDisplay = inactiveMins > 0 ? (inactiveMins / 60).toFixed(2) + 'h' : '—';
       h += `<tr>
-        <td class="mono" style="color:var(--text2)">${formatIntervalLabel(row.interval)}</td>
-        <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${row.zone}</span></td>
-        <td class="mono">${Math.round(row.units).toLocaleString()}</td>
-        <td class="mono">${row.picks.toLocaleString()}</td>
-        <td class="mono">${row.picks > 0 ? (row.units / row.picks).toFixed(2) : '—'}</td>
-        <td class="mono">${Math.round(row.s1).toLocaleString()}</td>
-        <td class="mono">${Math.round(row.s2).toLocaleString()}</td>
-        <td class="mono" style="font-weight:700;color:${c}">${calcPickers}</td>
+        <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${d.zone}</span></td>
+        <td class="mono">${uph}</td>
+        <td class="mono" style="color:${uphColor};font-weight:${d.actualUPH!=null?'700':'400'}">${d.actualUPH != null ? d.actualUPH.toLocaleString() : '<span style="color:var(--text3)">—</span>'}</td>
+        <td class="mono" style="color:var(--text3)">${d.pickerHours > 0 ? d.pickerHours.toFixed(2) : '—'}</td>
+        <td class="mono" style="color:${inactiveMins > 0 ? '#ef4444' : 'var(--text3)'};font-weight:${inactiveMins > 0 ? '600' : '400'}">${inactiveDisplay}</td>
+        <td class="mono">${Math.round(d.units).toLocaleString()}</td>
+        <td class="mono">${d.picks.toLocaleString()}</td>
+        <td class="mono">${d.picks > 0 ? (d.units / d.picks).toFixed(2) : '—'}</td>
+        <td class="mono">${Math.round(d.s1).toLocaleString()}</td>
+        <td class="mono">${Math.round(d.s2).toLocaleString()}</td>
+        <td class="mono" style="color:var(--text3)">${s1c}</td>
+        <td class="mono" style="color:var(--text3)">${s2c}</td>
+        <td class="mono" style="color:${c};font-weight:700">${st.s1}</td>
+        <td class="mono" style="color:${c};font-weight:700">${st.s2}</td>
       </tr>`;
     });
 
