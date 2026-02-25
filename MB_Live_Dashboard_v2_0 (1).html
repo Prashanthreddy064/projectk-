@@ -68,6 +68,29 @@ header {
 }
 .data-count { color: var(--cyan); font-weight: 500; }
 
+.shift-calc-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shift-calc-btn {
+  height: 34px;
+  border: 1px solid rgba(59,130,246,0.45);
+  border-radius: 6px;
+  padding: 0 14px;
+  background: rgba(59,130,246,0.12);
+  color: #93c5fd;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  font-family: 'Syne', sans-serif;
+}
+.shift-calc-btn:hover { border-color: var(--blue); color: #bfdbfe; }
+
 /* ─── DROP ZONE ───────────────────────────── */
 .drop-banner {
   background: linear-gradient(135deg, rgba(59,130,246,0.06) 0%, rgba(6,182,212,0.04) 100%);
@@ -866,6 +889,21 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </button>
   </div>
 
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Shift Breakdown Time Inputs</div>
+    <div class="shift-calc-controls">
+      <div class="plan-field" style="min-width:220px;">
+        <label>Shift 2 First Transaction (Shift Start)</label>
+        <input id="sb-s2-first-tx" type="time" value="14:30">
+      </div>
+      <div class="plan-field" style="min-width:220px;">
+        <label>Shift 1 Last Transaction Time</label>
+        <input id="sb-s1-last-tx" type="time" value="16:00">
+      </div>
+      <button class="shift-calc-btn" type="button" onclick="calculateShiftBreakdown()">Calculate</button>
+    </div>
+  </div>
+
   <div class="kpi-row">
     <div class="kpi" style="--kpi-color:#3b82f6">
       <div class="kpi-lbl">Total Units</div>
@@ -991,10 +1029,10 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
 <!-- SHIFT BREAKDOWN -->
 <div id="sec-shiftbreakdown" class="section">
-  <div class="sb-cutoff-note">
-    <strong>SHIFT CUTOFF</strong> Pickers are categorized by their <strong>first pick transaction time</strong>.
-    S1 = first pick before 2:30 PM &nbsp;·&nbsp; S2 = first pick at/after 2:30 PM &nbsp;·&nbsp;
-    <strong>Shared</strong> = overlap window where both shifts are active on the floor simultaneously
+  <div class="sb-cutoff-note" id="sb-cutoff-note">
+    <strong>SHIFT LOGIC</strong> Uses dashboard inputs for <strong>Shift 2 First Transaction</strong> and <strong>Shift 1 Last Transaction</strong>.
+    S1 = first pick before <span id="sb-cutoff-label">2:30 PM</span> &nbsp;·&nbsp; S2 = first pick at/after <span id="sb-cutoff-label-2">2:30 PM</span> &nbsp;·&nbsp;
+    <strong>Shared</strong> = <span id="sb-overlap-label">2:30 PM – 4:00 PM</span>
   </div>
 
   <!-- Hero cards: S1, Shared, S2 -->
@@ -2794,7 +2832,30 @@ function buildZoneStats() {
 // ═══════════════════════════════════════════════
 // SHIFT BREAKDOWN — Categorize pickers by first tx
 // ═══════════════════════════════════════════════
-const SHIFT_CUTOFF_MIN = 14 * 60 + 30; // 2:30 PM in minutes
+const SHIFT_BREAKDOWN_DEFAULTS = {
+  s2FirstTx: '14:30',
+  s1LastTx: '16:00'
+};
+
+function getShiftBreakdownConfig() {
+  const s2FirstTxStr = document.getElementById('sb-s2-first-tx')?.value || SHIFT_BREAKDOWN_DEFAULTS.s2FirstTx;
+  const s1LastTxStr = document.getElementById('sb-s1-last-tx')?.value || SHIFT_BREAKDOWN_DEFAULTS.s1LastTx;
+  const s2FirstTxMin = hhmmToMinute(s2FirstTxStr, 14 * 60 + 30);
+  const s1LastTxMin = hhmmToMinute(s1LastTxStr, 16 * 60);
+  return {
+    s2FirstTxStr,
+    s1LastTxStr,
+    s2FirstTxMin,
+    s1LastTxMin,
+    hasSharedWindow: s2FirstTxMin < s1LastTxMin
+  };
+}
+
+function calculateShiftBreakdown() {
+  renderAll();
+  updateLastRefreshed();
+  showRefreshToast();
+}
 
 function buildShiftBreakdown() {
   if (!txData.length) return;
@@ -2807,13 +2868,15 @@ function buildShiftBreakdown() {
     pickerMap[uid].push(r);
   }
 
+  const shiftConfig = getShiftBreakdownConfig();
+
   // Step 2: Classify each picker as S1 or S2 based on first pick time
   const pickers = [];
   for (const [uid, txs] of Object.entries(pickerMap)) {
     const sorted = txs.slice().sort((a, b) => (a.hour * 60 + (a.minute || 0)) - (b.hour * 60 + (b.minute || 0)));
     const firstTxMin = sorted[0].hour * 60 + (sorted[0].minute || 0);
     const lastTxMin = sorted[sorted.length - 1].hour * 60 + (sorted[sorted.length - 1].minute || 0);
-    const shift = firstTxMin < SHIFT_CUTOFF_MIN ? 's1' : 's2';
+    const shift = firstTxMin < shiftConfig.s2FirstTxMin ? 's1' : 's2';
 
     // Compute zone-run contributions for this picker
     const sortedForRuns = sorted.map(r => ({
@@ -2864,18 +2927,11 @@ function buildShiftBreakdown() {
   const s1Agg = aggShift(s1Pickers);
   const s2Agg = aggShift(s2Pickers);
 
-  // Step 4: Determine the overlap window where both shifts share clock hours
-  // S1 active range = [earliest first tx among S1, latest last tx among S1]
-  // S2 active range = [earliest first tx among S2, latest last tx among S2]
-  // Overlap = [max(s1Start, s2Start), min(s1End, s2End)]  (if positive width)
-  const s1RangeStart = s1Pickers.length ? Math.min(...s1Pickers.map(p => p.firstTxMin)) : 0;
-  const s1RangeEnd   = s1Pickers.length ? Math.max(...s1Pickers.map(p => p.lastTxMin))  : 0;
-  const s2RangeStart = s2Pickers.length ? Math.min(...s2Pickers.map(p => p.firstTxMin)) : 0;
-  const s2RangeEnd   = s2Pickers.length ? Math.max(...s2Pickers.map(p => p.lastTxMin))  : 0;
-
-  const overlapStart = Math.max(s1RangeStart, s2RangeStart);
-  const overlapEnd   = Math.min(s1RangeEnd, s2RangeEnd);
-  const hasOverlap   = overlapStart < overlapEnd && s1Pickers.length > 0 && s2Pickers.length > 0;
+  // Step 4: Overlap window from dashboard inputs
+  // Shared units = from Shift 2 first transaction through Shift 1 last transaction.
+  const overlapStart = shiftConfig.s2FirstTxMin;
+  const overlapEnd   = shiftConfig.s1LastTxMin;
+  const hasOverlap   = shiftConfig.hasSharedWindow && s1Pickers.length > 0 && s2Pickers.length > 0;
 
   // Aggregate the shared (overlap) window metrics from ALL pickers
   function aggWindow(pickerSubset, txFilter) {
@@ -2961,6 +3017,15 @@ function buildShiftBreakdown() {
     return `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
   }
 
+  const cutoffLabel = fmtTime(shiftConfig.s2FirstTxMin);
+  const sharedLabel = hasOverlap ? `${fmtTime(overlapStart)} – ${fmtTime(overlapEnd)}` : 'No shared window';
+  const cutoffEl = document.getElementById('sb-cutoff-label');
+  const cutoffEl2 = document.getElementById('sb-cutoff-label-2');
+  const overlapEl = document.getElementById('sb-overlap-label');
+  if (cutoffEl) cutoffEl.textContent = cutoffLabel;
+  if (cutoffEl2) cutoffEl2.textContent = cutoffLabel;
+  if (overlapEl) overlapEl.textContent = sharedLabel;
+
   heroGrid.innerHTML = `
     <div class="sb-hero-card" style="--sb-accent:#3b82f6">
       <div class="sb-hero-header">
@@ -2969,7 +3034,7 @@ function buildShiftBreakdown() {
       </div>
       <div class="sb-hero-body">
         <div class="sb-hero-val" style="color:#3b82f6">${s1Agg.totalUnits.toLocaleString()}</div>
-        <div class="sb-hero-sub">total units · first pick before 2:30 PM</div>
+        <div class="sb-hero-sub">total units · first pick before ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
       </div>
       <div class="sb-metrics-row">
         <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s1Agg.totalActiveHours)}</div></div>
@@ -3001,7 +3066,7 @@ function buildShiftBreakdown() {
       </div>
       <div class="sb-hero-body">
         <div class="sb-hero-val" style="color:#8b5cf6">${s2Agg.totalUnits.toLocaleString()}</div>
-        <div class="sb-hero-sub">total units · first pick at/after 2:30 PM</div>
+        <div class="sb-hero-sub">total units · first pick at/after ${fmtTime(shiftConfig.s2FirstTxMin)}</div>
       </div>
       <div class="sb-metrics-row">
         <div class="sb-metric"><div class="sb-metric-lbl">Picking Hours</div><div class="sb-metric-val" style="color:#22c55e">${fmtHrs(s2Agg.totalActiveHours)}</div></div>
