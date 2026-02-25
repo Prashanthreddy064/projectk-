@@ -3104,7 +3104,7 @@ function buildZoneStats() {
     }
 
     if(!scopedRows.length) {
-      tbl.innerHTML = '<tbody><tr><td colspan="14" style="text-align:center;color:var(--text3);padding:16px;">No zone activity for the selected filter combination.</td></tr></tbody>';
+      tbl.innerHTML = '<tbody><tr><td colspan="10" style="text-align:center;color:var(--text3);padding:16px;">No zone activity for the selected filter combination.</td></tr></tbody>';
       return;
     }
 
@@ -3121,6 +3121,7 @@ function buildZoneStats() {
           s2Units: 0,
           activeMinutes: 0,
           inactiveMinutes: 0,
+          actualPickers: new Set(),
           s1ActualPickers: new Set(),
           s2ActualPickers: new Set()
         };
@@ -3139,6 +3140,7 @@ function buildZoneStats() {
         byZone[zone].s2Units += units;
         byZone[zone].s2ActualPickers.add(uid);
       }
+      byZone[zone].actualPickers.add(uid);
 
       if(!pickerTx[uid]) pickerTx[uid] = [];
       pickerTx[uid].push({ txMin: r.hour * 60 + (r.minute || 0), zone, units });
@@ -3155,6 +3157,7 @@ function buildZoneStats() {
             s2Units: 0,
             activeMinutes: 0,
             inactiveMinutes: 0,
+            actualPickers: new Set(),
             s1ActualPickers: new Set(),
             s2ActualPickers: new Set()
           };
@@ -3173,8 +3176,8 @@ function buildZoneStats() {
         const s1Units = toNumber(d.s1Units);
         const s2Units = toNumber(d.s2Units);
         const uphTarget = toNumber(UPH[zone]) || 150;
-        const requiredPickersS1 = uphTarget > 0 ? Math.round(s1Units / (uphTarget * 8)) : 0;
-        const requiredPickersS2 = uphTarget > 0 ? Math.round(s2Units / (uphTarget * 8)) : 0;
+        const requiredPickersS1 = uphTarget > 0 && s1Units > 0 ? Math.max(1, Math.ceil(s1Units / (uphTarget * 8))) : 0;
+        const requiredPickersS2 = uphTarget > 0 && s2Units > 0 ? Math.max(1, Math.ceil(s2Units / (uphTarget * 8))) : 0;
 
         return {
           zone,
@@ -3185,16 +3188,14 @@ function buildZoneStats() {
           pickerHours,
           inactiveMinutes: toNumber(d.inactiveMinutes),
           actualUPH: pickerHours > 0 ? Math.round(units / pickerHours) : 0,
-          requiredPickersS1,
-          requiredPickersS2,
-          actualPickersS1: d.s1ActualPickers ? d.s1ActualPickers.size : 0,
-          actualPickersS2: d.s2ActualPickers ? d.s2ActualPickers.size : 0,
+          calculatedPickers: requiredPickersS1 + requiredPickersS2,
+          actualPickers: d.actualPickers ? d.actualPickers.size : 0,
           uphTarget
         };
       })
       .sort((a, b) => b.units - a.units);
 
-    let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive Hrs</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>S1 Units</th><th>S2 Units</th><th>S1 Pickers (calc)</th><th>S2 Pickers (calc)</th><th>S1 Actual</th><th>S2 Actual</th></tr></thead><tbody>`;
+    let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive Hrs</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers</th><th>Actual Pickers</th></tr></thead><tbody>`;
     entries.forEach(d => {
       const c = ZONE_COLORS[d.zone] || '#64748b';
       const uph = d.uphTarget;
@@ -3212,12 +3213,8 @@ function buildZoneStats() {
         <td class="mono">${Math.round(d.units).toLocaleString()}</td>
         <td class="mono">${Math.round(d.picks).toLocaleString()}</td>
         <td class="mono">${d.picks > 0 ? (d.units / d.picks).toFixed(2) : '0.00'}</td>
-        <td class="mono">${Math.round(d.s1Units).toLocaleString()}</td>
-        <td class="mono">${Math.round(d.s2Units).toLocaleString()}</td>
-        <td class="mono" style="color:var(--text3)">${d.requiredPickersS1}</td>
-        <td class="mono" style="color:var(--text3)">${d.requiredPickersS2}</td>
-        <td class="mono" style="color:${c};font-weight:700">${d.actualPickersS1}</td>
-        <td class="mono" style="color:${c};font-weight:700">${d.actualPickersS2}</td>
+        <td class="mono" style="color:var(--text3)">${d.calculatedPickers}</td>
+        <td class="mono" style="color:${c};font-weight:700">${d.actualPickers}</td>
       </tr>`;
     });
 
@@ -3226,13 +3223,17 @@ function buildZoneStats() {
   }
 
   const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
-  let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>S1 Units</th><th>S2 Units</th><th>S1 Pickers (calc)</th><th>S2 Pickers (calc)</th><th>S1 Actual</th><th>S2 Actual</th></tr></thead><tbody>`;
+  let h = `<thead><tr><th>Zone</th><th>UPH Target</th><th>Actual UPH</th><th>Picker·Hrs</th><th>Inactive</th><th>Total Units</th><th>Total Picks</th><th>Units/Pick</th><th>Calculated Pickers</th><th>Actual Pickers</th></tr></thead><tbody>`;
   entries.forEach(([z,d]) => {
     const c = ZONE_COLORS[z]||'#64748b';
     const uph = UPH[z]||150;
-    const s1c = Math.round((toNumber(d.s1))/(uph*8));
-    const s2c = Math.round((toNumber(d.s2))/(uph*8));
+    const s1Units = toNumber(d.s1);
+    const s2Units = toNumber(d.s2);
+    const s1c = uph > 0 && s1Units > 0 ? Math.max(1, Math.ceil(s1Units/(uph*8))) : 0;
+    const s2c = uph > 0 && s2Units > 0 ? Math.max(1, Math.ceil(s2Units/(uph*8))) : 0;
+    const calculatedPickers = s1c + s2c;
     const st = STEADY[z]||{s1:1,s2:1};
+    const actualPickers = toNumber(st.s1) + toNumber(st.s2);
     const actualUPHValue = toNumber(d.actualUPH);
     const actualUPH = actualUPHValue > 0 ? actualUPHValue.toLocaleString() : '0';
     const uphColor = actualUPHValue > 0 ? (actualUPHValue >= uph ? '#22c55e' : actualUPHValue >= uph*0.8 ? '#f59e0b' : '#ef4444') : 'var(--text3)';
@@ -3250,12 +3251,8 @@ function buildZoneStats() {
       <td class="mono">${Math.round(totalUnits).toLocaleString()}</td>
       <td class="mono">${Math.round(totalPicks).toLocaleString()}</td>
       <td class="mono">${totalPicks > 0 ? (totalUnits/totalPicks).toFixed(2) : '0.00'}</td>
-      <td class="mono">${Math.round(toNumber(d.s1)).toLocaleString()}</td>
-      <td class="mono">${Math.round(toNumber(d.s2)).toLocaleString()}</td>
-      <td class="mono" style="color:var(--text3)">${Number.isFinite(s1c) ? s1c : 0}</td>
-      <td class="mono" style="color:var(--text3)">${Number.isFinite(s2c) ? s2c : 0}</td>
-      <td class="mono" style="color:${c};font-weight:700">${toNumber(st.s1)}</td>
-      <td class="mono" style="color:${c};font-weight:700">${toNumber(st.s2)}</td>
+      <td class="mono" style="color:var(--text3)">${Number.isFinite(calculatedPickers) ? calculatedPickers : 0}</td>
+      <td class="mono" style="color:${c};font-weight:700">${actualPickers}</td>
     </tr>`;
   });
   tbl.innerHTML = h + '</tbody>';
