@@ -2238,20 +2238,28 @@ function loadDefaults() {
 // RENDER ALL
 // ═══════════════════════════════════════════════
 function renderAll() {
-  buildKPIs();
-  buildHourlyChart();
-  buildOvTable();
-  drawZoneMap();
-  buildHeatControls();
-  drawHeatMap();
-  buildZoneStats();
-  buildShiftBreakdown();
-  buildPickerList();
-  buildStaffing();
-  buildRamp();
-  buildBoundsTable();
-  buildUPHTargets();
-  buildInactiveLeaderboard();
+  const runSectionUpdate = (name, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`[dashboard] ${name} update failed`, err);
+    }
+  };
+
+  runSectionUpdate('overview-kpis', buildKPIs);
+  runSectionUpdate('overview-hourly-chart', buildHourlyChart);
+  runSectionUpdate('overview-zone-table', buildOvTable);
+  runSectionUpdate('zone-map', drawZoneMap);
+  runSectionUpdate('heatmap-controls', buildHeatControls);
+  runSectionUpdate('heatmap-canvas', drawHeatMap);
+  runSectionUpdate('zone-stats', buildZoneStats);
+  runSectionUpdate('shift-breakdown', buildShiftBreakdown);
+  runSectionUpdate('pick-path', buildPickerList);
+  runSectionUpdate('staffing', buildStaffing);
+  runSectionUpdate('ramp-plan', buildRamp);
+  runSectionUpdate('zone-bounds-table', buildBoundsTable);
+  runSectionUpdate('uph-targets', buildUPHTargets);
+  runSectionUpdate('inactive-leaderboard', buildInactiveLeaderboard);
   updateDataBadge();
 }
 
