@@ -3153,11 +3153,20 @@ function buildShiftBreakdown() {
   const s1Pickers = pickers.filter(p => p.shift === 's1');
   const s2Pickers = pickers.filter(p => p.shift === 's2');
 
+  const uphRanges = [
+    { label: '200+ UPH', test: v => v >= 200 },
+    { label: '175 – 199 UPH', test: v => v >= 175 && v < 200 },
+    { label: '150 – 174 UPH', test: v => v >= 150 && v < 175 },
+    { label: '125 – 149 UPH', test: v => v >= 125 && v < 150 },
+    { label: '100 – 124 UPH', test: v => v >= 100 && v < 125 },
+    { label: 'Below 100 UPH', test: v => v < 100 }
+  ];
+
   function aggShift(arr) {
     const totalUnits = arr.reduce((s, p) => s + p.individualUnits, 0);
     const totalActiveHours = arr.reduce((s, p) => s + p.individualActiveHours, 0);
     const totalInactiveHours = arr.reduce((s, p) => s + p.individualInactiveHours, 0);
-    const avgUPH = totalActiveHours > 0 ? Math.round(totalUnits / totalActiveHours) : 0;
+    const avgUPH = calcUPHFromOverviewFormula(totalUnits, totalActiveHours * 60);
     return { count: arr.length, totalUnits, totalActiveHours, totalInactiveHours, avgUPH };
   }
 
@@ -3189,7 +3198,7 @@ function buildShiftBreakdown() {
     }
     const activeHrs = Math.round(activeMins) / 60;
     const inactiveHrs = Math.round(inactiveMins) / 60;
-    const avgUPH = activeHrs > 0 ? Math.round(totalUnits / activeHrs) : 0;
+    const avgUPH = calcUPHFromOverviewFormula(totalUnits, activeMins);
     return { count: pickerCount, totalUnits, totalActiveHours: activeHrs, totalInactiveHours: inactiveHrs, avgUPH };
   }
 
@@ -3314,8 +3323,6 @@ function buildShiftBreakdown() {
   // Step 6: Render detailed picker UPH breakdown by shift window and UPH range
   const scenarioEl = document.getElementById('sb-uph-scenarios');
   const overlapLabel = hasOverlap ? `${fmtTime(overlapStart)} – ${fmtTime(overlapEnd)}` : 'No overlap window';
-  const TARGET_UPH = 200;
-
   function collectScenarioPickers(pickerSubset, txFilter) {
     const rows = [];
     for (const p of pickerSubset) {
@@ -3339,7 +3346,6 @@ function buildShiftBreakdown() {
       const activeHours = Math.round(activeMins) / 60;
       const inactiveHours = Math.round(inactiveMins) / 60;
       const uph = calcUPHFromOverviewFormula(totalUnits, activeMins);
-      const targetActiveHours = totalUnits / TARGET_UPH;
 
       rows.push({
         uid: p.uid,
@@ -3348,20 +3354,11 @@ function buildShiftBreakdown() {
         totalUnits,
         activeHours,
         inactiveHours,
-        uph,
-        targetActiveHours
+        uph
       });
     }
     return rows.sort((a, b) => b.uph - a.uph);
   }
-
-  const uphRanges = [
-    { label: '175 – 200 UPH', test: v => v >= 175 },
-    { label: '150 – 175 UPH', test: v => v >= 150 && v < 175 },
-    { label: '125 – 150 UPH', test: v => v >= 125 && v < 150 },
-    { label: '100 – 125 UPH', test: v => v >= 100 && v < 125 },
-    { label: 'Below 100 UPH', test: v => v < 100 }
-  ];
 
   const scenarios = [
     {
@@ -3385,31 +3382,33 @@ function buildShiftBreakdown() {
   ];
 
   scenarioEl.innerHTML = scenarios.map(s => {
-    const sections = uphRanges.map(range => {
-      const inRange = s.rows.filter(r => range.test(r.uph));
-      if (!inRange.length) {
-        return `<div style="margin-top:8px;"><div style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;">${range.label} (0)</div><div style="font-size:11px;color:var(--text3);padding:6px 0;">No pickers in this range.</div></div>`;
-      }
-      const body = inRange.map(r => `
-        <tr>
-          <td style="font-weight:600;color:var(--text);">${r.uid}</td>
-          <td>${r.zones || 'No Location'}</td>
-          <td>${r.activeHours.toFixed(2)}</td>
-          <td>${r.inactiveHours.toFixed(2)}</td>
-          <td>${r.targetActiveHours.toFixed(2)}</td>
-          <td style="font-weight:700;color:${r.uph >= 175 ? '#22c55e' : r.uph >= 125 ? '#f59e0b' : '#ef4444'};">${Math.round(r.uph)}</td>
-        </tr>
-      `).join('');
-      return `
-        <div style="margin-top:10px;">
-          <div style="font-size:11px;color:var(--text);font-family:'IBM Plex Mono',monospace;margin-bottom:6px;">${range.label} (${inRange.length})</div>
-          <div class="sb-table-wrap" style="max-height:220px;">
-            <table class="sb-table">
-              <thead><tr><th>Picker</th><th>Zones</th><th>Active Hrs</th><th>Inactive Hrs</th><th>Target Active Hrs</th><th>UPH</th></tr></thead>
-              <tbody>${body}</tbody>
-            </table>
-          </div>
-        </div>`;
+    const bucketRows = uphRanges.map(range => {
+      const members = s.rows.filter(r => range.test(r.uph));
+      const pickerCount = members.length;
+      const totalUnits = members.reduce((sum, r) => sum + (r.totalUnits || 0), 0);
+      const totalActiveMinutes = members.reduce((sum, r) => sum + ((r.activeHours || 0) * 60), 0);
+      const totalInactiveHours = members.reduce((sum, r) => sum + (r.inactiveHours || 0), 0);
+      const uph = calcUPHFromOverviewFormula(totalUnits, totalActiveMinutes);
+      return {
+        label: range.label,
+        pickerCount,
+        totalActiveHours: totalActiveMinutes / 60,
+        totalInactiveHours,
+        totalUnits,
+        uph
+      };
+    });
+
+    const body = bucketRows.map(r => {
+      const uphColor = r.uph >= 200 ? '#22c55e' : r.uph >= 150 ? '#f59e0b' : '#ef4444';
+      return `<tr>
+        <td style="font-weight:700;color:var(--text);">${r.label}</td>
+        <td>${r.pickerCount}</td>
+        <td style="color:#22c55e;">${r.totalActiveHours.toFixed(2)}</td>
+        <td style="color:#ef4444;">${r.totalInactiveHours.toFixed(2)}</td>
+        <td style="font-weight:700;color:var(--text);">${Math.round(r.totalUnits).toLocaleString()}</td>
+        <td style="font-weight:700;color:${uphColor};">${r.uph.toLocaleString()}</td>
+      </tr>`;
     }).join('');
 
     return `
@@ -3418,7 +3417,12 @@ function buildShiftBreakdown() {
           <div class="card-title" style="margin-bottom:0;">${s.title}</div>
           <div style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">${s.desc}</div>
         </div>
-        ${sections}
+        <div class="sb-table-wrap" style="max-height:260px;margin-top:10px;">
+          <table class="sb-table">
+            <thead><tr><th>UPH Bucket</th><th>Pickers</th><th>Total Active Hrs</th><th>Total Inactive Hrs</th><th>Total Units</th><th>UPH</th></tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
       </div>`;
   }).join('');
 
