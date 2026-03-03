@@ -871,7 +871,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div class="drop-icon">📂</div>
     <div class="drop-text">
       <strong>Drop updated Excel file here</strong>
-      <span>Sheet: "drop the data" · Columns: Time of transaction, x, y, Units, Date, Promo Type</span>
+      <span>Sheet: "drop the data" · Columns: Time, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand</span>
     </div>
   </div>
   <div class="drop-hint" style="min-width:240px;">
@@ -886,9 +886,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div id="ops-day-value" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;min-height:28px;display:flex;align-items:center;">—</div>
   </div>
   <div class="drop-hint">
-    Expected columns (A–H):<br>
-    <strong style="color:var(--cyan)">A</strong> Time · <strong style="color:var(--cyan)">B</strong> x · <strong style="color:var(--cyan)">C</strong> y · <strong style="color:var(--cyan)">D</strong> Units · <strong style="color:var(--cyan)">E</strong> User ID
-    · <strong style="color:var(--cyan)">F</strong> Date · <strong style="color:var(--cyan)">H</strong> Promo Type
+    Expected columns (A–J):<br>
+    <strong style="color:var(--cyan)">A</strong> Time · <strong style="color:var(--cyan)">B</strong> X · <strong style="color:var(--cyan)">C</strong> Y · <strong style="color:var(--cyan)">D</strong> Units · <strong style="color:var(--cyan)">E</strong> User ID
+    · <strong style="color:var(--cyan)">F</strong> Date · <strong style="color:var(--cyan)">G</strong> Day · <strong style="color:var(--cyan)">H</strong> Category · <strong style="color:var(--cyan)">I</strong> Order No · <strong style="color:var(--cyan)">J</strong> Brand
   </div>
 </div>
 
@@ -905,6 +905,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <button class="tab" data-sec="staffing">Staffing Plan</button>
   <button class="tab" data-sec="ramp">Ramp Plan</button>
   <button class="tab" data-sec="forecast">Forecast</button>
+  <button class="tab" data-sec="ordersmix">Orders by Category</button>
 </nav>
 
 <main>
@@ -1576,6 +1577,129 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
 </div>
 
+<!-- ORDERS BY CATEGORY DASHBOARD -->
+<div id="sec-ordersmix" class="section">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-size:16px;font-weight:700;letter-spacing:-0.02em;">Overview of Daily Orders by Product Mix Based on Category</span>
+    </div>
+    <span id="om-date-label" style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+  </div>
+
+  <!-- KPI Row -->
+  <div class="kpi-row" style="grid-template-columns:repeat(5,1fr);">
+    <div class="kpi" style="--kpi-color:var(--cyan)">
+      <div class="kpi-lbl">Total Orders</div>
+      <div class="kpi-val" id="om-kpi-orders">—</div>
+      <div class="kpi-sub" id="om-kpi-orders-sub">unique order numbers</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--blue)">
+      <div class="kpi-lbl">Total Units</div>
+      <div class="kpi-val" id="om-kpi-units">—</div>
+      <div class="kpi-sub" id="om-kpi-units-sub">across all orders</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--green)">
+      <div class="kpi-lbl">Units per Order</div>
+      <div class="kpi-val" id="om-kpi-upo">—</div>
+      <div class="kpi-sub">avg units / order</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--amber)">
+      <div class="kpi-lbl">Categories</div>
+      <div class="kpi-val" id="om-kpi-cats">—</div>
+      <div class="kpi-sub">distinct categories</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--purple)">
+      <div class="kpi-lbl">Product Brands</div>
+      <div class="kpi-val" id="om-kpi-brands">—</div>
+      <div class="kpi-sub">distinct brands</div>
+    </div>
+  </div>
+
+  <!-- Category Mix Donut + Table -->
+  <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px;">
+    <div class="card">
+      <div class="card-title">Category Mix — % of Orders</div>
+      <canvas id="om-donut-canvas" width="300" height="300"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">Category Breakdown</div>
+      <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+            <th style="text-align:left;padding:8px 6px;">Category</th>
+            <th style="text-align:center;padding:8px 6px;">Orders</th>
+            <th style="text-align:center;padding:8px 6px;">Units</th>
+            <th style="text-align:center;padding:8px 6px;">Units/Order</th>
+            <th style="text-align:center;padding:8px 6px;">% of Orders</th>
+            <th style="text-align:center;padding:8px 6px;">% of Units</th>
+            <th style="width:160px;padding:8px 6px;">Distribution</th>
+          </tr>
+        </thead>
+        <tbody id="om-cat-body"></tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border);font-weight:700;">
+            <td style="padding:8px 6px;">TOTAL</td>
+            <td style="text-align:center;padding:8px 6px;" id="om-cat-total-orders">—</td>
+            <td style="text-align:center;padding:8px 6px;" id="om-cat-total-units">—</td>
+            <td style="text-align:center;padding:8px 6px;" id="om-cat-total-upo">—</td>
+            <td style="text-align:center;padding:8px 6px;">100%</td>
+            <td style="text-align:center;padding:8px 6px;">100%</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Hourly Orders Chart -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Hourly Order Volume by Category</div>
+    <canvas id="om-hourly-canvas" height="200"></canvas>
+  </div>
+
+  <!-- Brand Breakdown Table -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Product Brand Breakdown</div>
+    <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+          <th style="text-align:left;padding:8px 6px;">Product Brand</th>
+          <th style="text-align:center;padding:8px 6px;">Category</th>
+          <th style="text-align:center;padding:8px 6px;">Orders</th>
+          <th style="text-align:center;padding:8px 6px;">Units</th>
+          <th style="text-align:center;padding:8px 6px;">Units/Order</th>
+          <th style="text-align:center;padding:8px 6px;">% of Orders</th>
+          <th style="width:180px;padding:8px 6px;">Volume Bar</th>
+        </tr>
+      </thead>
+      <tbody id="om-brand-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Order Detail Table -->
+  <div class="card">
+    <div class="card-title">Order Details <span id="om-detail-count" style="font-size:10px;font-weight:400;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <div style="max-height:400px;overflow-y:auto;">
+      <table style="width:100%;font-size:11px;font-family:'IBM Plex Mono',monospace;">
+        <thead style="position:sticky;top:0;background:var(--surf2);z-index:1;">
+          <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+            <th style="text-align:left;padding:8px 6px;">Order Number</th>
+            <th style="text-align:center;padding:8px 6px;">Category</th>
+            <th style="text-align:center;padding:8px 6px;">Product Brand</th>
+            <th style="text-align:center;padding:8px 6px;">Units</th>
+            <th style="text-align:center;padding:8px 6px;">Lines</th>
+            <th style="text-align:center;padding:8px 6px;">First Pick</th>
+            <th style="text-align:left;padding:8px 6px;">Picker(s)</th>
+          </tr>
+        </thead>
+        <tbody id="om-detail-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
 </main>
 
 <script>
@@ -1978,7 +2102,7 @@ function handleFile(file) {
       // Support "complete dashboard" exports by locating the actual header row/columns
       // instead of assuming A–E are always Time, X, Y, Units, User ID.
       let headerRowIdx = 0;
-      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colPromo = 7;
+      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colDay = 6, colPromo = 7, colOrder = 8, colBrand = 9;
       for(let i = 0; i < Math.min(rows.length, 30); i++) {
         const hdr = (rows[i] || []).map(normalizeHeader);
         const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'time']);
@@ -1997,6 +2121,12 @@ function handleFile(file) {
           if(dateIdx >= 0) colDate = dateIdx;
           const promoIdx = findFirstMatch(hdr, ['promo type', 'promo', 'category', 'type']);
           if(promoIdx >= 0) colPromo = promoIdx;
+          const dayIdx = findFirstMatch(hdr, ['day', 'day of week', 'dayofweek']);
+          if(dayIdx >= 0) colDay = dayIdx;
+          const orderIdx = findFirstMatch(hdr, ['order number', 'order no', 'order', 'ordernumber']);
+          if(orderIdx >= 0) colOrder = orderIdx;
+          const brandIdx = findFirstMatch(hdr, ['product brand', 'brand', 'productbrand']);
+          if(brandIdx >= 0) colBrand = brandIdx;
           break;
         }
       }
@@ -2045,7 +2175,10 @@ function handleFile(file) {
         const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
         const dateValue = parseOpsDateValue(r[colDate]);
         const promoType = normalizePromoType(r[colPromo]);
-        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType});
+        const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
+        const productBrand = (r[colBrand] != null && r[colBrand] !== '') ? String(r[colBrand]).trim() : '';
+        const dayOfWeek = (r[colDay] != null && r[colDay] !== '') ? String(r[colDay]).trim() : '';
+        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek});
       }
       setProgress(80);
       
@@ -2352,6 +2485,7 @@ function renderAll() {
   runSectionUpdate('zone-bounds-table', buildBoundsTable);
   runSectionUpdate('uph-targets', buildUPHTargets);
   runSectionUpdate('inactive-leaderboard', buildInactiveLeaderboard);
+  runSectionUpdate('orders-mix', buildOrdersMix);
   updateDataBadge();
 }
 
@@ -6062,6 +6196,367 @@ function fcBuildHourlyChart() {
   });
 })();
 
+// ═══════════════════════════════════════════════
+// ORDERS BY CATEGORY DASHBOARD
+// ═══════════════════════════════════════════════
+
+const OM_CAT_COLORS = [
+  '#3b82f6','#06b6d4','#22c55e','#f59e0b','#ef4444','#8b5cf6',
+  '#ec4899','#14b8a6','#f97316','#6366f1','#84cc16','#e879f9'
+];
+
+function buildOrdersMix() {
+  if(!txData.length) return;
+
+  // Gather order data — group by order number
+  const orderMap = {};  // orderNumber -> { category, brand, units, lines, hour, pickers }
+  const rowsWithOrders = txData.filter(r => r.orderNumber && r.orderNumber.length > 0);
+
+  if(!rowsWithOrders.length) {
+    document.getElementById('om-kpi-orders').textContent = '—';
+    document.getElementById('om-kpi-units').textContent = '—';
+    document.getElementById('om-kpi-upo').textContent = '—';
+    document.getElementById('om-kpi-cats').textContent = '—';
+    document.getElementById('om-kpi-brands').textContent = '—';
+    document.getElementById('om-kpi-orders-sub').textContent = 'no order data — ensure Column I has Order Numbers';
+    return;
+  }
+
+  for(const r of rowsWithOrders) {
+    const oKey = r.orderNumber;
+    if(!orderMap[oKey]) {
+      orderMap[oKey] = {
+        category: r.promoType || 'Unknown',
+        brand: r.productBrand || 'Unknown',
+        units: 0,
+        lines: 0,
+        hour: r.hour,
+        minute: r.minute,
+        pickers: new Set()
+      };
+    }
+    orderMap[oKey].units += r.units;
+    orderMap[oKey].lines += 1;
+    orderMap[oKey].pickers.add(r.userId);
+    // Use earliest time
+    const txMin = r.hour * 60 + (r.minute || 0);
+    const curMin = orderMap[oKey].hour * 60 + (orderMap[oKey].minute || 0);
+    if(txMin < curMin) { orderMap[oKey].hour = r.hour; orderMap[oKey].minute = r.minute; }
+  }
+
+  const orders = Object.entries(orderMap);
+  const totalOrders = orders.length;
+  const totalUnits = orders.reduce((s, [,o]) => s + o.units, 0);
+  const categories = [...new Set(orders.map(([,o]) => o.category))].sort();
+  const brands = [...new Set(orders.map(([,o]) => o.brand))].filter(b => b !== 'Unknown').sort();
+
+  // Update date label
+  const dateLabel = document.getElementById('om-date-label');
+  if(dateLabel) {
+    const dateVal = selectedOpsDate || (txData[0] && txData[0].dateValue) || '';
+    const dayVal = rowsWithOrders[0]?.dayOfWeek || '';
+    dateLabel.textContent = dateVal ? `${dateVal}${dayVal ? ' · ' + dayVal : ''}` : '';
+  }
+
+  // KPIs
+  document.getElementById('om-kpi-orders').textContent = totalOrders.toLocaleString();
+  document.getElementById('om-kpi-units').textContent = totalUnits.toLocaleString();
+  document.getElementById('om-kpi-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
+  document.getElementById('om-kpi-cats').textContent = categories.length;
+  document.getElementById('om-kpi-brands').textContent = brands.length;
+  document.getElementById('om-kpi-orders-sub').textContent = 'unique order numbers';
+  document.getElementById('om-kpi-units-sub').textContent = 'across all orders';
+
+  // ── Category Breakdown ──
+  const catStats = {};
+  for(const [, o] of orders) {
+    const cat = o.category;
+    if(!catStats[cat]) catStats[cat] = { orders: 0, units: 0 };
+    catStats[cat].orders++;
+    catStats[cat].units += o.units;
+  }
+
+  const catEntries = Object.entries(catStats).sort((a,b) => b[1].orders - a[1].orders);
+  const catBody = document.getElementById('om-cat-body');
+  catBody.innerHTML = '';
+
+  catEntries.forEach(([cat, st], idx) => {
+    const pctOrders = ((st.orders / totalOrders) * 100).toFixed(1);
+    const pctUnits = ((st.units / totalUnits) * 100).toFixed(1);
+    const upo = st.orders > 0 ? (st.units / st.orders).toFixed(2) : '—';
+    const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:8px 6px;"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${color};margin-right:8px;vertical-align:middle;"></span>${cat}</td>
+      <td style="text-align:center;padding:8px 6px;">${st.orders.toLocaleString()}</td>
+      <td style="text-align:center;padding:8px 6px;">${st.units.toLocaleString()}</td>
+      <td style="text-align:center;padding:8px 6px;">${upo}</td>
+      <td style="text-align:center;padding:8px 6px;color:${color};font-weight:600;">${pctOrders}%</td>
+      <td style="text-align:center;padding:8px 6px;">${pctUnits}%</td>
+      <td style="padding:8px 6px;"><div style="background:rgba(255,255,255,0.05);border-radius:4px;height:16px;overflow:hidden;"><div style="width:${pctOrders}%;height:100%;background:${color};border-radius:4px;"></div></div></td>
+    `;
+    catBody.appendChild(tr);
+  });
+
+  document.getElementById('om-cat-total-orders').textContent = totalOrders.toLocaleString();
+  document.getElementById('om-cat-total-units').textContent = totalUnits.toLocaleString();
+  document.getElementById('om-cat-total-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
+
+  // ── Donut Chart ──
+  drawOrdersDonut(catEntries, totalOrders);
+
+  // ── Hourly Orders Chart ──
+  drawOrdersHourlyChart(orders, categories);
+
+  // ── Brand Breakdown ──
+  const brandStats = {};
+  for(const [, o] of orders) {
+    const bKey = o.brand;
+    if(!brandStats[bKey]) brandStats[bKey] = { brand: bKey, category: o.category, orders: 0, units: 0 };
+    brandStats[bKey].orders++;
+    brandStats[bKey].units += o.units;
+  }
+
+  const brandEntries = Object.entries(brandStats)
+    .map(([,s]) => s)
+    .sort((a,b) => b.orders - a.orders);
+
+  const brandBody = document.getElementById('om-brand-body');
+  brandBody.innerHTML = '';
+  const maxBrandOrders = brandEntries.length ? brandEntries[0].orders : 1;
+
+  brandEntries.forEach(st => {
+    const pctOrders = ((st.orders / totalOrders) * 100).toFixed(1);
+    const upo = st.orders > 0 ? (st.units / st.orders).toFixed(2) : '—';
+    const catIdx = categories.indexOf(st.category);
+    const color = OM_CAT_COLORS[catIdx >= 0 ? catIdx % OM_CAT_COLORS.length : 0];
+    const barW = (st.orders / maxBrandOrders) * 100;
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:8px 6px;font-weight:500;">${st.brand}</td>
+      <td style="text-align:center;padding:8px 6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px;vertical-align:middle;"></span>${st.category}</td>
+      <td style="text-align:center;padding:8px 6px;">${st.orders.toLocaleString()}</td>
+      <td style="text-align:center;padding:8px 6px;">${st.units.toLocaleString()}</td>
+      <td style="text-align:center;padding:8px 6px;">${upo}</td>
+      <td style="text-align:center;padding:8px 6px;">${pctOrders}%</td>
+      <td style="padding:8px 6px;"><div style="background:rgba(255,255,255,0.05);border-radius:4px;height:16px;overflow:hidden;"><div style="width:${barW}%;height:100%;background:${color};border-radius:4px;opacity:0.7;"></div></div></td>
+    `;
+    brandBody.appendChild(tr);
+  });
+
+  // ── Order Detail Table ──
+  const detailBody = document.getElementById('om-detail-body');
+  detailBody.innerHTML = '';
+  document.getElementById('om-detail-count').textContent = `(${totalOrders} orders)`;
+
+  const sortedOrders = orders.sort((a,b) => {
+    const aMin = a[1].hour * 60 + (a[1].minute || 0);
+    const bMin = b[1].hour * 60 + (b[1].minute || 0);
+    return aMin - bMin;
+  });
+
+  sortedOrders.forEach(([orderNum, o]) => {
+    const timeStr = `${String(o.hour).padStart(2,'0')}:${String(o.minute || 0).padStart(2,'0')}`;
+    const pickerList = [...o.pickers].join(', ');
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:6px;color:var(--cyan);">${orderNum}</td>
+      <td style="text-align:center;padding:6px;">${o.category}</td>
+      <td style="text-align:center;padding:6px;">${o.brand}</td>
+      <td style="text-align:center;padding:6px;font-weight:600;">${o.units}</td>
+      <td style="text-align:center;padding:6px;">${o.lines}</td>
+      <td style="text-align:center;padding:6px;">${timeStr}</td>
+      <td style="padding:6px;color:var(--text2);font-size:10px;">${pickerList}</td>
+    `;
+    detailBody.appendChild(tr);
+  });
+}
+
+function drawOrdersDonut(catEntries, totalOrders) {
+  const canvas = document.getElementById('om-donut-canvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = 300 * dpr;
+  canvas.height = 300 * dpr;
+  ctx.scale(dpr, dpr);
+  canvas.style.width = '300px';
+  canvas.style.height = '300px';
+
+  const cx = 150, cy = 150, outerR = 120, innerR = 70;
+  ctx.clearRect(0, 0, 300, 300);
+
+  if(!catEntries.length) return;
+
+  let startAngle = -Math.PI / 2;
+  catEntries.forEach(([cat, st], idx) => {
+    const sliceAngle = (st.orders / totalOrders) * Math.PI * 2;
+    const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, startAngle, startAngle + sliceAngle);
+    ctx.arc(cx, cy, innerR, startAngle + sliceAngle, startAngle, true);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // Label
+    if(sliceAngle > 0.15) {
+      const midAngle = startAngle + sliceAngle / 2;
+      const labelR = (outerR + innerR) / 2;
+      const lx = cx + Math.cos(midAngle) * labelR;
+      const ly = cy + Math.sin(midAngle) * labelR;
+      const pct = ((st.orders / totalOrders) * 100).toFixed(0);
+      ctx.fillStyle = '#fff';
+      ctx.font = '600 11px "Syne", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${pct}%`, lx, ly);
+    }
+
+    startAngle += sliceAngle;
+  });
+
+  // Center text
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = '800 24px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(totalOrders.toLocaleString(), cx, cy - 8);
+  ctx.fillStyle = '#475569';
+  ctx.font = '500 10px "IBM Plex Mono", monospace';
+  ctx.fillText('ORDERS', cx, cy + 14);
+
+  // Legend
+  const legendY = 280;
+  const legendStartX = 20;
+  let lx = legendStartX;
+  catEntries.forEach(([cat], idx) => {
+    if(idx > 5) return; // max 6 legend items
+    const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
+    ctx.fillStyle = color;
+    ctx.fillRect(lx, legendY, 8, 8);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '400 9px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(cat, lx + 12, legendY);
+    lx += ctx.measureText(cat).width + 24;
+  });
+}
+
+function drawOrdersHourlyChart(orders, categories) {
+  const canvas = document.getElementById('om-hourly-canvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.parentElement.clientWidth - 40;
+  const h = 200;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  // Group orders by hour and category
+  const hourCat = {};
+  for(let hr = 0; hr < 24; hr++) {
+    hourCat[hr] = {};
+    categories.forEach(c => hourCat[hr][c] = 0);
+  }
+
+  for(const [, o] of orders) {
+    const hr = o.hour;
+    if(hourCat[hr]) {
+      hourCat[hr][o.category] = (hourCat[hr][o.category] || 0) + 1;
+    }
+  }
+
+  // Find hours with data
+  const activeHours = [];
+  for(let hr = 0; hr < 24; hr++) {
+    const total = Object.values(hourCat[hr]).reduce((s,v) => s + v, 0);
+    if(total > 0) activeHours.push(hr);
+  }
+  if(!activeHours.length) return;
+
+  const startHr = Math.max(0, activeHours[0] - 1);
+  const endHr = Math.min(23, activeHours[activeHours.length - 1] + 1);
+  const hours = [];
+  for(let hr = startHr; hr <= endHr; hr++) hours.push(hr);
+
+  // Compute max stacked value
+  let maxVal = 0;
+  hours.forEach(hr => {
+    const total = Object.values(hourCat[hr]).reduce((s,v) => s + v, 0);
+    if(total > maxVal) maxVal = total;
+  });
+  maxVal = Math.max(maxVal, 1);
+
+  const pad = { t: 20, r: 20, b: 30, l: 50 };
+  const plotW = w - pad.l - pad.r;
+  const plotH = h - pad.t - pad.b;
+  const barW = Math.min(30, (plotW / hours.length) * 0.7);
+  const gap = plotW / hours.length;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Y-axis gridlines
+  const ySteps = 5;
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  for(let i = 0; i <= ySteps; i++) {
+    const yVal = (maxVal / ySteps) * i;
+    const yPos = pad.t + plotH - (plotH * (yVal / maxVal));
+    ctx.beginPath();
+    ctx.moveTo(pad.l, yPos);
+    ctx.lineTo(w - pad.r, yPos);
+    ctx.stroke();
+    ctx.fillStyle = '#475569';
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Math.round(yVal).toString(), pad.l - 8, yPos);
+  }
+
+  // Stacked bars
+  hours.forEach((hr, i) => {
+    const x = pad.l + i * gap + (gap - barW) / 2;
+    let yOffset = 0;
+
+    categories.forEach((cat, ci) => {
+      const val = hourCat[hr][cat] || 0;
+      if(val <= 0) return;
+      const barH = (val / maxVal) * plotH;
+      const color = OM_CAT_COLORS[ci % OM_CAT_COLORS.length];
+      ctx.fillStyle = color;
+      ctx.fillRect(x, pad.t + plotH - yOffset - barH, barW, barH);
+      yOffset += barH;
+    });
+
+    // Hour label
+    ctx.fillStyle = '#475569';
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const label = hr === 0 ? '12a' : hr < 12 ? `${hr}a` : hr === 12 ? '12p' : `${hr-12}p`;
+    ctx.fillText(label, x + barW / 2, pad.t + plotH + 6);
+
+    // Total on top
+    const totalVal = Object.values(hourCat[hr]).reduce((s,v) => s + v, 0);
+    if(totalVal > 0) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '500 9px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(totalVal.toString(), x + barW / 2, pad.t + plotH - yOffset - 3);
+    }
+  });
+}
+
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -6080,6 +6575,7 @@ document.querySelectorAll('.tab').forEach(tab => {
       if(id==='pickpath') { drawPickPathCanvas([], ppCurrentUser); if(ppCurrentUser) renderPickPath(); }
       if(id==='shiftbreakdown' && txData.length > 0) { buildShiftBreakdown(); }
       if(id==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
+      if(id==='ordersmix' && txData.length > 0) { buildOrdersMix(); }
     }, 30);
   });
 });
@@ -6096,6 +6592,7 @@ window.addEventListener('resize', () => {
   if(active==='uphtargets') drawUPHPickPath();
   if(active==='pickpath') renderPickPath();
   if(active==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
+  if(active==='ordersmix' && txData.length > 0) { buildOrdersMix(); }
 });
 </script>
 </body>
