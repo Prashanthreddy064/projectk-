@@ -871,7 +871,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div class="drop-icon">📂</div>
     <div class="drop-text">
       <strong>Drop updated Excel file here</strong>
-      <span>Sheet: "drop the data" · Columns: Time, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand</span>
+      <span>Sheet: "drop the data" · Columns: Time of transaction, x, y, Units, Date, Promo Type</span>
     </div>
   </div>
   <div class="drop-hint" style="min-width:240px;">
@@ -880,15 +880,15 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <select id="ops-date-filter" onchange="handleOpsDateChange()" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;">
       <option value="">Upload file first</option>
     </select>
-    <label style="display:block;margin-top:8px;">Category (Resolved from Column H / Brand mapping)</label>
+    <label style="display:block;margin-top:8px;">Category (Column H)</label>
     <div id="ops-category-value" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;min-height:28px;display:flex;align-items:center;">—</div>
     <label style="display:block;margin-top:8px;">Day of Week (from Column F Date)</label>
     <div id="ops-day-value" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;min-height:28px;display:flex;align-items:center;">—</div>
   </div>
   <div class="drop-hint">
-    Expected columns (A–J):<br>
-    <strong style="color:var(--cyan)">A</strong> Time · <strong style="color:var(--cyan)">B</strong> X · <strong style="color:var(--cyan)">C</strong> Y · <strong style="color:var(--cyan)">D</strong> Units · <strong style="color:var(--cyan)">E</strong> User ID
-    · <strong style="color:var(--cyan)">F</strong> Date · <strong style="color:var(--cyan)">G</strong> Day · <strong style="color:var(--cyan)">H</strong> Category · <strong style="color:var(--cyan)">I</strong> Order Number · <strong style="color:var(--cyan)">J</strong> Product Brand
+    Expected columns (A–H):<br>
+    <strong style="color:var(--cyan)">A</strong> Time · <strong style="color:var(--cyan)">B</strong> x · <strong style="color:var(--cyan)">C</strong> y · <strong style="color:var(--cyan)">D</strong> Units · <strong style="color:var(--cyan)">E</strong> User ID
+    · <strong style="color:var(--cyan)">F</strong> Date · <strong style="color:var(--cyan)">H</strong> Promo Type
   </div>
 </div>
 
@@ -905,7 +905,6 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <button class="tab" data-sec="staffing">Staffing Plan</button>
   <button class="tab" data-sec="ramp">Ramp Plan</button>
   <button class="tab" data-sec="forecast">Forecast</button>
-  <button class="tab" data-sec="productmix">Product Mix</button>
 </nav>
 
 <main>
@@ -1011,21 +1010,6 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       </div>
     </div>
     <table id="ov-table"></table>
-  </div>
-</div>
-
-<!-- PRODUCT MIX DASHBOARD -->
-<div id="sec-productmix" class="section">
-  <div class="card">
-    <div class="card-title">Overview of Daily Orders by Product Mix Based on Category</div>
-    <div class="summary-row">
-      <div class="summary-pill"><span class="mini-note">Total Orders</span><b id="pm-total-orders">—</b></div>
-      <div class="summary-pill"><span class="mini-note">Total Units</span><b id="pm-total-units">—</b></div>
-      <div class="summary-pill"><span class="mini-note">Units per Order</span><b id="pm-units-per-order">—</b></div>
-      <div class="summary-pill"><span class="mini-note">Top Category Mix</span><b id="pm-top-category">—</b></div>
-    </div>
-    <p id="pm-empty-note" style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:12px;display:none;">Upload drop data with Order Number (column I) and Product Brand (column J) to calculate daily product mix.</p>
-    <table id="pm-category-table"></table>
   </div>
 </div>
 
@@ -1653,7 +1637,7 @@ function updateOpsMetadataLabels() {
   const dateRows = selectedOpsDate
     ? uploadedTxAll.filter(r => r.dateValue === selectedOpsDate)
     : uploadedTxAll;
-  const categories = [...new Set(dateRows.map(r => r.productCategory).filter(Boolean))];
+  const categories = [...new Set(dateRows.map(r => r.promoType).filter(Boolean))];
 
   if(!categories.length) {
     categoryLabel.textContent = '—';
@@ -1680,41 +1664,13 @@ function parseOpsDateValue(cell) {
   return String(cell).trim();
 }
 
-function normalizeCategory(value) {
+function normalizePromoType(value) {
   const raw = (value == null) ? '' : String(value).trim();
   if(!raw) return 'Unknown';
+  const compact = raw.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if(compact.includes('nonpromo') || compact === 'non' || compact === 'np') return 'Non-Promo';
+  if(compact.includes('promo') || compact === 'p') return 'Promo';
   return raw;
-}
-
-function normalizeBrand(value) {
-  return (value == null ? '' : String(value)).trim();
-}
-
-function extractBrandCategoryMap(workbook) {
-  const map = {};
-  const normalizeHeader = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const findMatch = (headers, patterns) => headers.findIndex(h => patterns.some(p => h === p || h.includes(p)));
-
-  workbook.SheetNames.forEach(sheetName => {
-    const ws = workbook.Sheets[sheetName];
-    if(!ws) return;
-    const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
-    for(let i = 0; i < Math.min(rows.length, 40); i++) {
-      const hdr = (rows[i] || []).map(normalizeHeader);
-      const brandIdx = findMatch(hdr, ['brand name', 'product brand', 'brand']);
-      const categoryIdx = findMatch(hdr, ['product category', 'category']);
-      if(brandIdx < 0 || categoryIdx < 0) continue;
-      for(let r = i + 1; r < rows.length; r++) {
-        const row = rows[r] || [];
-        const brand = normalizeBrand(row[brandIdx]);
-        const category = normalizeCategory(row[categoryIdx]);
-        if(!brand || !category || category === 'Unknown') continue;
-        map[brand.toLowerCase()] = category;
-      }
-      break;
-    }
-  });
-  return map;
 }
 
 function updateOpsDateSelector() {
@@ -2002,7 +1958,6 @@ function handleFile(file) {
     setTimeout(() => {
       try {
       const wb = XLSX.read(e.target.result, {type:'array'});
-      const brandCategoryMap = extractBrandCategoryMap(wb);
       const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('drop')) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
@@ -2023,7 +1978,7 @@ function handleFile(file) {
       // Support "complete dashboard" exports by locating the actual header row/columns
       // instead of assuming A–E are always Time, X, Y, Units, User ID.
       let headerRowIdx = 0;
-      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colCategory = 7, colOrder = 8, colBrand = 9;
+      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colPromo = 7;
       for(let i = 0; i < Math.min(rows.length, 30); i++) {
         const hdr = (rows[i] || []).map(normalizeHeader);
         const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'time']);
@@ -2040,12 +1995,8 @@ function handleFile(file) {
           if(userIdx >= 0) colUser = userIdx;
           const dateIdx = findFirstMatch(hdr, ['date']);
           if(dateIdx >= 0) colDate = dateIdx;
-          const categoryIdx = findFirstMatch(hdr, ['product category', 'category', 'promo type', 'promo', 'type']);
-          if(categoryIdx >= 0) colCategory = categoryIdx;
-          const orderIdx = findFirstMatch(hdr, ['order number', 'order #', 'order']);
-          if(orderIdx >= 0) colOrder = orderIdx;
-          const brandIdx = findFirstMatch(hdr, ['product brand', 'brand name', 'brand']);
-          if(brandIdx >= 0) colBrand = brandIdx;
+          const promoIdx = findFirstMatch(hdr, ['promo type', 'promo', 'category', 'type']);
+          if(promoIdx >= 0) colPromo = promoIdx;
           break;
         }
       }
@@ -2093,12 +2044,8 @@ function handleFile(file) {
         // User ID from col E
         const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
         const dateValue = parseOpsDateValue(r[colDate]);
-        const productBrand = normalizeBrand(r[colBrand]);
-        const rowCategory = normalizeCategory(r[colCategory]);
-        const mappedCategory = brandCategoryMap[productBrand.toLowerCase()] || '';
-        const productCategory = rowCategory !== 'Unknown' ? rowCategory : (mappedCategory || 'Unknown');
-        const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
-        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, productCategory, orderNumber, productBrand});
+        const promoType = normalizePromoType(r[colPromo]);
+        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType});
       }
       setProgress(80);
       
@@ -2111,7 +2058,7 @@ function handleFile(file) {
         showRefreshToast('⚠️ Upload parse failed. Please verify the sheet/columns and try again.');
         console.error('handleFile parse error', err);
       }
-    }, 200);
+    }, 10);
   };
   reader.onerror = () => {
     isOpsDataProcessing = false;
@@ -2135,7 +2082,7 @@ function assignZonesAndBuild(rows, filename) {
     const pctDone = rows.length ? (i / rows.length) : 1;
     setProgress(80 + pctDone * 15);
     if(i < rows.length) {
-      setTimeout(processChunk, 8);
+      setTimeout(processChunk, 0);
     } else {
       uploadedTxAll = rows;
       dataSource = 'dropped';
@@ -2154,7 +2101,7 @@ function assignZonesAndBuild(rows, filename) {
           renderAll();
           updateLastRefreshed();
           showRefreshToast();
-        }, 1200);
+        }, 350);
       }
     }
   }
@@ -2402,88 +2349,10 @@ function renderAll() {
   runSectionUpdate('pick-path', buildPickerList);
   runSectionUpdate('staffing', buildStaffing);
   runSectionUpdate('ramp-plan', buildRamp);
-  runSectionUpdate('product-mix', buildProductMixDashboard);
   runSectionUpdate('zone-bounds-table', buildBoundsTable);
   runSectionUpdate('uph-targets', buildUPHTargets);
   runSectionUpdate('inactive-leaderboard', buildInactiveLeaderboard);
   updateDataBadge();
-}
-
-function buildProductMixDashboard() {
-  const totalOrdersEl = document.getElementById('pm-total-orders');
-  const totalUnitsEl = document.getElementById('pm-total-units');
-  const unitsPerOrderEl = document.getElementById('pm-units-per-order');
-  const topCategoryEl = document.getElementById('pm-top-category');
-  const table = document.getElementById('pm-category-table');
-  const emptyNote = document.getElementById('pm-empty-note');
-  if(!totalOrdersEl || !totalUnitsEl || !unitsPerOrderEl || !topCategoryEl || !table || !emptyNote) return;
-
-  const rows = txData.filter(r => r.orderNumber);
-  if(!rows.length) {
-    totalOrdersEl.textContent = '—';
-    totalUnitsEl.textContent = '—';
-    unitsPerOrderEl.textContent = '—';
-    topCategoryEl.textContent = '—';
-    table.innerHTML = '';
-    emptyNote.style.display = 'block';
-    return;
-  }
-
-  emptyNote.style.display = 'none';
-  const orderMap = new Map();
-  rows.forEach(r => {
-    const orderKey = String(r.orderNumber).trim();
-    if(!orderKey) return;
-    if(!orderMap.has(orderKey)) orderMap.set(orderKey, {units:0, category: r.productCategory || 'Unknown', brands:new Set()});
-    const o = orderMap.get(orderKey);
-    o.units += Number(r.units) || 0;
-    if(r.productCategory && o.category === 'Unknown') o.category = r.productCategory;
-    if(r.productBrand) o.brands.add(r.productBrand);
-  });
-
-  const totalOrders = orderMap.size;
-  let totalUnits = 0;
-  const byCategory = {};
-  for(const [orderNumber, order] of orderMap.entries()) {
-    totalUnits += order.units;
-    const cat = order.category || 'Unknown';
-    if(!byCategory[cat]) byCategory[cat] = {orders:0, units:0};
-    byCategory[cat].orders += 1;
-    byCategory[cat].units += order.units;
-  }
-
-  const unitsPerOrder = totalOrders ? (totalUnits / totalOrders) : 0;
-  const sorted = Object.entries(byCategory).sort((a,b) => b[1].orders - a[1].orders);
-  const topEntry = sorted[0];
-
-  totalOrdersEl.textContent = totalOrders.toLocaleString();
-  totalUnitsEl.textContent = Math.round(totalUnits).toLocaleString();
-  unitsPerOrderEl.textContent = unitsPerOrder.toFixed(2);
-  topCategoryEl.textContent = topEntry ? `${topEntry[0]} · ${(topEntry[1].orders/totalOrders*100).toFixed(1)}%` : '—';
-
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>Category</th>
-        <th class="mono">Orders</th>
-        <th class="mono">Order Mix %</th>
-        <th class="mono">Units</th>
-        <th class="mono">Units / Order</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${sorted.map(([category, stats]) => {
-        const mix = totalOrders ? (stats.orders / totalOrders) * 100 : 0;
-        const upo = stats.orders ? (stats.units / stats.orders) : 0;
-        return `<tr>
-          <td>${category}</td>
-          <td class="mono">${stats.orders.toLocaleString()}</td>
-          <td class="mono">${mix.toFixed(1)}%</td>
-          <td class="mono">${Math.round(stats.units).toLocaleString()}</td>
-          <td class="mono">${upo.toFixed(2)}</td>
-        </tr>`;
-      }).join('')}
-    </tbody>`;
 }
 
 // ═══════════════════════════════════════════════
