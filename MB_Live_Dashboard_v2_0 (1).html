@@ -1605,9 +1605,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div class="kpi-sub">avg units / order</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--amber)">
-      <div class="kpi-lbl">Categories</div>
+      <div class="kpi-lbl">Product Categories</div>
       <div class="kpi-val" id="om-kpi-cats">—</div>
-      <div class="kpi-sub">distinct categories</div>
+      <div class="kpi-sub">distinct product categories</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--purple)">
       <div class="kpi-lbl">Product Brands</div>
@@ -1619,15 +1619,15 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <!-- Category Mix Donut + Table -->
   <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px;">
     <div class="card">
-      <div class="card-title">Category Mix — % of Orders</div>
+      <div class="card-title">Product Category Mix — % of Orders</div>
       <canvas id="om-donut-canvas" width="300" height="300"></canvas>
     </div>
     <div class="card">
-      <div class="card-title">Category Breakdown</div>
+      <div class="card-title">Product Category Breakdown</div>
       <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
         <thead>
           <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
-            <th style="text-align:left;padding:8px 6px;">Category</th>
+            <th style="text-align:left;padding:8px 6px;">Product Category</th>
             <th style="text-align:center;padding:8px 6px;">Orders</th>
             <th style="text-align:center;padding:8px 6px;">Units</th>
             <th style="text-align:center;padding:8px 6px;">Units/Order</th>
@@ -1654,7 +1654,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
   <!-- Hourly Orders Chart -->
   <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Hourly Order Volume by Category</div>
+    <div class="card-title">Hourly Order Volume by Product Category</div>
     <canvas id="om-hourly-canvas" height="200"></canvas>
   </div>
 
@@ -1665,7 +1665,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <thead>
         <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
           <th style="text-align:left;padding:8px 6px;">Product Brand</th>
-          <th style="text-align:center;padding:8px 6px;">Category</th>
+          <th style="text-align:center;padding:8px 6px;">Product Category</th>
           <th style="text-align:center;padding:8px 6px;">Orders</th>
           <th style="text-align:center;padding:8px 6px;">Units</th>
           <th style="text-align:center;padding:8px 6px;">Units/Order</th>
@@ -1685,7 +1685,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
         <thead style="position:sticky;top:0;background:var(--surf2);z-index:1;">
           <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
             <th style="text-align:left;padding:8px 6px;">Order Number</th>
-            <th style="text-align:center;padding:8px 6px;">Category</th>
+            <th style="text-align:center;padding:8px 6px;">Product Category</th>
             <th style="text-align:center;padding:8px 6px;">Product Brand</th>
             <th style="text-align:center;padding:8px 6px;">Units</th>
             <th style="text-align:center;padding:8px 6px;">Lines</th>
@@ -6202,8 +6202,54 @@ function fcBuildHourlyChart() {
 
 const OM_CAT_COLORS = [
   '#3b82f6','#06b6d4','#22c55e','#f59e0b','#ef4444','#8b5cf6',
-  '#ec4899','#14b8a6','#f97316','#6366f1','#84cc16','#e879f9'
+  '#ec4899','#14b8a6','#f97316','#6366f1','#84cc16','#e879f9',
+  '#a78bfa','#fb923c','#38bdf8','#4ade80','#facc15','#f472b6',
+  '#2dd4bf','#818cf8','#a3e635','#fb7185','#c084fc','#fbbf24'
 ];
+
+// Brand → Product Category lookup (case-insensitive)
+const BRAND_TO_PRODUCT_CATEGORY = (function(){
+const m = {};
+const d = [
+['Acoustics','Acoufelt,Akouo Acoustics,Autex Acoustics,BuzziSpace,Cardinal Acoustics,Conwed,EzoBord,FSorb,G&S Acoustics,Impact Acoustic,Interior Felt,MCM Acoustical,MPS Acoustics,Primacoustic,Ritz Acoustics,Sky Acoustics,Slalom Acoustics,Snowsound,Soelberg Industries,SoundPly,Submaterial,felt right'],
+['Appliances','Café,Monogram Appliances,True Residential'],
+['Biophilic & Green Walls','Andor Willow,Artisan Moss,BEMOSS,BR Nativa,Borrowed Earth,Garden on the Wall,Green Oasis - Biophilic Solutions,GrowUp Greenwalls,Growing Green,Planthropy'],
+['Cabinetry & Millwork','Armani Fine Woodworking,Bilotta Kitchen & Home,Butcher Block Co.,Cobblestone Millworks,Cosmo Cabinets,FORM Kitchens,Millwork Design by Oxford,REHAU,RGX Kitchen Products,Reform Kitchens,SieMatic,Waypoint Living Spaces,fabuwood'],
+['Ceiling','American Tin Ceilings,Armstrong World Industries,CW Woodcraft Ceilings,Ceilume,CertainTeed,Decorative Ceiling Tiles,Kingspan Insulated Panels,National Gypsum Company,Orac,Rockfon,USG,Ultraflex Systems'],
+['Doors & Partitions','American Fiber Cement,Cement Board Fabricators,Tableaux Architectural Panels,The Sliding Door Company,Thrislington Cubicles by Bobrick'],
+['Flooring','2tec2,AHF Contract,Adore Floors,Aged Wide Floors,Allstate Rubber,Altro,Alva,Amara Rugs,American Biltrite,American Dakota,Appalachian Flooring,Armstrong Flooring,Artistry Hardwood Flooring,Balsan,Bergamo Floors,Bloomsburg Carpet,Bolon,CRAFT Artisan Wood Floors,Carlisle Wide Plank Floors,Castro Wood Floors,Citadel Floor Systems,Coveworks,DUCHATEAU,Dekorman,Dinoflex,Divine Flooring,ECOsurfaces,EF Contract,Ecore Athletic,Ege Carpets,Encore Hospitality Carpet,FLOOR by HGH,FLOR,Flexco,Flooret,Forbo Flooring Systems,GemCore,Gerflor,Global GEM Flooring,Global Integrated Flooring Solutions,Good Wood Nashville,Gordian Rugs,Great American Spaces,Havwoods,HempWood,Hero Flooring,Heymat,Home Carpet One,Infinity Luxury Woven Vinyl,Interface,J + J Flooring,Jacaranda Inc.,Jamie Beckwith Collection,Kahrs Group,Karastan,Karndean Commercial,Kentwood,Key Resin Company / FlowResin,Küberit USA,LEKTRAFLOR,Life Floor,Liquid Elements Artfully Poured Floors,Lonseal Flooring,Lucida Surfaces,Mafi,Mannington Commercial,Metroflor,Milliken,Mohawk Group,Monarch Plank,Mondo Contract Flooring,NOW Carpets Design,Nuvelle,Nydree Flooring,Olde Savannah Flooring,OneFlor USA,PARADOR,PID Floors,Parterre,Pioneer Millworks,REGUPOL,Resinwerks,Reward Flooring,Roppe Holding Company,SelecTech,Signature Flooring,Six Degrees Flooring Surfaces,Southern Luxe Flooring,StaticWorx,Stonhard,TAJ Flooring,TORLYS,Tarkett Hospitality,Tarkett USA Inc.,Tate.,Teknoflor,Terra Legno Ltd.,The Perfect Rug,Trinity Surfaces,Tufenkian,USMills,Urban Surfaces,Vermont Wildwoods,Zandur,evoke,nora by Interface'],
+['Furniture','Allseating,Covet Global,Dauphin,David Trubridge,Ethnicraft,Expormim USA,Gandia Blasco,Grand Rapids Chair Co,Halcon,Haworth,Hubbard Contract,Hydeline Furniture,John Lyle Design,KI,Keilhauer,Kiefer USA,KØL,Lakeshore Furniture,Landscape Forms,Leland Furniture,MA\'AT LUXE HOME,Manhattan Comfort,Menconi,MÖLINO,Nienkamper,Outmore Living,PIANCA,POINT,Palet,Phase Design,Plymold,Poltrona Frau,Qubo Contract,RAD Furniture,Siena,Steelcase,The Container Store,Thuma,Tupelo,Vermont Farm Table,West Elm Contract,Wheeler Zamaroni,Williams Sonoma Inc,iSiMAR'],
+['Hardware & Accessories','ARAKAWA,Architectural Grille,Ashley Norton,Baldwin Hardware,Cape Cod Air Grilles,Construction Specialties,Emtek,Hovr Shelf Brackets,Inspire Hardware,Madelyn Carter,Plank Hardware,Reggio Registers,Shelfology,SteelCrest'],
+['Lighting','Bright Lighting USA,FeatherBeams,LightArt,Louis Poulsen,Lutron,Modern Forms,Polyvision,Schonbek,a-emotional light,lightly'],
+['Metal & Glass','3form,Alubond USA,AlumLA,Antique Mirror,Arktura,CARVART,Carl Stahl Cable Mesh,Cascade Architectural,Chemetal,Clarus,Dreamwalls by Gardner Glass,Element Designs,Feeney,Futura Transitions by Bonnell Aluminum,GGI,Gilasi,Goldray Glass,Herculite Products,Jemiclad,Kaynemaile Architectural Mesh,Kriskadecor,Lightwave Laser,MetalUnic,Mitrex,Moz Designs Inc.,Oeler Industries Inc.,Rigidized Metals Corporation,Riken USA,Sculptform,Sensitile,ShimmerScreen,Steel Dynamics,TuffSkin,Zahner'],
+['Outdoor & Landscape','Belgard,Frame it All,Geolam,MoistureShield,Naturspire Landscapes,NewTechWood,Pacific Clay Products Inc.,Robi Decking,TimberTech,Trex'],
+['Paint','Benjamin Moore,Dunn-Edwards Paints,Modern Masters,Seal-Krete,Sherwin-Williams'],
+['Plumbing & Bath','BLANCO,Borhn,Bradley,Brizo,Cheviot,Delta Faucet,Elkay,Grothouse,KLAFS,KOHLER,Kegworks,Kingston,LifeValet,PebbleTec Pool Finishes,QM Drain,Samuel Mueller,Sherle Wagner,Swan by American Bath Group,Symmons,T and L Bathtubs,The Splash Lab,VIGO,Zurn'],
+['Signage & Branding','3 Spark Design,DEZIGNED.,Takeform'],
+['Specialty & Other','Company Owned Samples,Interior Design'],
+['Stone/Quartz','American Stone,Antolini,Arena Stone,Aurea Stone Surfaces,Bedrosians Tile & Stone,Bria Quartz,Buechel Stone,Cambria,Cobalt Surfaces,Concrete LCDA North America,Consumers Concrete,Cosentino,Curava Recycled Glass Surfaces,Dynamic Stone,Everest Stone,Glacier Stone Supply,La Bastille,Lundhs Real Stone,MSI,Manos by Concreteworks,Master Terrazzo,NuWa Stone,Phenix Marble Company,Polymarm,Radianz by LOTTE,Samelson Chatelane Coral,Santamargherita,Scrivanich Natural Stone,Seattle Stone,SlabHaus,Stone Products Unlimited,Stone Source,StratusQuartz,TRUFORM Surfaces,Terrazzo GraniTech USA,Terrazzo and Marble Supply,Trueform Concrete,VIATERA by LX Hausys,Vadara Quartz,Valiant Surfaces'],
+['Surfaces & Laminates','3M,ARTIZIN,AiNO,Altyno,Alvic,Arauco,Arborite,Bodaq Finishes,CaraGreen,Design and Direct Source,Dimension Surfaces,Division 9 Collaborative,Divison Twelve,Durasein,Durat,Edge,Ekoa,FENIX,Flannery Inc.,Formica,Frasch,Funder by Genesis Products,Fundermax,Garnica Plywood,Greenlam Laminates,H&E Smith Inc.,HFLOR by LX Hausys,HIMACS by LX Hausys,Intelli-Force Technology,J2 Systems,Kirei,LAMINAM,LBI Boyd Design Resource,Laminart,Livden,LivingStone,Luxe Surfaces,MELAMINETEX,MIRLUX Premium Panels,MLW Surfaces,MODA Surfaces,Marble Plastics,Material Logiq,Materials Inc,Matter Surfaces,Meganite Acrylic Solid Surface,National Solutions,Nevamar,Octopus Products,Olon Industries,Pacific Resource Brokers,PaperStone,Parklex Prodema,Pionite,Platform Surfaces,Platt Designs,PoliLam,Prime Surface Solutions,Richards & Sterling,Richlite,Rikett America,STACBOND,STEVENSWOOD,SUPPLY Showroom,SUSTONABLE,Smile Plastics,Specified Solutions,Staron by LOTTE,Surface Shop,Surface-Edge,Surfacing Solution,T Concepts Miami,TRESPA,Tafisa,The Prestwick Companies,To Market,Trashy,Trespa TopLab,Uniboard,Unilin Panels,VITL,Wilsonart,Xclusive Materials'],
+['Textiles','4Spaces,Anzea,Art Hide,Barbarossa Leather,Brentano,CF Stinson,CTL Leather Inc,Capri Collections,Carnegie,Cortina Leathers,Culp Hospitality,District Leathers,Emma Hayes,Fabric Innovations,Fi Interiors,Fishman\'s Fabrics,Foglizzo,Fred Krieger Fabrics,Garrett Leather,Green Hides,Hugo & Hoby,James Dunlop Textiles,Justin David Textiles,KB Contract Textiles,Karen Pearse Global Direct,Kravet,Kyle Bunting,LebaTex,Legno Italiano,Liz Jordan-Hill,Lucille Studio,Momentum,Moore & Giles,Optima Leathers,P/Kaufmann Contract,Pallas Textiles,Paul Brayton Designs,Penelopeoggi,Perennials,Posh Textiles,Revolution Performance Fabrics,Richloom Contract,Sandow,Sectis Design,Standard Textile,Stark,Studio Collection,Sunbrella,TAS Contract,The Tannery Row,Threadcount Textile & Design,Townsend Leather,Turf,Unika Vaev,Valdese Weavers,Venture Circle International,Wolf-Gordon,van Gelder Inc.'],
+['Tile','AGROB BUCHTAL,AKDO,ASCALE,AVA,Adex USA,Ames Tile & Stone,Ann Sacks,Arizona Tile,Artistic Tile,Arto,Atlas Concorde,Atlas Concorde USA,Atlas Plan,B & F Ceramics Design Showroom,Brick City Tile,COVERINGS ETC,Cancos Tile and Stone,Conestoga Tile,Corso Italia,Crossville,Echelon Masonry,Elysium Tiles Inc.,Emser Tile,Fioretta,Fireclay Tile,Fitzgerald Tile,Florida Tile,Garden State Tile,Genrose Stone + Tile,Glazzio Surfaces,Gruppo Romani,Hamilton Parker,Haustile,INAX,Interstyle Glass Tile,Italgraniti Group,LATICRETE,LEA Ceramiche,LiLi Tile,MILE stone by Florim USA,Mercury Mosaics,Merola Tile Distributors of America,MetroBrick,Metropolitan Ceramics,Modwalls,Mosa,Nasco Stone and Tile,Nemo Tile,Oceanside Glass & Tile,PORSLIM,Pantheon Tile,Porcelanosa,Qwel Tile,Real Thin Brick,Riad tile,Rookwood,South Cypress,TREND Group,The Belden Brick Company,The Tile District,Tile Club,TileBar,Tiles of Lucca,Trendy Surfaces,Urban Coast Tile,Walker Zanger,Wayne Tile,daltile,imagine tile'],
+['Wall Coverings','Calyx by Claridge,Casa Branca,Castle 5 Studios,Coordonné,Desert Poppy Paper Co.,Detroit Wallpaper Co,DreamScape,EGR Decor,EazzyWalls,Fidelity Wallcovering,HD Walls,Hygge & West,Impressions by Waldan,Inpro WT,Koroseal Interior Products,Limitless Walls,Livette\'s Wallpaper,Love vs Design,MDC Interior Solutions,Maya Romanoff,Milton & King,Mitchell Black Wallcoverings,Monon Wall Enhancers,Murals Your Way,Nomadory,Olivia + Poppy,Rollout,Samplize,Scuffmaster by Wolf-Gordon,Springs Digital,Texture Plus Faux Wall Panels,The Wallpaper Company,Tilefy,TimberChic,Vescom,Wallquest,Walls One,Whatashield,WildLeaf,Wolf Gordon FUL,WoodChic,York Wallcoverings,deko'],
+['Window Treatments','Corradi USA,Draper,Everhem,Mecho,Mermet USA,ROMAN,Renson,SWFcontract,Shademaker,Texstyle by Rollease Acmeda,The Shade Store,Velaria Systems'],
+['Wood Products','ACRE by Modern Mill,Anthology Woods,BOTTEGA LEGNA,Centennial Woods,Elmwood Reclaimed Timber,IndoTeak Design,Longboard Architectural Products,Mori Wood Veneers,OakViva,Smartwood,Spartan Forest Products,Stikwood,TIMELINE,TerraMai,The Wood Veneer Hub,Woodwright,Woodzco']
+];
+d.forEach(([cat, brands]) => {
+  brands.split(',').forEach(b => { m[b.trim().toLowerCase()] = cat; });
+});
+return m;
+})();
+
+function lookupProductCategory(brandName) {
+  if(!brandName) return 'Other';
+  const key = brandName.trim().toLowerCase();
+  if(BRAND_TO_PRODUCT_CATEGORY[key]) return BRAND_TO_PRODUCT_CATEGORY[key];
+  for(const [bk, cat] of Object.entries(BRAND_TO_PRODUCT_CATEGORY)) {
+    if(key.startsWith(bk) || bk.startsWith(key)) return cat;
+  }
+  return 'Other';
+}
 
 function buildOrdersMix() {
   if(!txData.length) return;
@@ -6224,10 +6270,13 @@ function buildOrdersMix() {
 
   for(const r of rowsWithOrders) {
     const oKey = r.orderNumber;
+    const brand = r.productBrand || 'Unknown';
+    const prodCat = lookupProductCategory(brand);
     if(!orderMap[oKey]) {
       orderMap[oKey] = {
-        category: r.promoType || 'Unknown',
-        brand: r.productBrand || 'Unknown',
+        promoType: r.promoType || 'Unknown',
+        brand: brand,
+        productCategory: prodCat,
         units: 0,
         lines: 0,
         hour: r.hour,
@@ -6238,7 +6287,6 @@ function buildOrdersMix() {
     orderMap[oKey].units += r.units;
     orderMap[oKey].lines += 1;
     orderMap[oKey].pickers.add(r.userId);
-    // Use earliest time
     const txMin = r.hour * 60 + (r.minute || 0);
     const curMin = orderMap[oKey].hour * 60 + (orderMap[oKey].minute || 0);
     if(txMin < curMin) { orderMap[oKey].hour = r.hour; orderMap[oKey].minute = r.minute; }
@@ -6247,7 +6295,7 @@ function buildOrdersMix() {
   const orders = Object.entries(orderMap);
   const totalOrders = orders.length;
   const totalUnits = orders.reduce((s, [,o]) => s + o.units, 0);
-  const categories = [...new Set(orders.map(([,o]) => o.category))].sort();
+  const productCategories = [...new Set(orders.map(([,o]) => o.productCategory))].sort();
   const brands = [...new Set(orders.map(([,o]) => o.brand))].filter(b => b !== 'Unknown').sort();
 
   // Update date label
@@ -6262,15 +6310,15 @@ function buildOrdersMix() {
   document.getElementById('om-kpi-orders').textContent = totalOrders.toLocaleString();
   document.getElementById('om-kpi-units').textContent = totalUnits.toLocaleString();
   document.getElementById('om-kpi-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
-  document.getElementById('om-kpi-cats').textContent = categories.length;
+  document.getElementById('om-kpi-cats').textContent = productCategories.length;
   document.getElementById('om-kpi-brands').textContent = brands.length;
   document.getElementById('om-kpi-orders-sub').textContent = 'unique order numbers';
   document.getElementById('om-kpi-units-sub').textContent = 'across all orders';
 
-  // ── Category Breakdown ──
+  // ── Product Category Breakdown ──
   const catStats = {};
   for(const [, o] of orders) {
-    const cat = o.category;
+    const cat = o.productCategory;
     if(!catStats[cat]) catStats[cat] = { orders: 0, units: 0 };
     catStats[cat].orders++;
     catStats[cat].units += o.units;
@@ -6307,13 +6355,13 @@ function buildOrdersMix() {
   drawOrdersDonut(catEntries, totalOrders);
 
   // ── Hourly Orders Chart ──
-  drawOrdersHourlyChart(orders, categories);
+  drawOrdersHourlyChart(orders, productCategories);
 
   // ── Brand Breakdown ──
   const brandStats = {};
   for(const [, o] of orders) {
     const bKey = o.brand;
-    if(!brandStats[bKey]) brandStats[bKey] = { brand: bKey, category: o.category, orders: 0, units: 0 };
+    if(!brandStats[bKey]) brandStats[bKey] = { brand: bKey, productCategory: o.productCategory, orders: 0, units: 0 };
     brandStats[bKey].orders++;
     brandStats[bKey].units += o.units;
   }
@@ -6329,14 +6377,14 @@ function buildOrdersMix() {
   brandEntries.forEach(st => {
     const pctOrders = ((st.orders / totalOrders) * 100).toFixed(1);
     const upo = st.orders > 0 ? (st.units / st.orders).toFixed(2) : '—';
-    const catIdx = categories.indexOf(st.category);
+    const catIdx = productCategories.indexOf(st.productCategory);
     const color = OM_CAT_COLORS[catIdx >= 0 ? catIdx % OM_CAT_COLORS.length : 0];
     const barW = (st.orders / maxBrandOrders) * 100;
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid var(--border)';
     tr.innerHTML = `
       <td style="padding:8px 6px;font-weight:500;">${st.brand}</td>
-      <td style="text-align:center;padding:8px 6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px;vertical-align:middle;"></span>${st.category}</td>
+      <td style="text-align:center;padding:8px 6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px;vertical-align:middle;"></span>${st.productCategory}</td>
       <td style="text-align:center;padding:8px 6px;">${st.orders.toLocaleString()}</td>
       <td style="text-align:center;padding:8px 6px;">${st.units.toLocaleString()}</td>
       <td style="text-align:center;padding:8px 6px;">${upo}</td>
@@ -6364,7 +6412,7 @@ function buildOrdersMix() {
     tr.style.borderBottom = '1px solid var(--border)';
     tr.innerHTML = `
       <td style="padding:6px;color:var(--cyan);">${orderNum}</td>
-      <td style="text-align:center;padding:6px;">${o.category}</td>
+      <td style="text-align:center;padding:6px;">${o.productCategory}</td>
       <td style="text-align:center;padding:6px;">${o.brand}</td>
       <td style="text-align:center;padding:6px;font-weight:600;">${o.units}</td>
       <td style="text-align:center;padding:6px;">${o.lines}</td>
@@ -6448,7 +6496,7 @@ function drawOrdersDonut(catEntries, totalOrders) {
   });
 }
 
-function drawOrdersHourlyChart(orders, categories) {
+function drawOrdersHourlyChart(orders, productCategories) {
   const canvas = document.getElementById('om-hourly-canvas');
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -6461,17 +6509,17 @@ function drawOrdersHourlyChart(orders, categories) {
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
 
-  // Group orders by hour and category
+  // Group orders by hour and product category
   const hourCat = {};
   for(let hr = 0; hr < 24; hr++) {
     hourCat[hr] = {};
-    categories.forEach(c => hourCat[hr][c] = 0);
+    productCategories.forEach(c => hourCat[hr][c] = 0);
   }
 
   for(const [, o] of orders) {
     const hr = o.hour;
     if(hourCat[hr]) {
-      hourCat[hr][o.category] = (hourCat[hr][o.category] || 0) + 1;
+      hourCat[hr][o.productCategory] = (hourCat[hr][o.productCategory] || 0) + 1;
     }
   }
 
@@ -6527,7 +6575,7 @@ function drawOrdersHourlyChart(orders, categories) {
     const x = pad.l + i * gap + (gap - barW) / 2;
     let yOffset = 0;
 
-    categories.forEach((cat, ci) => {
+    productCategories.forEach((cat, ci) => {
       const val = hourCat[hr][cat] || 0;
       if(val <= 0) return;
       const barH = (val / maxVal) * plotH;
