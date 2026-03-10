@@ -2056,7 +2056,8 @@ function setDropLabels(fileName, sheetName) {
       : 'Drop updated ops file here (used across all dashboard tabs)';
   }
   if(sheetLbl) {
-    const prefix = sheetName ? `Sheet: ${sheetName}` : 'Sheet: auto-detect from upload';
+    const normalizedSheet = (sheetName || '').trim();
+    const prefix = normalizedSheet ? `Sheet: ${normalizedSheet}` : 'Sheet: auto-detect from upload';
     sheetLbl.textContent = `${prefix} · Columns: Time of transaction, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand, Drop Off Location`;
   }
 }
@@ -2108,6 +2109,8 @@ function handleFile(file) {
         { key: 'brand', patterns: ['product brand', 'brand', 'productbrand'] },
         { key: 'dropoff', patterns: ['drop off location', 'dropoff location', 'drop off', 'dropofflocation'] }
       ];
+      const preferredSheetNames = ['drop the data', 'drop data', 'drop'];
+      const normalizeSheetName = (name) => String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
       let rows = [];
       let sheetName = '';
       for(const sn of wb.SheetNames) {
@@ -2125,7 +2128,9 @@ function handleFile(file) {
           expectedCols.forEach(c => { matches[c.key] = findFirstMatch(hdr, c.patterns); });
           const requiredScore = ['time', 'x', 'y', 'units'].filter(k => matches[k] >= 0).length;
           const fullScore = Object.values(matches).filter(idx => idx >= 0).length;
-          const score = fullScore * 10 + requiredScore;
+          const normalizedSn = normalizeSheetName(sn);
+          const sheetPreferenceBoost = preferredSheetNames.some(name => normalizedSn === name || normalizedSn.includes(name)) ? 1000 : 0;
+          const score = (fullScore * 10 + requiredScore) + sheetPreferenceBoost;
           if(requiredScore < 4 || score <= candidateBestScore) continue;
 
           candidateHeaderRowIdx = i;
@@ -2167,7 +2172,7 @@ function handleFile(file) {
       }
 
       setDropLabels(file.name, sheetName);
-      setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
+      setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName || 'auto-detected'}`);
 
       for(let i = headerRowIdx + 1; i < rows.length; i++) {
         const r = rows[i] || [];
