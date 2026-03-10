@@ -1778,6 +1778,13 @@ function updateOpsDateSelector() {
 }
 
 function applyOpsFilters() {
+  if(selectedOpsDate && !uploadedTxAll.some(r => r.dateValue === selectedOpsDate)) {
+    const firstAvailableDate = uploadedTxAll.find(r => r.dateValue)?.dateValue || '';
+    selectedOpsDate = firstAvailableDate;
+    const dateSelect = document.getElementById('ops-date-filter');
+    if(dateSelect) dateSelect.value = selectedOpsDate;
+  }
+
   const filtered = uploadedTxAll.filter(r => {
     if(selectedOpsDate && r.dateValue !== selectedOpsDate) return false;
     return true;
@@ -1794,7 +1801,7 @@ function applyOpsFilters() {
   document.getElementById('date-range').textContent = selectedOpsDate ? `${selectedOpsDate} · ${categoryText} · ${dayText}` : (droppedFileName || 'Uploaded file');
 
   if(!filtered.length) {
-    showRefreshToast('⚠️ No valid transaction rows found in uploaded file for the selected date.');
+    showRefreshToast('⚠️ No valid transaction rows were found in the uploaded file for the selected date.');
   }
 
   updateLastRefreshed();
