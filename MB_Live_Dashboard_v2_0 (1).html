@@ -868,11 +868,11 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <!-- DROP ZONE -->
 <div class="drop-banner">
   <div class="drop-zone" id="drop-zone">
-    <input type="file" id="file-input" accept=".xlsx,.xls" onchange="handleFile(this.files[0])">
+    <input type="file" id="file-input" accept=".xlsx,.xls,.csv" onchange="handleFile(this.files[0])">
     <div class="drop-icon">📂</div>
     <div class="drop-text">
-      <strong>Drop updated Excel file here</strong>
-      <span>Sheet: "drop the data" · Columns: Time, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand</span>
+      <strong>Drop updated ops file here (used across all dashboard tabs)</strong>
+      <span>Sheet: "drop the data" · Columns: Time of transaction, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand, Drop Off Location</span>
     </div>
   </div>
   <div class="drop-hint" style="min-width:240px;">
@@ -887,9 +887,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div id="ops-day-value" style="width:100%;margin-top:2px;background:var(--surf1);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;min-height:28px;display:flex;align-items:center;">—</div>
   </div>
   <div class="drop-hint">
-    Expected columns (A–J):<br>
+    Expected columns (A–K):<br>
     <strong style="color:var(--cyan)">A</strong> Time · <strong style="color:var(--cyan)">B</strong> X · <strong style="color:var(--cyan)">C</strong> Y · <strong style="color:var(--cyan)">D</strong> Units · <strong style="color:var(--cyan)">E</strong> User ID
-    · <strong style="color:var(--cyan)">F</strong> Date · <strong style="color:var(--cyan)">G</strong> Day · <strong style="color:var(--cyan)">H</strong> Category · <strong style="color:var(--cyan)">I</strong> Order No · <strong style="color:var(--cyan)">J</strong> Brand
+    · <strong style="color:var(--cyan)">F</strong> Date · <strong style="color:var(--cyan)">G</strong> Day · <strong style="color:var(--cyan)">H</strong> Category · <strong style="color:var(--cyan)">I</strong> Order No · <strong style="color:var(--cyan)">J</strong> Brand · <strong style="color:var(--cyan)">K</strong> Drop Off Location
   </div>
 </div>
 
@@ -2035,6 +2035,11 @@ function setProgress(pct) {
   else { fill.style.width = pct + '%'; }
 }
 
+function setUploadStatus(message) {
+  const status = document.getElementById('date-range');
+  if(status) status.textContent = message;
+}
+
 function handleFile(file) {
   if(!file) return;
   const fileInput = document.getElementById('file-input');
@@ -2042,6 +2047,7 @@ function handleFile(file) {
   isOpsDataProcessing = true;
   pendingShiftBreakdownCalc = false;
   setProgress(0);
+  setUploadStatus(`Processing ${file.name} ...`);
   const reader = new FileReader();
   reader.onload = e => {
     setProgress(30);
@@ -2049,6 +2055,7 @@ function handleFile(file) {
       try {
       const wb = XLSX.read(e.target.result, {type:'array'});
       const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('drop')) || wb.SheetNames[0];
+      setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
       const ws = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
       setProgress(60);
@@ -2166,6 +2173,7 @@ function handleFile(file) {
         isOpsDataProcessing = false;
         pendingShiftBreakdownCalc = false;
         setProgress(100);
+        setUploadStatus('Upload failed · please verify sheet/columns');
         showRefreshToast('⚠️ Upload parse failed. Please verify the sheet/columns and try again.');
         console.error('handleFile parse error', err);
       }
@@ -2175,6 +2183,7 @@ function handleFile(file) {
     isOpsDataProcessing = false;
     pendingShiftBreakdownCalc = false;
     setProgress(100);
+    setUploadStatus('File read failed');
     showRefreshToast('⚠️ File read failed. Please try re-uploading the file.');
   };
   reader.readAsArrayBuffer(file);
@@ -2192,11 +2201,13 @@ function assignZonesAndBuild(rows, filename) {
     }
     const pctDone = rows.length ? (i / rows.length) : 1;
     setProgress(80 + pctDone * 15);
+    document.getElementById('row-count').textContent = `Processed ${i.toLocaleString()} / ${rows.length.toLocaleString()}`;
     if(i < rows.length) {
       setTimeout(processChunk, 0);
     } else {
       uploadedTxAll = rows;
       dataSource = 'dropped';
+      document.getElementById('row-count').textContent = `Processed ${rows.length.toLocaleString()} / ${rows.length.toLocaleString()}`;
       zoneStatsSelectedIntervals = [];
       selectedHour = null;
       selectedHourWindow = null;
