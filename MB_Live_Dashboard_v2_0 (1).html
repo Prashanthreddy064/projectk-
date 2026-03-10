@@ -7,6 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MaterialBank · Olive Branch — Live Operations Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap');
 
@@ -1278,37 +1279,27 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 <!-- FORECAST DASHBOARD -->
 <div id="sec-forecast" class="section">
 
-  <!-- Upload + Controls -->
+  <!-- Controls -->
   <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Forecasting Dashboard — Two-Week Look-Ahead</div>
+    <div class="card-title">Forecasting Dashboard — TensorFlow.js Time-Series Model</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;margin-bottom:14px;">
-      Upload the Excel file containing the <strong style="color:var(--cyan)">Forecast Data</strong> sheet. Expected columns: <strong style="color:var(--cyan)">Actual Start Time</strong>, <strong style="color:var(--cyan)">X</strong>, <strong style="color:var(--cyan)">Y</strong>, <strong style="color:var(--cyan)">Completed Units</strong>, <strong style="color:var(--cyan)">User ID</strong>, <strong style="color:var(--cyan)">Date</strong>, <strong style="color:var(--cyan)">Day</strong>, <strong style="color:var(--cyan)">Category</strong>.<br>
-      Select a Category, Day, and Hour to view the predicted zone volume map, heat density, and staffing needs for that specific window.
+      Uses <strong style="color:var(--cyan)">TensorFlow.js</strong> regression model trained on the uploaded ops data.<br>
+      Features: <strong style="color:var(--cyan)">Timestamp</strong> (hour of day), <strong style="color:var(--cyan)">Day</strong> (one-hot encoded), <strong style="color:var(--cyan)">Category</strong> (one-hot encoded).<br>
+      The model predicts hourly unit volumes per zone. Filter by Category and Day to see forecasted staffing needs.
     </p>
 
-    <!-- Forecast Excel File Upload -->
-    <div class="drop-zone" id="fc-drop-zone" style="margin-bottom:14px;">
-      <input type="file" id="fc-file-input" accept=".xlsx,.xls" onchange="handleForecastFile(this.files[0])">
-      <div class="drop-icon">📂</div>
-      <div class="drop-text">
-        <strong>Drop updated Excel file here</strong>
-        <span>Sheet: "Forecast Data" · Columns: Actual Start Time, X, Y, Completed Units, User ID, Date, Day, Category</span>
-      </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+      <span class="data-badge default" id="fc-data-badge">NO DATA</span>
+      <span id="fc-row-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+      <span id="fc-model-status" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
     </div>
 
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-      <span class="data-badge default" id="fc-data-badge">NO DATA LOADED</span>
-      <span id="fc-row-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+      <button class="mctl" type="button" onclick="fcTrainAndForecast()" id="fc-train-btn">Train Model & Forecast</button>
+      <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear Filters</button>
     </div>
 
     <!-- Filter Controls — Toggle Buttons -->
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;margin-bottom:10px;">
-      <div id="fc-refresh-window-label" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">Window: All days · all hours</div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button class="mctl" type="button" onclick="fcRefreshToCurrentWindow()">Refresh</button>
-        <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear All</button>
-      </div>
-    </div>
     <div style="margin-top:14px;">
       <div style="margin-bottom:12px;">
         <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:6px;">Category</label>
@@ -1334,73 +1325,53 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <!-- KPI Summary -->
   <div class="kpi-row" id="fc-kpi-row" style="grid-template-columns:repeat(5,1fr);">
     <div class="kpi" style="--kpi-color:#3b82f6">
-      <div class="kpi-lbl">Total Completed Units</div>
+      <div class="kpi-lbl">Forecasted Units</div>
       <div class="kpi-val mono" id="fc-kpi-volume">—</div>
-      <div class="kpi-sub" id="fc-kpi-volume-sub">select filters above</div>
+      <div class="kpi-sub" id="fc-kpi-volume-sub">predicted total</div>
     </div>
     <div class="kpi" style="--kpi-color:#22c55e">
-      <div class="kpi-lbl">Zones Active</div>
+      <div class="kpi-lbl">Actual Units</div>
       <div class="kpi-val mono" id="fc-kpi-zones">—</div>
-      <div class="kpi-sub">with completed units</div>
+      <div class="kpi-sub">from uploaded data</div>
     </div>
     <div class="kpi" style="--kpi-color:#f59e0b">
-      <div class="kpi-lbl">Unique Pickers</div>
+      <div class="kpi-lbl">Model Accuracy</div>
       <div class="kpi-val mono" id="fc-kpi-pickers">—</div>
-      <div class="kpi-sub">active in selection</div>
+      <div class="kpi-sub">R-squared</div>
     </div>
     <div class="kpi" style="--kpi-color:#8b5cf6">
-      <div class="kpi-lbl">Peak Zone</div>
+      <div class="kpi-lbl">Peak Hour</div>
       <div class="kpi-val" id="fc-kpi-peak" style="font-size:18px;">—</div>
-      <div class="kpi-sub" id="fc-kpi-peak-sub">highest volume</div>
+      <div class="kpi-sub" id="fc-kpi-peak-sub">highest predicted volume</div>
     </div>
     <div class="kpi" style="--kpi-color:#06b6d4">
-      <div class="kpi-lbl">Active Picking Hours</div>
+      <div class="kpi-lbl">Training Loss</div>
       <div class="kpi-val mono" id="fc-kpi-active-hours">—</div>
-      <div class="kpi-sub" id="fc-kpi-active-hours-sub">pick-to-pick by associate</div>
+      <div class="kpi-sub" id="fc-kpi-active-hours-sub">MSE after training</div>
     </div>
   </div>
 
-  <!-- Zone Map + Heat Map side by side -->
-  <div class="two-col" style="margin-bottom:16px;">
-    <div class="map-wrap" style="margin-bottom:0;">
-      <div class="card-title">Forecast Overview — Zone Map</div>
-      <p style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">
-        Zone fill intensity proportional to completed units for selected Category · Day · Hour
-      </p>
-      <canvas id="fc-zone-canvas"></canvas>
-      <div class="legend" id="fc-zone-legend" style="margin-top:10px;"></div>
-    </div>
-    <div class="map-wrap" style="margin-bottom:0;">
-      <div class="card-title">Forecast Heat Intensity — Pick Density</div>
-      <p style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:10px;">
-        Heat intensity plotted from X/Y coordinates · higher density = warmer colors · 2×2 unit grid
-      </p>
-      <canvas id="fc-heat-canvas"></canvas>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
-        <span style="font-size:10px;color:var(--text3)">Low</span>
-        <div style="flex:1;max-width:180px;height:6px;border-radius:4px;background:linear-gradient(to right,#0c1a3b,#1e40af,#2563eb,#f59e0b,#ef4444,#7f1d1d)"></div>
-        <span style="font-size:10px;color:var(--text3)">High</span>
-      </div>
-    </div>
+  <!-- Forecast Hourly Chart — Actual vs Predicted -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Hourly Volume — Actual vs Forecast <span id="fc-hourly-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <canvas id="fc-hourly-canvas" height="220"></canvas>
   </div>
 
-  <!-- Staffing Requirements Table -->
+  <!-- Zone Forecast Staffing Table -->
   <div class="card">
-    <div class="card-title">Zone Volume & Staffing — Forecast Data</div>
+    <div class="card-title">Zone Volume & Staffing — Forecast</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
-      Volume and required staffing guidance per zone based on the selected Category, Day, and Hour.
-      Required Hours = Volume ÷ Zone UPH. Required Pickers = ceil(Required Hours ÷ Selected Hours Filter); if no hour filter is selected, the range from first pick hour to last pick hour is used (supports next-day hours like 2 AM).
+      Forecasted volume and staffing per zone. Required Pickers = ceil(Forecasted Units ÷ (Zone UPH x Hours)).
     </p>
     <table id="fc-staffing-table">
       <thead>
         <tr>
           <th>Zone</th>
-          <th>Completed Units</th>
+          <th>Actual Units</th>
+          <th>Forecasted Units</th>
           <th style="text-align:center;">Volume Share</th>
           <th style="text-align:center;">Zone UPH Target</th>
           <th style="text-align:center;">Required Pickers</th>
-          <th style="text-align:center;">Required Hours</th>
-          <th style="text-align:center;">Recommended Move</th>
           <th style="width:180px;">Volume Bar</th>
         </tr>
       </thead>
@@ -1408,22 +1379,15 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <tfoot>
         <tr style="border-top:2px solid var(--border);font-weight:700;">
           <td style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.06em;">TOTAL</td>
+          <td class="mono" id="fc-staff-total-actual">—</td>
           <td class="mono" id="fc-staff-total-vol">—</td>
           <td class="mono" style="text-align:center;">100%</td>
           <td></td>
           <td class="mono" style="text-align:center;" id="fc-staff-total-pickers">—</td>
-          <td class="mono" style="text-align:center;" id="fc-staff-total-required-hours">—</td>
-          <td></td>
           <td></td>
         </tr>
       </tfoot>
     </table>
-  </div>
-
-  <!-- Hourly Volume Profile for Selected Day -->
-  <div class="card" style="margin-top:16px;">
-    <div class="card-title">Hourly Volume Profile <span id="fc-hourly-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
-    <canvas id="fc-hourly-canvas" height="180"></canvas>
   </div>
 
 </div>
@@ -1757,16 +1721,37 @@ function updateOpsMetadataLabels() {
 
 function parseOpsDateValue(cell) {
   if(cell == null || cell === '') return '';
-  if(typeof cell === 'number' && Number.isFinite(cell)) {
-    const dateObj = XLSX.SSF.parse_date_code(cell);
-    if(dateObj && dateObj.y) {
-      return `${String(dateObj.y).padStart(4,'0')}-${String(dateObj.m).padStart(2,'0')}-${String(dateObj.d).padStart(2,'0')}`;
-    }
+  // Excel serial date number
+  if(typeof cell === 'number' && Number.isFinite(cell) && cell > 1) {
+    try {
+      const dateObj = XLSX.SSF.parse_date_code(cell);
+      if(dateObj && dateObj.y) {
+        return `${String(dateObj.y).padStart(4,'0')}-${String(dateObj.m).padStart(2,'0')}-${String(dateObj.d).padStart(2,'0')}`;
+      }
+    } catch(e) { /* fall through to string parsing */ }
   }
+  // JavaScript Date object
   if(Object.prototype.toString.call(cell) === '[object Date]' && !isNaN(cell.getTime())) {
     return `${cell.getFullYear()}-${String(cell.getMonth()+1).padStart(2,'0')}-${String(cell.getDate()).padStart(2,'0')}`;
   }
-  return String(cell).trim();
+  // String date parsing — handles "M/D/YYYY", "MM/DD/YYYY", "YYYY-MM-DD", "M-D-YYYY" etc.
+  const s = String(cell).trim();
+  // Try M/D/YYYY or MM/DD/YYYY (with / or -)
+  const mdy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(mdy) {
+    return `${mdy[3]}-${String(mdy[1]).padStart(2,'0')}-${String(mdy[2]).padStart(2,'0')}`;
+  }
+  // Try YYYY-MM-DD or YYYY/MM/DD
+  const ymd = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if(ymd) {
+    return `${ymd[1]}-${String(ymd[2]).padStart(2,'0')}-${String(ymd[3]).padStart(2,'0')}`;
+  }
+  // Fallback: try Date constructor
+  const dt = new Date(s);
+  if(!isNaN(dt.getTime()) && dt.getFullYear() > 1970) {
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  }
+  return s;
 }
 
 function normalizePromoType(value) {
@@ -2143,7 +2128,7 @@ function handleFile(file) {
         const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
         if(!isNA && (isNaN(x) || isNaN(y))) continue;
 
-        // Parse hour AND minute from col A
+        // Parse hour AND minute from col A (handles Excel serial, 24h strings, and AM/PM strings)
         let hour = 0, minute = 0;
        const t = r[colTime];
         if(typeof t === 'number') {
@@ -2151,8 +2136,17 @@ function handleFile(file) {
           hour = Math.floor(frac * 24);
           minute = Math.floor((frac * 24 - hour) * 60);
         } else if(typeof t === 'string') {
-          const m = t.match(/(\d+):(\d+)/);
-          if(m) { hour = parseInt(m[1]); minute = parseInt(m[2]); }
+          const m = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
+          if(m) {
+            hour = parseInt(m[1]);
+            minute = parseInt(m[2]);
+            const ampm = (m[4] || '').toLowerCase();
+            if(ampm === 'pm' && hour < 12) hour += 12;
+            if(ampm === 'am' && hour === 12) hour = 0;
+          }
+        } else if(Object.prototype.toString.call(t) === '[object Date]' && !isNaN(t.getTime())) {
+          hour = t.getHours();
+          minute = t.getMinutes();
         }
         // User ID from col E
         const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
@@ -4188,206 +4182,7 @@ function buildBoundsTable() {
 // ═══════════════════════════════════════════════
 // STAFFING
 // ═══════════════════════════════════════════════
-function buildStaffing() {
-  const order = ['ZONE 1','Paint','ZONE 2','ZONE 5','ZONE 3','Wolf gordon','Big Rack','ZONE 4','Nora','Promo','Samplize','No Location'];
-  const selectedShiftKey = document.getElementById('staff-shift')?.value || 's1';
-  const { start, end, base, actual } = getStaffShiftConfig(selectedShiftKey);
-  const hours = (end <= start ? (end + 24 - start) : (end - start)) || 8;
-  const windowZones = getWindowZoneData(start, end);
-  const associatesByZone = getAssociatesByZone(start, end);
-
-  const selectedTitle = document.getElementById('selected-shift-title');
-  const selectedTime = document.getElementById('selected-shift-time');
-  if(selectedTitle) selectedTitle.textContent = `${base.emoji} ${base.label} — Dynamic Staffing`;
-  if(selectedTime) selectedTime.textContent = `${String(Math.floor(start)%24).padStart(2,'0')}:${String(Math.round((start%1)*60)).padStart(2,'0')} – ${String(Math.floor(end)%24).padStart(2,'0')}:${String(Math.round((end%1)*60)).padStart(2,'0')} · ${hours.toFixed(1)} hours`;
-
-  let totalSel = 0;
-  let body = '';
-  order.forEach(z => {
-    const c = ZONE_COLORS[z]||'#64748b';
-    const units = (windowZones[z]?.units || 0);
-    const uph = UPH[z] || 150;
-    const need = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
-    totalSel += need;
-    const associates = associatesByZone[z] || [];
-    const dots = Array(need).fill(`<div class="pdot" style="background:${c}"></div>`).join('');
-    body += `<div class="prow">
-      <div class="pzone-name"><span style="width:7px;height:7px;border-radius:2px;background:${c};display:inline-block;flex-shrink:0"></span>${z}</div>
-      <div class="pcount-wrap">
-        <div style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;min-width:100px;text-align:right;">${Math.round(units)}u · ${associates.length} assoc</div>
-        <div class="pdots">${dots}</div>
-        <div class="pnum" style="color:${c}">${need}</div>
-      </div>
-    </div>`;
-  });
-  
-  document.getElementById('s1-body').innerHTML = body;
-  const hcDelta = actual - totalSel;
-  const hcStatus = hcDelta >= 0 ? `+${hcDelta} over` : `${Math.abs(hcDelta)} under`;
-  document.getElementById('s1-hc').textContent = `${totalSel} req / ${actual} act`;
-  document.getElementById('s1-hc').style.color = hcDelta >= 0 ? 'var(--green)' : 'var(--amber)';
-
-  const s1 = STEADY;
-  const s1Tot = Object.values(s1).reduce((t,v)=>t+(v.s1||0),0);
-  const s2Tot = Object.values(s1).reduce((t,v)=>t+(v.s2||0),0);
-  const overlapHtml = `<div style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;">
-    <div style="margin-bottom:8px;"><b style="color:#93c5fd">Combined transition headcount:</b> <span style="color:#fcd34d">${s1Tot + s2Tot}</span> associates</div>
-    <canvas id="transition-canvas"></canvas>
-    <div style="margin-top:8px;color:var(--text3);">Layout map highlights shared aisles and staggered entry lanes for 1st/2nd shift overlap.</div>
-  </div>`;
-  document.getElementById('s2-body').innerHTML = overlapHtml;
-  document.getElementById('s2-hc').textContent = `${s1Tot + s2Tot} total`;
-
-  const summary = document.getElementById('staff-summary');
-  const s3Tot = Object.values(STEADY).reduce((t,v)=>t+Math.max(1,Math.round((v.s1+v.s2)/3)),0);
-  if(summary) {
-    summary.innerHTML = `
-      <div class="summary-pill"><span class="mini-note">1st Shift (base)</span><b>${s1Tot}</b></div>
-      <div class="summary-pill"><span class="mini-note">2nd Shift (base)</span><b>${s2Tot}</b></div>
-      <div class="summary-pill"><span class="mini-note">3rd Shift (modeled)</span><b>${s3Tot}</b></div>
-      <div class="summary-pill"><span class="mini-note">Required Headcount (${base.label})</span><b>${totalSel}</b><span class="mini-note">Actual ${actual} · ${hcStatus}</span></div>`;
-  }
-  
-  const tbl = document.getElementById('staff-detail-table');
-  const entries = Object.entries(zoneStats).sort((a,b)=>b[1].units-a[1].units);
-  let h = `<thead><tr><th>Zone</th><th>UPH</th><th>Window Units</th><th>Required Headcount</th><th>Associates Assigned</th><th>Avg Start</th><th>Avg End</th></tr></thead><tbody>`;
-  entries.forEach(([z]) => {
-      const c = ZONE_COLORS[z] || '#94a3b8';
-    const uph = UPH[z]||150;
-    const units = windowZones[z]?.units || 0;
-    const calc = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
-    const assoc = associatesByZone[z] || [];
-    const avgStart = assoc.length ? assoc.reduce((s,a)=>s+a.start,0)/assoc.length : null;
-    const avgEnd = assoc.length ? assoc.reduce((s,a)=>s+a.end,0)/assoc.length : null;
-    const tfmt = v => v == null ? '—' : `${String(Math.floor(v)%24).padStart(2,'0')}:${String(Math.round((v%1)*60)).padStart(2,'0')}`;
-    h += `<tr>
-      <td><span class="zpill" style="background:${c}18;color:${c}"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span></td>
-      <td class="mono">${uph}</td><td class="mono">${Math.round(units).toLocaleString()}</td>
-      <td class="mono" style="color:${c};font-weight:700">${calc}</td>
-      <td class="mono">${assoc.length}</td>
-      <td class="mono">${tfmt(avgStart)}</td>
-      <td class="mono">${tfmt(avgEnd)}</td>
-    </tr>`;
-  });
-  tbl.innerHTML = h + '</tbody>';
-  
-  drawZoneFlowMap(windowZones, start, end);
-  drawTransitionLayoutMap(s1Tot, s2Tot);
-}
-
-function drawZoneFlowMap(windowZones, start, end) {
-  const canvas = document.getElementById('flow-canvas');
-  if(!canvas) return;
-  const W = canvas.width = canvas.clientWidth || 980;
-  const H = canvas.height = 340;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#040609'; ctx.fillRect(0,0,W,H);
-  const zones = Object.entries(ZONE_BOUNDS).sort((a,b)=>(windowZones[b[0]]?.units||0)-(windowZones[a[0]]?.units||0));
-  const spacing = W / (zones.length + 1);
-  const boxW = Math.min(84, spacing - 10);
-  const halfBox = boxW / 2;
-  const boxH = 52;
-  const fontSize = zones.length > 10 ? 9 : 11;
-  const subFontSize = zones.length > 10 ? 8 : 10;
-  const y = H/2;
-  zones.forEach(([z], i) => {
-    const x = spacing*(i+1);
-    const c = ZONE_COLORS[z] || '#64748b';
-    ctx.fillStyle = c + '33';
-    ctx.strokeStyle = c;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.roundRect(x-halfBox,y-26,boxW,boxH,8); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#e2e8f0'; ctx.font = fontSize+'px Syne'; ctx.textAlign='center';
-    ctx.fillText(z, x, y-2);
-    ctx.fillStyle = '#94a3b8'; ctx.font = subFontSize+'px IBM Plex Mono';
-    ctx.fillText(`Start ${(Math.floor(start)%24).toString().padStart(2,'0')}:00`, x, y+12);
-    ctx.fillText(`End ${(Math.floor(end)%24).toString().padStart(2,'0')}:00`, x, y+24);
-    ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y-34, 4, 0, Math.PI*2); ctx.fill();
-    if(i < zones.length - 1) {
-      const nx = spacing*(i+2);
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.moveTo(x+halfBox+3,y); ctx.lineTo(nx-halfBox-3,y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(nx-halfBox-9,y-4); ctx.lineTo(nx-halfBox-3,y); ctx.lineTo(nx-halfBox-9,y+4); ctx.fillStyle='#38bdf8'; ctx.fill();
-    }
-  });
-  ctx.fillStyle='#64748b'; ctx.font='10px IBM Plex Mono'; ctx.textAlign='left';
-  ctx.fillText('Standing positions shown as nodes; arrows indicate movement direction between zones by volume rank.', 12, H-12);
-}
-
-function drawTransitionLayoutMap(s1Tot, s2Tot) {
-  const canvas = document.getElementById('transition-canvas');
-  if(!canvas) return;
-  const W = canvas.width = canvas.clientWidth || 420;
-  const H = canvas.height = 200;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#040609'; ctx.fillRect(0,0,W,H);
-  ctx.strokeStyle = '#1e293b';
-  for(let i=0;i<6;i++) { ctx.strokeRect(20+i*65, 36, 50, 130); }
-  ctx.fillStyle='#3b82f6AA'; ctx.fillRect(24,40,180,58);
-  ctx.fillStyle='#f59e0bAA'; ctx.fillRect(210,40,180,58);
-  ctx.fillStyle='#22c55e99'; ctx.fillRect(24,106,366,56);
-  ctx.fillStyle='#bfdbfe'; ctx.font='10px IBM Plex Mono';
-  ctx.fillText(`1st Shift staging (${s1Tot})`, 32, 72);
-  ctx.fillStyle='#fde68a'; ctx.fillText(`2nd Shift staging (${s2Tot})`, 220, 72);
-  ctx.fillStyle='#86efac'; ctx.fillText(`Shared flow lane (${s1Tot+s2Tot} combined)`, 32, 138);
-}
-
-// ═══════════════════════════════════════════════
-// RAMP PLAN
-// ═══════════════════════════════════════════════
-function buildRamp() {
-  const { start, end, key } = getShiftRange('ramp', 's1');
-  const hours = (end <= start ? (end + 24 - start) : (end - start)) || 8;
-  const wz = getWindowZoneData(start, end);
-  const efficiency = {w1:0.7,w2:0.85,ws:1};
-  const order = ['ZONE 1','Paint','ZONE 2','ZONE 5','ZONE 3','Wolf gordon','Big Rack','ZONE 4','Nora','Promo','Samplize','No Location'];
-  let tot = {w1s1:0,w1s2:0,w2s1:0,w2s2:0,wss1:0,wss2:0};
-  const body = document.getElementById('ramp-body');
-  let h = '';
-  
-  order.forEach(z => {
-    const c = ZONE_COLORS[z]||'#64748b';
-     const uph = UPH[z] || 150;
-    const units = Math.round(wz[z]?.units || 0);
-    const calc = units > 0 ? Math.max(1, Math.ceil(units / (uph * hours))) : 0;
-    const split = key === 's1' ? {s1: Math.max(calc,1), s2: Math.max(0,Math.round(calc*0.7))}
-      : key === 's2' ? {s1: Math.max(0,Math.round(calc*0.8)), s2: Math.max(calc,1)}
-      : {s1: Math.max(0,Math.round(calc*0.6)), s2: Math.max(0,Math.round(calc*0.6))};
-    const wk = {
-      w1:{s1: Math.ceil(split.s1/efficiency.w1), s2: Math.ceil(split.s2/efficiency.w1)},
-      w2:{s1: Math.ceil(split.s1/efficiency.w2), s2: Math.ceil(split.s2/efficiency.w2)},
-      ws:{s1: Math.ceil(split.s1/efficiency.ws), s2: Math.ceil(split.s2/efficiency.ws)}
-    };
-    tot.w1s1 += wk.w1.s1; tot.w1s2 += wk.w1.s2;
-    tot.w2s1 += wk.w2.s1; tot.w2s2 += wk.w2.s2;
-    tot.wss1 += wk.ws.s1; tot.wss2 += wk.ws.s2;
-
-    h += `<tr>
-      <td><span class="zpill" style="background:${c}18;color:${c};font-size:11px"><span style="width:5px;height:5px;border-radius:50%;background:${c};display:inline-block"></span>${z}</span></td>
-      <td class="mono">${uph}</td>
-      <td class="mono">${units.toLocaleString()}</td>
-      <td class="mono" style="color:var(--cyan)">${split.s1}</td>
-      <td class="mono" style="color:var(--cyan)">${split.s2}</td>
-      <td class="rc" style="background:rgba(59,130,246,0.05);color:#93c5fd">${wk.w1.s1}</td>
-      <td class="rc" style="background:rgba(59,130,246,0.05);color:#64748b">${wk.w1.s2}</td>
-      <td class="rc" style="background:rgba(34,197,94,0.05);color:#86efac">${wk.w2.s1}</td>
-      <td class="rc" style="background:rgba(34,197,94,0.05);color:#64748b">${wk.w2.s2}</td>
-      <td class="rc" style="background:rgba(245,158,11,0.05);color:#fcd34d">${wk.ws.s1}</td>
-      <td class="rc" style="background:rgba(245,158,11,0.05);color:#64748b">${wk.ws.s2}</td>
-    </tr>`;
-  });
-  
-  body.innerHTML = h;
-  document.getElementById('r-w1s1').textContent = tot.w1s1;
-  document.getElementById('r-w1s2').textContent = tot.w1s2;
-  document.getElementById('r-w2s1').textContent = tot.w2s1;
-  document.getElementById('r-w2s2').textContent = tot.w2s2;
-  document.getElementById('r-wss1').textContent = tot.wss1;
-  document.getElementById('r-wss2').textContent = tot.wss2;
-   const note = document.getElementById('ramp-volume-note');
-  if(note) note.textContent = `Dynamic volume window: ${Math.floor(start)%24}:00-${Math.floor(end)%24}:00 (${hours.toFixed(1)}h)`;
-}
+// (Staffing Plan and Ramp Plan removed)
 
 // ═══════════════════════════════════════════════
 // UPH TARGETS TAB
@@ -5278,14 +5073,20 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
 // ═══════════════════════════════════════════════
 // FORECAST DASHBOARD
 // ═══════════════════════════════════════════════
-let fcData = [];          // parsed forecast rows [{time,x,y,units,userId,date,day,category,hour,zone}]
-let fcFiltered = [];      // filtered subset
-let fcGridData = [];      // aggregated 2x2 grid for heat map
+let fcData = [];          // aggregated training data [{hour, day, category, zone, units, date}]
+let fcFiltered = [];      // filtered subset for display
+let fcModel = null;       // TensorFlow.js trained model
+let fcPredictions = {};   // { hour -> predictedUnits }
+let fcActuals = {};       // { hour -> actualUnits }
+let fcZonePredictions = {}; // { zone -> predictedUnits }
+let fcZoneActuals = {};   // { zone -> actualUnits }
+let fcTrainingLoss = null;
+let fcR2 = null;
 
 // Active filter state for toggle buttons
 let fcFilterCat = 'all';
 let fcFilterDay = 'all';
-let fcFilterHours = []; // supports single-select or multi-select
+let fcFilterHours = [];
 
 const FC_DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const FC_HOURS = [];
@@ -5302,383 +5103,257 @@ function sortByOpHour(a, b) {
   return opHourIndex(a) - opHourIndex(b);
 }
 
-function buildThreeHourIntervals(hours) {
-  const validHours = (hours || []).filter(h => Number.isInteger(h));
-  if(!validHours.length) return [];
+// ═══════════════════════════════════════════════
+// TENSORFLOW.JS FORECAST MODEL
+// ═══════════════════════════════════════════════
 
-  const uniq = [...new Set(validHours)].sort(sortByOpHour);
-  const startOp = opHourIndex(uniq[0]);
-  const endOp = opHourIndex(uniq[uniq.length - 1]);
-  const intervals = [];
+function fcPrepareTrainingData() {
+  // Use main uploaded data (uploadedTxAll) to build training dataset
+  if(!uploadedTxAll || !uploadedTxAll.length) return null;
 
-  for(let start = startOp; start <= endOp; start += 3) {
-    const bucketHours = [start % 24, (start + 1) % 24, (start + 2) % 24];
-    intervals.push({
-      key: `${start % 24}-${(start + 3) % 24}`,
-      startHour: start % 24,
-      endHour: (start + 3) % 24,
-      opStart: start,
-      opEnd: start + 3,
-      hours: bucketHours
-    });
-  }
+  // Collect unique days and categories
+  const days = [...new Set(uploadedTxAll.map(r => r.dayOfWeek || '').filter(Boolean))];
+  const categories = [...new Set(uploadedTxAll.map(r => r.promoType || '').filter(Boolean))];
+  const zones = [...new Set(uploadedTxAll.map(r => r.zone || '').filter(Boolean))];
 
-  return intervals;
-}
-
-function formatIntervalLabel(interval) {
-  if(!interval) return '';
-  const fmt = h => String(h).padStart(2, '0') + ':00';
-  return `${fmt(interval.startHour)}–${fmt(interval.endHour)}`;
-}
-
-function fcFormatHour(h) {
-  if(h === 0) return '12:00 AM';
-  if(h < 12) return h + ':00 AM';
-  if(h === 12) return '12:00 PM';
-  return (h - 12) + ':00 PM';
-}
-
-function fcParseMinuteOfDay(val) {
-  if(val == null) return NaN;
-  if(typeof val === 'number') {
-    const frac = ((val % 1) + 1) % 1;
-    const minuteOfDay = Math.floor(frac * 24 * 60);
-    if(!isNaN(minuteOfDay)) return minuteOfDay;
-  }
-
-  const s = String(val).trim().toLowerCase();
-  const m1 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i);
-  if(m1) {
-    let h = parseInt(m1[1], 10);
-    const mins = parseInt(m1[2], 10);
-    const ampm = (m1[4] || '').toLowerCase();
-    if(ampm === 'pm' && h < 12) h += 12;
-    if(ampm === 'am' && h === 12) h = 0;
-    if(!isNaN(h) && !isNaN(mins)) return ((h % 24) * 60) + mins;
-  }
-
-  const m2 = s.match(/^(\d{1,2})\s*(am|pm)$/i);
-  if(m2) {
-    let h = parseInt(m2[1], 10);
-    const ampm = m2[2].toLowerCase();
-    if(ampm === 'pm' && h < 12) h += 12;
-    if(ampm === 'am' && h === 12) h = 0;
-    if(!isNaN(h)) return (h % 24) * 60;
-  }
-
-  const dt = new Date(s);
-  if(!isNaN(dt)) return dt.getHours() * 60 + dt.getMinutes();
-
-  const parsed = parseFloat(s);
-  if(!isNaN(parsed)) {
-    const hour = Math.floor(parsed) % 24;
-    const mins = Math.round((parsed - Math.floor(parsed)) * 60);
-    return hour * 60 + Math.max(0, mins);
-  }
-  return NaN;
-}
-
-function fcParseHour(val) {
-  const minuteOfDay = fcParseMinuteOfDay(val);
-  return isNaN(minuteOfDay) ? NaN : Math.floor(minuteOfDay / 60) % 24;
-}
-
-function fcNormalizeDay(val) {
-  if(!val) return '';
-  const s = String(val).trim().toLowerCase();
-  for(const d of FC_DAY_ORDER) {
-    if(s === d.toLowerCase() || s === d.toLowerCase().slice(0,3)) return d;
-  }
-  const dt = new Date(val);
-  if(!isNaN(dt)) {
-    return FC_DAY_ORDER[dt.getDay()] || '';
-  }
-  return String(val).trim();
-}
-
-function fcCategoryFromPicker(userId) {
-  const normalizedId = String(userId || '').trim().toLowerCase();
-  if(!normalizedId) return '';
-  if(/\b(imp|impl|implement|implements)\b/.test(normalizedId)) return 'Implement';
-  return '';
-}
-
-function fcNormalizeCategory(val, userId) {
-  const raw = String(val || '').trim();
-  if(!raw) return fcCategoryFromPicker(userId);
-
-  const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  if(/\b(imp|impl|implement|implements)\b/.test(normalized)) return 'Implement';
-
-  return raw.replace(/\s+/g, ' ');
-}
-
-function fcBuildZoneActiveMetrics(rows) {
-  const byUser = {};
-  rows.forEach(r => {
-    if(!r || !r.zone || isNaN(r.txMin)) return;
-    const uid = (r.userId && String(r.userId).trim()) ? String(r.userId).trim() : 'Unknown';
-    if(!byUser[uid]) byUser[uid] = [];
-    byUser[uid].push({ txMin: r.txMin, zone: r.zone, units: r.units || 0 });
+  // Aggregate by date + hour + day + category + zone
+  const agg = {};
+  uploadedTxAll.forEach(r => {
+    const key = `${r.dateValue}|${r.hour}|${r.dayOfWeek || 'Unknown'}|${r.promoType || 'Unknown'}|${r.zone || 'No Location'}`;
+    if(!agg[key]) agg[key] = { date: r.dateValue, hour: r.hour, day: r.dayOfWeek || 'Unknown', category: r.promoType || 'Unknown', zone: r.zone || 'No Location', units: 0 };
+    agg[key].units += r.units;
   });
 
-  const metrics = {};
-  for(const uid of Object.keys(byUser)) {
-    const sorted = byUser[uid].sort((a,b) => a.txMin - b.txMin);
-    const contrib = computeZoneRunContributions(sorted);
-    for(const [zone, vals] of Object.entries(contrib)) {
-      if(!metrics[zone]) metrics[zone] = { activeMinutes: 0, inactiveMinutes: 0, units: 0 };
-      metrics[zone].activeMinutes += vals.activeMinutes || 0;
-      metrics[zone].inactiveMinutes += vals.inactiveMinutes || 0;
-      metrics[zone].units += vals.units || 0;
+  const rows = Object.values(agg);
+  if(!rows.length) return null;
+
+  return { rows, days, categories, zones };
+}
+
+function fcOneHotEncode(value, classes) {
+  return classes.map(c => c === value ? 1 : 0);
+}
+
+function fcBuildFeatureVector(hour, day, category, days, categories) {
+  // Features: [hour_sin, hour_cos, ...day_one_hot, ...category_one_hot]
+  const hourRad = (hour / 24) * 2 * Math.PI;
+  const hourSin = Math.sin(hourRad);
+  const hourCos = Math.cos(hourRad);
+  const dayOH = fcOneHotEncode(day, days);
+  const catOH = fcOneHotEncode(category, categories);
+  return [hourSin, hourCos, ...dayOH, ...catOH];
+}
+
+async function fcTrainAndForecast() {
+  const btn = document.getElementById('fc-train-btn');
+  const statusEl = document.getElementById('fc-model-status');
+
+  if(!uploadedTxAll || !uploadedTxAll.length) {
+    statusEl.textContent = 'No data loaded — upload ops file first';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Training...';
+  statusEl.textContent = 'Preparing data...';
+
+  await new Promise(r => setTimeout(r, 50));
+
+  try {
+    const prepared = fcPrepareTrainingData();
+    if(!prepared) {
+      statusEl.textContent = 'Could not prepare training data';
+      btn.disabled = false;
+      btn.textContent = 'Train Model & Forecast';
+      return;
     }
-  }
-  return metrics;
-}
 
-function fcGetDateKey(row) {
-  const raw = row && row.date != null ? String(row.date).trim() : '';
-  if(!raw) return '';
-  const dt = new Date(raw);
-  if(!isNaN(dt)) {
-    const y = dt.getFullYear();
-    const m = String(dt.getMonth() + 1).padStart(2, '0');
-    const d = String(dt.getDate()).padStart(2, '0');
-    return y + '-' + m + '-' + d;
-  }
-  return raw;
-}
+    const { rows, days, categories, zones } = prepared;
+    const featureSize = 2 + days.length + categories.length;
 
-function fcForecastSeries(values) {
-  if(!values || values.length === 0) return 0;
-  if(values.length === 1) return values[0];
-
-  const n = values.length;
-  const recent = values.slice(Math.max(0, n - 5));
-  const wmaDen = recent.reduce((s, _, i) => s + (i + 1), 0);
-  const wma = recent.reduce((s, v, i) => s + v * (i + 1), 0) / Math.max(wmaDen, 1);
-
-  if(n < 3) return Math.max(0, wma);
-
-  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-  for(let i = 0; i < n; i++) {
-    const x = i + 1;
-    const y = values[i];
-    sumX += x; sumY += y; sumXY += x * y; sumXX += x * x;
-  }
-  const den = n * sumXX - sumX * sumX;
-  const slope = den === 0 ? 0 : (n * sumXY - sumX * sumY) / den;
-  const intercept = (sumY - slope * sumX) / n;
-  const lr = intercept + slope * (n + 1);
-
-  return Math.max(0, wma * 0.65 + lr * 0.35);
-}
-
-function fcBuildForecastRows() {
-  const categoryRows = fcData.filter(r => fcFilterCat === 'all' || r.category === fcFilterCat);
-  const dayRows = categoryRows.filter(r => fcFilterDay === 'all' || r.day === fcFilterDay);
-  const sourceRows = dayRows.length ? dayRows : categoryRows;
-  if(sourceRows.length === 0) return [];
-
-  const byDate = {};
-  sourceRows.forEach(r => {
-    const dk = fcGetDateKey(r);
-    if(!dk) return;
-    if(!byDate[dk]) byDate[dk] = [];
-    byDate[dk].push(r);
-  });
-  const dateKeys = Object.keys(byDate).sort();
-  if(dateKeys.length === 0) return [];
-
-  const selectedDateRows = byDate[dateKeys[dateKeys.length - 1]];
-  const dailyTotals = [];
-  const hourSeries = {};
-  const zoneHourSeries = {};
-
-  dateKeys.forEach(dk => {
-    const rows = byDate[dk];
-    let total = 0;
-    const hTotals = {};
-    const zhTotals = {};
+    // Build tensors
+    const xs = [];
+    const ys = [];
     rows.forEach(r => {
-      total += r.units;
-      if(!isNaN(r.hour)) {
-        hTotals[r.hour] = (hTotals[r.hour] || 0) + r.units;
-        const zhk = r.zone + '|' + r.hour;
-        zhTotals[zhk] = (zhTotals[zhk] || 0) + r.units;
+      xs.push(fcBuildFeatureVector(r.hour, r.day, r.category, days, categories));
+      ys.push(r.units);
+    });
+
+    // Normalize targets
+    const maxUnits = Math.max(...ys, 1);
+    const normalizedYs = ys.map(y => y / maxUnits);
+
+    statusEl.textContent = `Training on ${rows.length} data points (${featureSize} features)...`;
+    await new Promise(r => setTimeout(r, 50));
+
+    // Dispose old model if exists
+    if(fcModel) { fcModel.dispose(); fcModel = null; }
+
+    // Build TensorFlow.js model
+    const model = tf.sequential();
+    model.add(tf.layers.dense({ inputShape: [featureSize], units: 64, activation: 'relu' }));
+    model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+    model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
+    model.add(tf.layers.dense({ units: 1, activation: 'linear' }));
+
+    model.compile({
+      optimizer: tf.train.adam(0.005),
+      loss: 'meanSquaredError'
+    });
+
+    const xTensor = tf.tensor2d(xs);
+    const yTensor = tf.tensor2d(normalizedYs, [normalizedYs.length, 1]);
+
+    // Train
+    const history = await model.fit(xTensor, yTensor, {
+      epochs: 100,
+      batchSize: Math.min(64, Math.max(8, Math.floor(rows.length / 4))),
+      validationSplit: 0.15,
+      shuffle: true,
+      callbacks: {
+        onEpochEnd: (epoch, logs) => {
+          if(epoch % 20 === 0) {
+            statusEl.textContent = `Epoch ${epoch + 1}/100 — loss: ${logs.loss.toFixed(6)}`;
+          }
+        }
       }
     });
-    dailyTotals.push(total);
 
-    FC_HOURS.forEach(h => {
-      if(!hourSeries[h]) hourSeries[h] = [];
-      hourSeries[h].push(hTotals[h] || 0);
+    fcModel = model;
+    fcTrainingLoss = history.history.loss[history.history.loss.length - 1];
+
+    // Store metadata for predictions
+    fcModel._fcMeta = { days, categories, zones, maxUnits, featureSize };
+
+    // Generate predictions for all combinations and compute R²
+    const allPredXs = [];
+    const allActualYs = [];
+    rows.forEach(r => {
+      allPredXs.push(fcBuildFeatureVector(r.hour, r.day, r.category, days, categories));
+      allActualYs.push(r.units);
     });
 
-    Object.keys(zhTotals).forEach(k => {
-      if(!zoneHourSeries[k]) zoneHourSeries[k] = [];
-      zoneHourSeries[k].push(zhTotals[k]);
-    });
-    Object.keys(zoneHourSeries).forEach(k => {
-      if(!(k in zhTotals)) zoneHourSeries[k].push(0);
+    const predTensor = model.predict(tf.tensor2d(allPredXs));
+    const predValues = (await predTensor.data()).map(v => Math.max(0, v * maxUnits));
+    predTensor.dispose();
+
+    // R² calculation
+    const meanActual = allActualYs.reduce((s, v) => s + v, 0) / allActualYs.length;
+    let ssRes = 0, ssTot = 0;
+    for(let i = 0; i < allActualYs.length; i++) {
+      ssRes += (allActualYs[i] - predValues[i]) ** 2;
+      ssTot += (allActualYs[i] - meanActual) ** 2;
+    }
+    fcR2 = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
+
+    // Clean up tensors
+    xTensor.dispose();
+    yTensor.dispose();
+
+    statusEl.textContent = `Model trained — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(6)}`;
+
+    // Build toggle buttons and populate filters
+    fcBuildToggleButtons();
+
+    // Update badge
+    const badge = document.getElementById('fc-data-badge');
+    badge.className = 'data-badge live';
+    badge.textContent = 'MODEL READY';
+    document.getElementById('fc-row-count').textContent = `${rows.length} training samples · ${uploadedTxAll.length} transactions`;
+
+    // Apply filters and render
+    fcApplyFiltersAndPredict();
+
+    btn.disabled = false;
+    btn.textContent = 'Train Model & Forecast';
+
+  } catch(err) {
+    console.error('[forecast] Training failed', err);
+    statusEl.textContent = 'Training failed: ' + err.message;
+    btn.disabled = false;
+    btn.textContent = 'Train Model & Forecast';
+  }
+}
+
+function fcApplyFiltersAndPredict() {
+  if(!fcModel || !fcModel._fcMeta) return;
+  const { days, categories, zones, maxUnits } = fcModel._fcMeta;
+
+  // Filter source data by category and day
+  let filtered = uploadedTxAll.slice();
+  if(fcFilterCat !== 'all') filtered = filtered.filter(r => r.promoType === fcFilterCat);
+  if(fcFilterDay !== 'all') filtered = filtered.filter(r => r.dayOfWeek === fcFilterDay);
+
+  // Actual hourly totals
+  fcActuals = {};
+  FC_HOURS.forEach(h => fcActuals[h] = 0);
+  filtered.forEach(r => {
+    if(FC_HOURS.includes(r.hour)) fcActuals[r.hour] += r.units;
+  });
+
+  // Actual zone totals
+  fcZoneActuals = {};
+  filtered.forEach(r => {
+    const z = r.zone || 'No Location';
+    fcZoneActuals[z] = (fcZoneActuals[z] || 0) + r.units;
+  });
+
+  // Predict: for each hour, predict with the selected day/category
+  const targetDay = fcFilterDay !== 'all' ? fcFilterDay : (days[0] || 'Unknown');
+  const targetCat = fcFilterCat !== 'all' ? fcFilterCat : (categories[0] || 'Unknown');
+
+  // If "all" is selected, sum predictions across all days/categories
+  const dayList = fcFilterDay !== 'all' ? [fcFilterDay] : days;
+  const catList = fcFilterCat !== 'all' ? [fcFilterCat] : categories;
+
+  fcPredictions = {};
+  FC_HOURS.forEach(h => fcPredictions[h] = 0);
+  fcZonePredictions = {};
+
+  const predXs = [];
+  const predMeta = [];
+  dayList.forEach(d => {
+    catList.forEach(c => {
+      FC_HOURS.forEach(h => {
+        predXs.push(fcBuildFeatureVector(h, d, c, days, categories));
+        predMeta.push({ hour: h, day: d, category: c });
+      });
     });
   });
 
-  const dailyForecast = fcForecastSeries(dailyTotals);
-  const forecastByHour = {};
-  FC_HOURS.forEach(h => {
-    const vals = hourSeries[h] || Array(dateKeys.length).fill(0);
-    forecastByHour[h] = fcForecastSeries(vals);
-  });
+  if(predXs.length > 0) {
+    const predTensor = fcModel.predict(tf.tensor2d(predXs));
+    const predData = predTensor.dataSync();
+    predTensor.dispose();
 
-  const hourForecastSum = Object.values(forecastByHour).reduce((s, v) => s + v, 0);
-  if(hourForecastSum > 0 && dailyForecast > 0) {
-    const scale = dailyForecast / hourForecastSum;
-    Object.keys(forecastByHour).forEach(h => { forecastByHour[h] *= scale; });
+    predMeta.forEach((m, i) => {
+      const val = Math.max(0, predData[i] * maxUnits);
+      fcPredictions[m.hour] = (fcPredictions[m.hour] || 0) + val;
+    });
   }
 
-  const templateByZoneHour = {};
-  selectedDateRows.forEach(r => {
-    if(isNaN(r.hour)) return;
-    const k = r.zone + '|' + r.hour;
-    templateByZoneHour[k] = (templateByZoneHour[k] || 0) + r.units;
+  // Distribute zone predictions proportionally based on actual zone distribution
+  const totalActual = Object.values(fcZoneActuals).reduce((s, v) => s + v, 0);
+  const totalPredicted = Object.values(fcPredictions).reduce((s, v) => s + v, 0);
+  zones.forEach(z => {
+    const zoneShare = totalActual > 0 ? (fcZoneActuals[z] || 0) / totalActual : 1 / zones.length;
+    fcZonePredictions[z] = totalPredicted * zoneShare;
   });
 
-  const rows = selectedDateRows.map(r => {
-    if(isNaN(r.hour) || !FC_HOURS.includes(r.hour)) return { ...r };
-    const zhk = r.zone + '|' + r.hour;
-    const zhSeries = zoneHourSeries[zhk] || Array(dateKeys.length).fill(0);
-    let targetZh = fcForecastSeries(zhSeries);
-    const hourTarget = forecastByHour[r.hour] || 0;
-
-    if(targetZh <= 0 && hourTarget > 0) {
-      const templateHourTotal = selectedDateRows
-        .filter(x => x.hour === r.hour)
-        .reduce((s, x) => s + x.units, 0);
-      const ratio = templateHourTotal > 0 ? (r.units / templateHourTotal) : 0;
-      targetZh = hourTarget * ratio;
-    }
-
-    const denom = templateByZoneHour[zhk] || 0;
-    const scaledUnits = denom > 0 ? (r.units / denom) * targetZh : r.units;
-    return { ...r, units: Math.max(0, scaledUnits) };
-  });
-
+  // Apply hour filter for display
+  fcFiltered = filtered;
   if(fcFilterHours.length > 0) {
-    return rows.filter(r => fcFilterHours.includes(r.hour));
-  }
-  return rows;
-}
-
-// ─── Toggle Button Filter Logic ─────────────
-function fcToggleFilter(type, value, btn) {
-  const containerId = type === 'category' ? 'fc-cat-btns' : type === 'day' ? 'fc-day-btns' : 'fc-hour-btns';
-  const container = document.getElementById(containerId);
-
-  if(type === 'hour') {
-    if(value === 'all') {
-      fcFilterHours = [];
-    } else {
-      const idx = fcFilterHours.indexOf(value);
-      if(idx >= 0) {
-        fcFilterHours.splice(idx, 1);
-      } else {
-        fcFilterHours.push(value);
-      }
-    }
-
-    const allBtn = container.querySelector('[data-hour="all"]');
-    if(allBtn) allBtn.classList.toggle('active', fcFilterHours.length === 0);
-    container.querySelectorAll('[data-hour]').forEach(b => {
-      const hv = b.getAttribute('data-hour');
-      if(hv === 'all') return;
-      b.classList.toggle('active', fcFilterHours.includes(parseInt(hv, 10)));
-    });
-  } else {
-    container.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    if(type === 'category') fcFilterCat = value;
-    else if(type === 'day') fcFilterDay = value;
+    fcFiltered = filtered.filter(r => fcFilterHours.includes(r.hour));
   }
 
-  applyForecastFilters();
-}
-
-function fcClearAllFilters() {
-  if(fcData.length === 0) return;
-  fcSetSingleFilter('category', 'all');
-  fcSetSingleFilter('day', 'all');
-  fcFilterHours = [];
-  fcSyncHourButtons();
-  fcUpdateRefreshWindowLabel();
-  applyForecastFilters();
-}
-
-
-function fcSetSingleFilter(type, value) {
-  const containerId = type === 'category' ? 'fc-cat-btns' : 'fc-day-btns';
-  const dataAttr = type === 'category' ? 'data-category' : 'data-day';
-  const container = document.getElementById(containerId);
-  if(container) {
-    container.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
-    let target = container.querySelector(`[${dataAttr}="${value}"]`);
-    if(!target && value === 'all') target = container.querySelector('button');
-    if(target) target.classList.add('active');
-  }
-  if(type === 'category') fcFilterCat = value;
-  else fcFilterDay = value;
-}
-
-function fcSyncHourButtons() {
-  const hourDiv = document.getElementById('fc-hour-btns');
-  if(!hourDiv) return;
-  hourDiv.querySelectorAll('[data-hour]').forEach(b => {
-    const hv = b.getAttribute('data-hour');
-    if(hv === 'all') b.classList.toggle('active', fcFilterHours.length === 0);
-    else b.classList.toggle('active', fcFilterHours.includes(parseInt(hv, 10)));
-  });
-}
-
-function fcUpdateRefreshWindowLabel() {
-  const label = document.getElementById('fc-refresh-window-label');
-  if(!label) return;
-  const dayLabel = fcFilterDay === 'all' ? 'All days' : fcFilterDay;
-  const hourLabel = fcFilterHours.length
-    ? fcFilterHours.slice().sort(sortByOpHour).map(fcFormatHour).join(' → ')
-    : 'all hours';
-  label.textContent = `Window: ${dayLabel} · ${hourLabel}`;
-}
-
-function fcRefreshToCurrentWindow() {
-  if(fcData.length === 0) return;
-
-  const now = new Date();
-  const startHour = now.getHours();
-  const targetHours = [startHour, (startHour + 1) % 24, (startHour + 2) % 24];
-  const availableDays = new Set(fcData.map(r => r.day).filter(Boolean));
-  const currentDay = FC_DAY_ORDER[now.getDay()] || 'all';
-  const endHour = (startHour + 3) % 24;
-  const wrapsMidnight = endHour <= startHour;
-
-  if(wrapsMidnight) {
-    fcSetSingleFilter('day', 'all');
-  } else if(availableDays.has(currentDay)) {
-    fcSetSingleFilter('day', currentDay);
-  } else {
-    fcSetSingleFilter('day', 'all');
-  }
-
-  fcFilterHours = targetHours;
-  fcSyncHourButtons();
-  fcUpdateRefreshWindowLabel();
-  applyForecastFilters();
+  // Render everything
+  fcBuildKPIs();
+  fcBuildHourlyChart();
+  fcBuildStaffingTable();
 }
 
 function fcBuildToggleButtons() {
-  // Category buttons
-  const cats = [...new Set(fcData.map(r => r.category))].filter(Boolean).sort();
+  const cats = [...new Set(uploadedTxAll.map(r => r.promoType).filter(Boolean))].sort();
   const catDiv = document.getElementById('fc-cat-btns');
   catDiv.innerHTML = '<button class="mctl active" data-category="all" onclick="fcToggleFilter(\'category\',\'all\',this)">All</button>';
   cats.forEach(c => {
@@ -5690,8 +5365,7 @@ function fcBuildToggleButtons() {
     catDiv.appendChild(btn);
   });
 
-  // Day buttons
-  const days = [...new Set(fcData.map(r => r.day))].filter(Boolean);
+  const days = [...new Set(uploadedTxAll.map(r => r.dayOfWeek).filter(Boolean))];
   days.sort((a,b) => {
     const ia = FC_DAY_ORDER.indexOf(a);
     const ib = FC_DAY_ORDER.indexOf(b);
@@ -5709,13 +5383,8 @@ function fcBuildToggleButtons() {
     dayDiv.appendChild(btn);
   });
 
-  // Hour buttons
-  const hours = [...new Set(fcData.map(r => r.hour))].filter(h => !isNaN(h));
-  hours.sort((a,b) => {
-    const na = a < 6 ? a + 24 : a;
-    const nb = b < 6 ? b + 24 : b;
-    return na - nb;
-  });
+  const hours = [...new Set(uploadedTxAll.map(r => r.hour))].filter(h => !isNaN(h));
+  hours.sort(sortByOpHour);
   const hourDiv = document.getElementById('fc-hour-btns');
   hourDiv.innerHTML = '<button class="mctl active" data-hour="all" onclick="fcToggleFilter(\'hour\',\'all\',this)">All</button>';
   hours.forEach(h => {
@@ -5727,302 +5396,93 @@ function fcBuildToggleButtons() {
     hourDiv.appendChild(btn);
   });
 
-  // Reset filter state
   fcFilterCat = 'all';
   fcFilterDay = 'all';
   fcFilterHours = [];
-  fcUpdateRefreshWindowLabel();
 }
 
-// ─── File Parsing ────────────────────────────
-function handleForecastFile(file) {
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
-    const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('forecast')) || wb.SheetNames[0];
-    const ws = wb.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
-
-    const cellToText = v => {
-      if(v == null) return '';
-      if(v instanceof Date) return v.toISOString();
-      if(typeof v === 'object' && v.w) return String(v.w);
-      if(typeof v === 'object' && v.v != null) return String(v.v);
-      return String(v);
-    };
-    const normalizeHeader = value => cellToText(value).trim().toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
-
-    // Find header row — look for columns: Actual Start Time, X, Y, Completed Units, User ID, Date, Day, Category
-    let headerRowIdx = 0;
-    let colTime = -1, colX = -1, colY = -1, colUnits = -1, colUserId = -1, colDate = -1, colDay = -1, colCategory = -1;
-
-    for(let i = 0; i < Math.min(rows.length, 30); i++) {
-      const hdr = (rows[i] || []).map(normalizeHeader);
-
-      const timeIdx = hdr.findIndex(h => h.includes('actual start') || h.includes('start time') || h.includes('time'));
-      const xIdx = hdr.findIndex(h => h === 'x' || h === 'x coordinate' || h === 'x coord');
-      const yIdx = hdr.findIndex(h => h === 'y' || h === 'y coordinate' || h === 'y coord');
-      const unitsIdx = hdr.findIndex(h => h.includes('completed') || h.includes('units') || h.includes('volume') || h.includes('qty'));
-      const userIdx = hdr.findIndex(h => h.includes('user') || h.includes('picker') || h.includes('associate'));
-      const dateIdx = hdr.findIndex(h => h === 'date' || h.includes('date'));
-      const dayIdx = hdr.findIndex((h, idx) => (h === 'day' || h === 'weekday' || h === 'day of week') && idx !== dateIdx);
-      const catIdx = hdr.findIndex(h => h === 'category' || h === 'cat' || h === 'type' || /\bcategory\b/.test(h));
-
-      // Need at least X, Y, and Units to be valid
-      if(xIdx >= 0 && yIdx >= 0 && unitsIdx >= 0) {
-        headerRowIdx = i;
-        colTime = timeIdx;
-        colX = xIdx;
-        colY = yIdx;
-        colUnits = unitsIdx;
-        colUserId = userIdx;
-        colDate = dateIdx;
-        colDay = dayIdx;
-        colCategory = catIdx;
-        break;
-      }
-    }
-
-    const parsed = [];
-    for(let i = headerRowIdx + 1; i < rows.length; i++) {
-      const r = rows[i] || [];
-      const x = parseFloat(r[colX]);
-      const y = parseFloat(r[colY]);
-      const units = parseFloat(r[colUnits]) || 0;
-      if(isNaN(x) || isNaN(y) || units === 0) continue;
-
-      const txMin = colTime >= 0 ? fcParseMinuteOfDay(r[colTime]) : NaN;
-      const hour = colTime >= 0 ? fcParseHour(r[colTime]) : NaN;
-      const userId = colUserId >= 0 ? String(r[colUserId] || '').trim() : '';
-      const date = colDate >= 0 ? cellToText(r[colDate]) : '';
-      const day = colDay >= 0 ? fcNormalizeDay(r[colDay]) : (colDate >= 0 ? fcNormalizeDay(r[colDate]) : '');
-      const category = colCategory >= 0 ? fcNormalizeCategory(cellToText(r[colCategory]), userId) : (fcCategoryFromPicker(userId) || 'All');
-      const zone = nearestZone(x, y);
-
-      parsed.push({ time: colTime >= 0 ? r[colTime] : null, txMin, x, y, units, userId, date, day, category, hour, zone });
-    }
-
-    fcData = parsed;
-    document.getElementById('fc-row-count').textContent = parsed.length.toLocaleString() + ' forecast rows loaded';
-
-    const badge = document.getElementById('fc-data-badge');
-    badge.className = 'data-badge live';
-    badge.textContent = 'LIVE · ' + file.name;
-
-    // Build toggle buttons from data
-    fcBuildToggleButtons();
-    applyForecastFilters();
-  };
-  reader.readAsArrayBuffer(file);
+function fcFormatHour(h) {
+  if(h === 0) return '12:00 AM';
+  if(h < 12) return h + ':00 AM';
+  if(h === 12) return '12:00 PM';
+  return (h - 12) + ':00 PM';
 }
 
-// ─── Filter & Render ─────────────────────────
-function applyForecastFilters() {
-  if(fcData.length === 0) return;
+// ─── Toggle Button Filter Logic ─────────────
+function fcToggleFilter(type, value, btn) {
+  const containerId = type === 'category' ? 'fc-cat-btns' : type === 'day' ? 'fc-day-btns' : 'fc-hour-btns';
+  const container = document.getElementById(containerId);
 
-  fcFiltered = fcBuildForecastRows();
-
-  // Build grid data from X/Y coordinates (same approach as main heatmap)
-  const RES = 2;
-  const gm = {};
-  for(const r of fcFiltered) {
-    const gx = Math.round(r.x / RES) * RES;
-    const gy = Math.round(r.y / RES) * RES;
-    const key = gx + '_' + gy + '_' + r.zone;
-    if(!gm[key]) gm[key] = {gx, gy, zone: r.zone, units: 0};
-    gm[key].units += r.units;
+  if(type === 'hour') {
+    if(value === 'all') {
+      fcFilterHours = [];
+    } else {
+      const idx = fcFilterHours.indexOf(value);
+      if(idx >= 0) fcFilterHours.splice(idx, 1);
+      else fcFilterHours.push(value);
+    }
+    const allBtn = container.querySelector('[data-hour="all"]');
+    if(allBtn) allBtn.classList.toggle('active', fcFilterHours.length === 0);
+    container.querySelectorAll('[data-hour]').forEach(b => {
+      const hv = b.getAttribute('data-hour');
+      if(hv === 'all') return;
+      b.classList.toggle('active', fcFilterHours.includes(parseInt(hv, 10)));
+    });
+  } else {
+    container.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if(type === 'category') fcFilterCat = value;
+    else if(type === 'day') fcFilterDay = value;
   }
-  fcGridData = Object.values(gm);
 
-  fcBuildKPIs();
-  fcDrawZoneMap();
-  fcDrawHeatMap();
-  fcBuildStaffingTable();
-  fcBuildHourlyChart();
+  if(fcModel) fcApplyFiltersAndPredict();
+}
+
+function fcClearAllFilters() {
+  fcFilterCat = 'all';
+  fcFilterDay = 'all';
+  fcFilterHours = [];
+  // Reset UI
+  ['fc-cat-btns','fc-day-btns','fc-hour-btns'].forEach(id => {
+    const container = document.getElementById(id);
+    if(!container) return;
+    container.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
+    const first = container.querySelector('button');
+    if(first) first.classList.add('active');
+  });
+  if(fcModel) fcApplyFiltersAndPredict();
 }
 
 // ─── KPIs ────────────────────────────────────
 function fcBuildKPIs() {
-  const zoneVolumes = {};
-  const allUsers = new Set();
-  let totalVol = 0;
-  fcFiltered.forEach(r => {
-    zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.units;
-    totalVol += r.units;
-    if(r.userId) allUsers.add(r.userId);
+  const totalForecast = Object.values(fcPredictions).reduce((s, v) => s + v, 0);
+  const totalActual = Object.values(fcActuals).reduce((s, v) => s + v, 0);
+
+  // If hour filter, only show those hours
+  let dispForecast = totalForecast;
+  let dispActual = totalActual;
+  if(fcFilterHours.length > 0) {
+    dispForecast = fcFilterHours.reduce((s, h) => s + (fcPredictions[h] || 0), 0);
+    dispActual = fcFilterHours.reduce((s, h) => s + (fcActuals[h] || 0), 0);
+  }
+
+  document.getElementById('fc-kpi-volume').textContent = Math.round(dispForecast).toLocaleString();
+  document.getElementById('fc-kpi-zones').textContent = Math.round(dispActual).toLocaleString();
+  document.getElementById('fc-kpi-pickers').textContent = fcR2 != null ? fcR2.toFixed(4) : '—';
+  document.getElementById('fc-kpi-active-hours').textContent = fcTrainingLoss != null ? fcTrainingLoss.toFixed(6) : '—';
+
+  // Peak hour
+  let peakHour = null, peakVol = 0;
+  FC_HOURS.forEach(h => {
+    if((fcPredictions[h] || 0) > peakVol) { peakVol = fcPredictions[h]; peakHour = h; }
   });
-
-  const activeZones = Object.keys(zoneVolumes).filter(z => zoneVolumes[z] > 0).length;
-  const peakZone = Object.entries(zoneVolumes).sort((a,b) => b[1] - a[1])[0];
-  const zoneMetrics = fcBuildZoneActiveMetrics(fcFiltered);
-  const totalActiveMins = Object.values(zoneMetrics).reduce((sum, z) => sum + (z.activeMinutes || 0), 0);
-  const totalInactiveMins = Object.values(zoneMetrics).reduce((sum, z) => sum + (z.inactiveMinutes || 0), 0);
-
-  document.getElementById('fc-kpi-volume').textContent = Math.round(totalVol).toLocaleString();
-  document.getElementById('fc-kpi-zones').textContent = activeZones;
-  document.getElementById('fc-kpi-pickers').textContent = allUsers.size;
-  document.getElementById('fc-kpi-peak').textContent = peakZone ? peakZone[0] : '—';
-  document.getElementById('fc-kpi-peak-sub').textContent = peakZone ? Math.round(peakZone[1]).toLocaleString() + ' units' : '';
-  document.getElementById('fc-kpi-active-hours').textContent = (totalActiveMins / 60).toFixed(2) + 'h';
-  document.getElementById('fc-kpi-active-hours-sub').textContent = totalInactiveMins > 0
-    ? 'idle excluded: ' + (totalInactiveMins / 60).toFixed(2) + 'h'
-    : 'idle excluded: 0.00h';
+  document.getElementById('fc-kpi-peak').textContent = peakHour != null ? fcFormatHour(peakHour) : '—';
+  document.getElementById('fc-kpi-peak-sub').textContent = peakVol > 0 ? Math.round(peakVol).toLocaleString() + ' predicted units' : '';
 
   const parts = [];
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
   if(fcFilterDay !== 'all') parts.push(fcFilterDay);
-  if(fcFilterHours.length > 0) {
-    const sorted = fcFilterHours.slice().sort(sortByOpHour);
-    parts.push(sorted.map(fcFormatHour).join(', '));
-  }
   document.getElementById('fc-kpi-volume-sub').textContent = parts.length ? parts.join(' · ') : 'all data';
-  fcUpdateRefreshWindowLabel();
-}
-
-// ─── Zone Map (Overview style) ───────────────
-function fcDrawZoneMap() {
-  const canvas = document.getElementById('fc-zone-canvas');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.parentElement.clientWidth - 40;
-  const H = Math.round(W * 0.42);
-  canvas.width = W; canvas.height = H;
-  ctx.clearRect(0, 0, W, H);
-
-  // Aggregate volumes by zone from filtered data
-  const zoneVolumes = {};
-  fcFiltered.forEach(r => { zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.units; });
-  const maxVol = Math.max(...Object.values(zoneVolumes), 1);
-
-  // Coordinate transform
-  const allBounds = Object.values(ZONE_BOUNDS);
-  const globalXMin = Math.min(...allBounds.map(b => b.xMin));
-  const globalXMax = Math.max(...allBounds.map(b => b.xMax));
-  const globalYMin = Math.min(...allBounds.map(b => b.yMin));
-  const globalYMax = Math.max(...allBounds.map(b => b.yMax));
-  const pad = 30;
-  const scaleX = (W - 2 * pad) / (globalXMax - globalXMin);
-  const scaleY = (H - 2 * pad) / (globalYMax - globalYMin);
-  const scale = Math.min(scaleX, scaleY);
-  const offsetX = pad + ((W - 2 * pad) - (globalXMax - globalXMin) * scale) / 2;
-  const offsetY = pad + ((H - 2 * pad) - (globalYMax - globalYMin) * scale) / 2;
-  const tc = (x, y) => [offsetX + (x - globalXMin) * scale, offsetY + (globalYMax - y) * scale];
-
-  ctx.fillStyle = '#060a12';
-  ctx.fillRect(0, 0, W, H);
-
-  // Draw zone rectangles with fill intensity
-  Object.entries(ZONE_BOUNDS).forEach(([z, b]) => {
-    const [x1, y1] = tc(b.xMin, b.yMax);
-    const [x2, y2] = tc(b.xMax, b.yMin);
-    const vol = zoneVolumes[z] || 0;
-    const intensity = vol / maxVol;
-    const c = ZONE_COLORS[z] || '#64748b';
-
-    const alpha = Math.max(0.08, intensity * 0.7);
-    ctx.fillStyle = c + Math.round(alpha * 255).toString(16).padStart(2, '0');
-    ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
-
-    ctx.strokeStyle = vol > 0 ? c + 'aa' : c + '30';
-    ctx.lineWidth = vol > 0 ? 1.5 : 0.5;
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-
-    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    ctx.fillStyle = c;
-    ctx.font = 'bold 10px Syne';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(z, cx, cy - 8);
-
-    if(vol > 0) {
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px IBM Plex Mono';
-      ctx.fillText(Math.round(vol).toLocaleString(), cx, cy + 8);
-    } else {
-      ctx.fillStyle = '#475569';
-      ctx.font = '10px IBM Plex Mono';
-      ctx.fillText('0', cx, cy + 8);
-    }
-  });
-
-  // Legend
-  const legendEl = document.getElementById('fc-zone-legend');
-  legendEl.innerHTML = '';
-  Object.entries(zoneVolumes).sort((a,b) => b[1] - a[1]).forEach(([z, v]) => {
-    if(v <= 0) return;
-    const c = ZONE_COLORS[z] || '#64748b';
-    const item = document.createElement('div');
-    item.className = 'leg-item';
-    item.innerHTML = '<div class="leg-sq" style="background:' + c + '"></div>' + z + ': ' + Math.round(v).toLocaleString();
-    legendEl.appendChild(item);
-  });
-}
-
-// ─── Heat Intensity Map (X/Y coordinate-based) ───
-function fcDrawHeatMap() {
-  const canvas = document.getElementById('fc-heat-canvas');
-  const parent = canvas.parentElement;
-  canvas.width = parent.offsetWidth - 40;
-  canvas.height = Math.round(canvas.width * 0.3);
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#040609';
-  ctx.fillRect(0, 0, W, H);
-
-  const data = fcGridData;
-  if(!data.length) return;
-
-  // Use same coordinate system as the main intensity heatmap
-  const xMin = 3, xMax = 298, yMin = 1, yMax = 87;
-  const padH = 16, tw = W - padH * 2, th = H - padH * 2;
-  function tc(x, y) { return [padH + (x - xMin) / (xMax - xMin) * tw, padH + (1 - (y - yMin) / (yMax - yMin)) * th]; }
-
-  const maxU = Math.max(...data.map(d => d.units), 1);
-
-  // Zone boundaries as faint outlines
-  Object.entries(ZONE_BOUNDS).forEach(([z, b]) => {
-    const [x1, y1] = tc(b.xMin, b.yMax);
-    const [x2, y2] = tc(b.xMax, b.yMin);
-    ctx.strokeStyle = (ZONE_COLORS[z] || '#333') + '30';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
-  });
-
-  // Heat color function (same as main heatmap)
-  function heatColor(v, max) {
-    const t = Math.pow(v / max, 0.45);
-    const stops = [[10,15,35],[20,50,150],[37,99,235],[245,158,11],[239,68,68],[127,20,20]];
-    const si = Math.min(Math.floor(t * (stops.length - 1)), stops.length - 2);
-    const sf = t * (stops.length - 1) - si;
-    const a = stops[si], b2 = stops[si + 1];
-    const r = Math.round(a[0] + (b2[0] - a[0]) * sf);
-    const g = Math.round(a[1] + (b2[1] - a[1]) * sf);
-    const b3 = Math.round(a[2] + (b2[2] - a[2]) * sf);
-    return 'rgba(' + r + ',' + g + ',' + b3 + ',' + (0.25 + t * 0.75) + ')';
-  }
-
-  // Draw heat cells from grid data
-  data.forEach(d => {
-    const [cx, cy] = tc(d.gx, d.gy);
-    const t = Math.pow(d.units / maxU, 0.35);
-    const size = Math.max(3, 18 * t);
-    ctx.fillStyle = heatColor(d.units, maxU);
-    ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
-  });
-
-  // Zone labels
-  Object.entries(ZONE_BOUNDS).forEach(([z, b]) => {
-    const [cx, cy] = tc(b.xMean, b.yMean);
-    const c = ZONE_COLORS[z] || '#64748b';
-    ctx.font = 'bold 8px Syne';
-    const tw2 = ctx.measureText(z).width;
-    ctx.fillStyle = 'rgba(4,6,9,0.85)';
-    ctx.fillRect(cx - tw2 / 2 - 3, cy - 6, tw2 + 6, 12);
-    ctx.fillStyle = c;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(z, cx, cy);
-  });
 }
 
 // ─── Staffing Table ──────────────────────────
@@ -6030,72 +5490,49 @@ function fcBuildStaffingTable() {
   const tbody = document.getElementById('fc-staffing-body');
   tbody.innerHTML = '';
 
-  const zoneVolumes = {};
-  fcFiltered.forEach(r => {
-    zoneVolumes[r.zone] = (zoneVolumes[r.zone] || 0) + r.units;
-  });
+  const totalPredicted = Object.values(fcZonePredictions).reduce((s, v) => s + v, 0);
+  const totalActual = Object.values(fcZoneActuals).reduce((s, v) => s + v, 0);
+  const maxVol = Math.max(...Object.values(fcZonePredictions), 1);
 
-  const totalVol = Object.values(zoneVolumes).reduce((s, v) => s + v, 0);
-  const maxVol = Math.max(...Object.values(zoneVolumes), 1);
+  const selectedHoursCount = fcFilterHours.length || 8; // default 8h shift
   let totalPick = 0;
-  let totalRequiredHours = 0;
 
-  const selectedHoursCount = fcFilterHours.length;
-  let effectiveHoursFilter = selectedHoursCount;
-  if(effectiveHoursFilter === 0) {
-    const availableHours = [...new Set(fcFiltered.map(r => r.hour).filter(h => Number.isInteger(h)))].sort(sortByOpHour);
-    if(availableHours.length) {
-      const firstOp = opHourIndex(availableHours[0]);
-      const lastOp = opHourIndex(availableHours[availableHours.length - 1]);
-      effectiveHoursFilter = Math.max(1, (lastOp - firstOp) + 1);
-    } else {
-      effectiveHoursFilter = 1;
-    }
-  }
-
-  const allZones = Array.from(new Set([...Object.keys(UPH), ...Object.keys(zoneVolumes)]));
+  const allZones = Array.from(new Set([...Object.keys(UPH), ...Object.keys(fcZonePredictions), ...Object.keys(fcZoneActuals)]));
   const sorted = allZones
-    .map(zone => [zone, zoneVolumes[zone] || 0])
+    .map(zone => [zone, fcZonePredictions[zone] || 0, fcZoneActuals[zone] || 0])
     .sort((a, b) => b[1] - a[1]);
-  const zonesWithVolume = sorted.filter(([, vol]) => vol > 0).map(([zone]) => zone);
 
-  sorted.forEach(([zone, vol]) => {
+  sorted.forEach(([zone, pred, actual]) => {
     const c = ZONE_COLORS[zone] || '#64748b';
-    const share = totalVol > 0 ? ((vol / totalVol) * 100).toFixed(1) : '0.0';
+    const share = totalPredicted > 0 ? ((pred / totalPredicted) * 100).toFixed(1) : '0.0';
     const uph = UPH[zone] || 150;
-    const requiredHours = vol > 0 ? (vol / uph) : 0;
-    const pickersRequired = vol > 0 ? Math.max(1, Math.ceil(requiredHours / effectiveHoursFilter)) : 0;
+    const pickersRequired = pred > 0 ? Math.max(1, Math.ceil(pred / (uph * selectedHoursCount))) : 0;
     totalPick += pickersRequired;
-    const barPct = (vol / maxVol * 100).toFixed(1);
-    totalRequiredHours += requiredHours;
-    const recommendedZone = vol > 0
-      ? '—'
-      : (zonesWithVolume.find(z => z !== zone) || zonesWithVolume[0] || '—');
+    const barPct = (pred / maxVol * 100).toFixed(1);
 
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + zone + '</span></td>' +
-      '<td class="mono">' + Math.round(vol).toLocaleString() + '</td>' +
+      '<td class="mono">' + Math.round(actual).toLocaleString() + '</td>' +
+      '<td class="mono">' + Math.round(pred).toLocaleString() + '</td>' +
       '<td class="mono" style="text-align:center;">' + share + '%</td>' +
       '<td class="mono" style="text-align:center;">' + uph + '</td>' +
       '<td class="mono" style="text-align:center;font-size:16px;font-weight:700;color:' + c + '">' + pickersRequired + '</td>' +
-      '<td class="mono" style="text-align:center;">' + (requiredHours > 0 ? requiredHours.toFixed(2) + 'h' : '0.00h') + '</td>' +
-      '<td class="mono" style="text-align:center;color:' + (recommendedZone === '—' ? '#64748b' : '#22c55e') + ';font-weight:700;">' + recommendedZone + '</td>' +
       '<td><div class="bar-bg"><div class="bar-fg" style="width:' + barPct + '%;background:' + c + '"></div></div></td>';
     tbody.appendChild(tr);
   });
 
-  document.getElementById('fc-staff-total-vol').textContent = Math.round(totalVol).toLocaleString();
+  document.getElementById('fc-staff-total-actual').textContent = Math.round(totalActual).toLocaleString();
+  document.getElementById('fc-staff-total-vol').textContent = Math.round(totalPredicted).toLocaleString();
   document.getElementById('fc-staff-total-pickers').textContent = totalPick;
-  document.getElementById('fc-staff-total-required-hours').textContent = totalRequiredHours.toFixed(2) + 'h';
 }
 
-// ─── Hourly Volume Chart ─────────────────────
+// ─── Hourly Volume Chart (Actual vs Forecast) ─────────────────────
 function fcBuildHourlyChart() {
   const canvas = document.getElementById('fc-hourly-canvas');
   const ctx = canvas.getContext('2d');
   const W = canvas.parentElement.clientWidth - 40;
-  const H = 180;
+  const H = 220;
   canvas.width = W; canvas.height = H;
   ctx.clearRect(0, 0, W, H);
 
@@ -6104,19 +5541,8 @@ function fcBuildHourlyChart() {
   if(fcFilterDay !== 'all') labelParts.push(fcFilterDay);
   document.getElementById('fc-hourly-label').textContent = labelParts.length ? labelParts.join(' · ') : 'All Data';
 
-  // Aggregate hourly (ignoring hour filter to show full profile)
-  const subset = fcBuildForecastRows();
-
-  const hourlyVol = {};
-  FC_HOURS.forEach(h => hourlyVol[h] = 0);
-  subset.forEach(r => {
-    if(!isNaN(r.hour) && FC_HOURS.includes(r.hour)) {
-      hourlyVol[r.hour] += r.units;
-    }
-  });
-
-  const maxV = Math.max(...Object.values(hourlyVol), 1);
-  const padL = 50, padR = 20, padT = 20, padB = 25;
+  const maxV = Math.max(...FC_HOURS.map(h => Math.max(fcActuals[h] || 0, fcPredictions[h] || 0)), 1);
+  const padL = 50, padR = 20, padT = 30, padB = 30;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
   const barW = chartW / FC_HOURS.length;
@@ -6133,51 +5559,57 @@ function fcBuildHourlyChart() {
     ctx.fillText(Math.round(maxV * (1 - i / 4)).toLocaleString(), padL - 6, y + 3);
   }
 
-  const selectedHrs = fcFilterHours.slice();
+  // Legend
+  ctx.fillStyle = 'rgba(6,182,212,0.6)';
+  ctx.fillRect(padL, 6, 12, 10);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '10px IBM Plex Mono';
+  ctx.textAlign = 'left';
+  ctx.fillText('Actual', padL + 16, 15);
+  ctx.fillStyle = 'rgba(59,130,246,0.6)';
+  ctx.fillRect(padL + 80, 6, 12, 10);
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('Forecast', padL + 96, 15);
 
   FC_HOURS.forEach((h, idx) => {
-    const vol = hourlyVol[h] || 0;
-    const barH = (vol / maxV) * chartH;
+    const actual = fcActuals[h] || 0;
+    const pred = fcPredictions[h] || 0;
+    const halfW = (barW - 4) / 2;
     const x = padL + idx * barW;
-    const y = padT + chartH - barH;
 
-    const isSelected = selectedHrs.includes(h);
-    ctx.fillStyle = isSelected ? '#3b82f6' : (vol > 0 ? 'rgba(6,182,212,0.5)' : 'rgba(71,85,105,0.2)');
-    ctx.fillRect(x + 1, y, barW - 2, barH);
+    // Actual bar (left)
+    const actBarH = (actual / maxV) * chartH;
+    ctx.fillStyle = 'rgba(6,182,212,0.6)';
+    ctx.fillRect(x + 1, padT + chartH - actBarH, halfW, actBarH);
 
-    if(isSelected) {
-      ctx.strokeStyle = '#3b82f6';
+    // Predicted bar (right)
+    const predBarH = (pred / maxV) * chartH;
+    ctx.fillStyle = 'rgba(59,130,246,0.6)';
+    ctx.fillRect(x + 1 + halfW + 1, padT + chartH - predBarH, halfW, predBarH);
+
+    // Highlight selected hours
+    if(fcFilterHours.includes(h)) {
+      ctx.strokeStyle = '#f59e0b';
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(x + 1, y, barW - 2, barH);
+      ctx.strokeRect(x, padT, barW, chartH);
     }
 
-    ctx.fillStyle = isSelected ? '#3b82f6' : '#475569';
+    // Hour label
+    ctx.fillStyle = '#475569';
     ctx.font = '8px IBM Plex Mono';
     ctx.textAlign = 'center';
     const label = h === 0 ? '12a' : h < 12 ? h + 'a' : h === 12 ? '12p' : (h - 12) + 'p';
-    ctx.fillText(label, x + barW / 2, H - 8);
+    ctx.fillText(label, x + barW / 2, H - 10);
 
-    if(vol > 0 && barH > 14) {
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 9px IBM Plex Mono';
-      ctx.fillText(Math.round(vol).toLocaleString(), x + barW / 2, y - 4);
+    // Value on top
+    const topVal = Math.max(actual, pred);
+    if(topVal > 0) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '8px IBM Plex Mono';
+      ctx.fillText(Math.round(pred).toString(), x + barW / 2, padT + chartH - Math.max(actBarH, predBarH) - 4);
     }
   });
 }
-
-// Drag and drop support for forecast zone
-(function() {
-  const zone = document.getElementById('fc-drop-zone');
-  if(!zone) return;
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragging'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('dragging'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.classList.remove('dragging');
-    const f = e.dataTransfer.files[0];
-    if(f) handleForecastFile(f);
-  });
-})();
 
 // ═══════════════════════════════════════════════
 // DROP OFF LOCATION CATEGORIZATION
@@ -6663,7 +6095,7 @@ document.querySelectorAll('.tab').forEach(tab => {
       if(id==='uphtargets') buildUPHTargets();
       if(id==='pickpath') { drawPickPathCanvas([], ppCurrentUser); if(ppCurrentUser) renderPickPath(); }
       if(id==='shiftbreakdown' && txData.length > 0) { buildShiftBreakdown(); }
-      if(id==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
+      if(id==='forecast' && fcModel) { fcBuildHourlyChart(); }
       if(id==='ordersmix-mb' && txData.length > 0) { buildOrdersMixMB(); }
       if(id==='ordersmix-ful' && txData.length > 0) { buildOrdersMixFul(); }
     }, 30);
@@ -6681,7 +6113,7 @@ window.addEventListener('resize', () => {
   if(active==='overview') buildHourlyChart();
   if(active==='uphtargets') drawUPHPickPath();
   if(active==='pickpath') renderPickPath();
-  if(active==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
+  if(active==='forecast' && fcModel) { fcBuildHourlyChart(); }
   if(active==='ordersmix-mb' && txData.length > 0) { buildOrdersMixMB(); }
   if(active==='ordersmix-ful' && txData.length > 0) { buildOrdersMixFul(); }
 });
