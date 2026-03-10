@@ -2079,41 +2079,51 @@ function handleFile(file) {
        const normalizeHeader = (value) => cellToText(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
       const findFirstMatch = (headers, patterns) => headers.findIndex(h => patterns.some(p => h === p || h.startsWith(p + ' ') || h.endsWith(' ' + p) || h.includes(' ' + p + ' ')));
 
-      // Support "complete dashboard" exports by locating the actual header row/columns
-      // instead of assuming A–E are always Time, X, Y, Units, User ID.
+      // Support 11-column drop exports by locating the actual header row/columns
+      // instead of assuming fixed column letters.
       let headerRowIdx = 0;
       let bestHeaderScore = -1;
       let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colDay = 6, colPromo = 7, colOrder = 8, colBrand = 9, colDropOff = -1;
+      const expectedCols = [
+        { key: 'time', patterns: ['time of transaction', 'transaction time', 'time transaction', 'transaction timestamp', 'time'] },
+        { key: 'x', patterns: ['x coordinate', 'x coordinates', 'x coord', 'x location', 'x'] },
+        { key: 'y', patterns: ['y coordinate', 'y coordinates', 'y coord', 'y location', 'y'] },
+        { key: 'units', patterns: ['units', 'unit', 'qty', 'quantity', 'pieces'] },
+        { key: 'user', patterns: ['user id', 'user', 'associate', 'picker'] },
+        { key: 'date', patterns: ['date', 'transaction date'] },
+        { key: 'day', patterns: ['day', 'day of week', 'dayofweek'] },
+        { key: 'category', patterns: ['category', 'promo type', 'promo', 'type'] },
+        { key: 'order', patterns: ['order number', 'order no', 'order', 'ordernumber'] },
+        { key: 'brand', patterns: ['product brand', 'brand', 'productbrand'] },
+        { key: 'dropoff', patterns: ['drop off location', 'dropoff location', 'drop off', 'dropofflocation'] }
+      ];
       for(let i = 0; i < Math.min(rows.length, 120); i++) {
         const hdr = (rows[i] || []).map(normalizeHeader);
-        const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'transaction timestamp', 'time']);
-        const xIdx = findFirstMatch(hdr, ['x coordinate', 'x coordinates', 'x coord', 'x location', 'x']);
-        const yIdx = findFirstMatch(hdr, ['y coordinate', 'y coordinates', 'y coord', 'y location', 'y']);
-        const unitsIdx = findFirstMatch(hdr, ['units', 'unit', 'qty', 'quantity', 'pieces']);
-        const score = [txIdx, xIdx, yIdx, unitsIdx].filter(idx => idx >= 0).length;
-        if(score < 3 || score <= bestHeaderScore) continue;
+        const matches = {};
+        expectedCols.forEach(c => { matches[c.key] = findFirstMatch(hdr, c.patterns); });
+        const requiredScore = ['time', 'x', 'y', 'units'].filter(k => matches[k] >= 0).length;
+        const fullScore = Object.values(matches).filter(idx => idx >= 0).length;
+        const score = fullScore * 10 + requiredScore;
+        if(requiredScore < 4 || score <= bestHeaderScore) continue;
 
         headerRowIdx = i;
         bestHeaderScore = score;
-        if(txIdx >= 0) colTime = txIdx;
-        if(xIdx >= 0) colX = xIdx;
-        if(yIdx >= 0) colY = yIdx;
-        if(unitsIdx >= 0) colUnits = unitsIdx;
-        const userIdx = findFirstMatch(hdr, ['user id', 'user', 'associate', 'picker']);
-        if(userIdx >= 0) colUser = userIdx;
-        const dateIdx = findFirstMatch(hdr, ['date', 'transaction date']);
-        if(dateIdx >= 0) colDate = dateIdx;
-        const promoIdx = findFirstMatch(hdr, ['promo type', 'promo', 'category', 'type']);
-        if(promoIdx >= 0) colPromo = promoIdx;
-        const dayIdx = findFirstMatch(hdr, ['day', 'day of week', 'dayofweek']);
-        if(dayIdx >= 0) colDay = dayIdx;
-        const orderIdx = findFirstMatch(hdr, ['order number', 'order no', 'order', 'ordernumber']);
-        if(orderIdx >= 0) colOrder = orderIdx;
-        const brandIdx = findFirstMatch(hdr, ['product brand', 'brand', 'productbrand']);
-        if(brandIdx >= 0) colBrand = brandIdx;
-        const dropOffIdx = findFirstMatch(hdr, ['drop off location', 'dropoff location', 'drop off', 'dropofflocation']);
-        if(dropOffIdx >= 0) colDropOff = dropOffIdx;
-        if(score === 4) break;
+        if(matches.time >= 0) colTime = matches.time;
+        if(matches.x >= 0) colX = matches.x;
+        if(matches.y >= 0) colY = matches.y;
+        if(matches.units >= 0) colUnits = matches.units;
+        if(matches.user >= 0) colUser = matches.user;
+        if(matches.date >= 0) colDate = matches.date;
+        if(matches.category >= 0) colPromo = matches.category;
+        if(matches.day >= 0) colDay = matches.day;
+        if(matches.order >= 0) colOrder = matches.order;
+        if(matches.brand >= 0) colBrand = matches.brand;
+        if(matches.dropoff >= 0) colDropOff = matches.dropoff;
+        if(fullScore === expectedCols.length) break;
+      }
+
+      if(bestHeaderScore < 0) {
+        throw new Error('Unable to detect required columns (Time of transaction, x, y, Units).');
       }
 
       for(let i = headerRowIdx + 1; i < rows.length; i++) {
@@ -2129,8 +2139,9 @@ function handleFile(file) {
         const yTxt = yTxtRaw.toLowerCase();
 
         // Units: use value from col D; default to 1 only if column is absent
-         const rawUnits = r[colUnits];
-        const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
+        const rawUnits = r[colUnits];
+        const unitsTxt = cellToText(rawUnits).replace(/,/g, '').trim();
+        const units = unitsTxt !== '' ? (parseFloat(unitsTxt) || 0) : 1;
  
         const xLooksNumeric = isStrictNumeric(xTxtRaw);
         const yLooksNumeric = isStrictNumeric(yTxtRaw);
