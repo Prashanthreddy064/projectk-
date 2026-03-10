@@ -902,10 +902,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <button class="tab" data-sec="shiftbreakdown">Shift Breakdown</button>
   <button class="tab" data-sec="pickpath">Pick Path</button>
   <button class="tab" data-sec="uphtargets">Target Pick Path</button>
-  <button class="tab" data-sec="staffing">Staffing Plan</button>
-  <button class="tab" data-sec="ramp">Ramp Plan</button>
   <button class="tab" data-sec="forecast">Forecast</button>
-  <button class="tab" data-sec="ordersmix">Orders by Category</button>
+  <button class="tab" data-sec="ordersmix-mb">MB Order View</button>
+  <button class="tab" data-sec="ordersmix-ful">Fulfillment Order View</button>
 </nav>
 
 <main>
@@ -1275,154 +1274,6 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   </div>
 </div>
 
-<!-- STAFFING -->
-<div id="sec-staffing" class="section">
-  <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Staffing Methodology</div>
-    <p style="font-size:12px;color:var(--text2);line-height:1.8;font-family:'IBM Plex Mono',monospace;">
-      Pickers = Daily Zone Units ÷ (UPH Target × 8 hrs) · rounded up to nearest whole picker.<br>
-      Shift 1 (06:00–14:00) carries ~40% of daily volume · Shift 2 (14:00–22:00) carries ~57%.<br>
-      Minimum 1 picker per zone where activity exists. Low-volume zones share a picker on Shift 2.
-    </p>
-    <div class="plan-controls">
-      <div class="shift-tabs">
-        <button type="button" class="shift-tab-btn active" id="staff-tab-s1" onclick="setStaffShift('s1')">1st Shift</button>
-        <button type="button" class="shift-tab-btn" id="staff-tab-s2" onclick="setStaffShift('s2')">2nd Shift</button>
-        <button type="button" class="shift-tab-btn" id="staff-tab-s3" onclick="setStaffShift('s3')">3rd Shift</button>
-      </div>
-     <input id="staff-shift" type="hidden" value="s1">
-      <div class="shift-time-grid">
-        <div class="shift-time-card active" id="staff-config-s1">
-          <div class="shift-time-label">1st Shift</div>
-          <div class="plan-field"><label>Start Time</label><input id="staff-s1-start" type="time" value="06:00" onchange="buildStaffing()"></div>
-          <div class="plan-field"><label>End Time</label><input id="staff-s1-end" type="time" value="14:00" onchange="buildStaffing()"></div>
-          <div class="plan-field"><label>Actual Headcount</label><input id="staff-s1-actual" type="number" min="0" step="1" value="0" oninput="buildStaffing()"></div>
-        </div>
-        <div class="shift-time-card" id="staff-config-s2">
-          <div class="shift-time-label">2nd Shift</div>
-          <div class="plan-field"><label>Start Time</label><input id="staff-s2-start" type="time" value="14:00" onchange="buildStaffing()"></div>
-          <div class="plan-field"><label>End Time</label><input id="staff-s2-end" type="time" value="22:00" onchange="buildStaffing()"></div>
-          <div class="plan-field"><label>Actual Headcount</label><input id="staff-s2-actual" type="number" min="0" step="1" value="0" oninput="buildStaffing()"></div>
-        </div>
-        <div class="shift-time-card" id="staff-config-s3">
-          <div class="shift-time-label">3rd Shift</div>
-          <div class="plan-field"><label>Start Time</label><input id="staff-s3-start" type="time" value="22:00" onchange="buildStaffing()"></div>
-          <div class="plan-field"><label>End Time</label><input id="staff-s3-end" type="time" value="06:00" onchange="buildStaffing()"></div>
-          <div class="plan-field"><label>Actual Headcount</label><input id="staff-s3-actual" type="number" min="0" step="1" value="0" oninput="buildStaffing()"></div>
-        </div>
-      </div>
-     <div class="mini-note">Required Headcount = Σ(zone units ÷ (zone UPH × shift hours)), rounded up per zone. Compare against Actual Headcount for selected shift.</div>
-    </div>
-  </div>
-
-  <div class="summary-row" id="staff-summary"></div>
-
-  <div class="two-col">
-    <div class="shift-box">
-      <div class="shift-hdr">
-         <div><div class="shift-name" id="selected-shift-title">🌅 Shift 1 — First Shift</div><div class="shift-time" id="selected-shift-time">06:00 – 14:00 · 8 hours</div></div>
-        <div class="shift-total" id="s1-hc">—</div>
-      </div>
-      <div class="shift-body" id="s1-body"></div>
-    </div>
-    <div class="shift-box">
-      <div class="shift-hdr">
-         <div><div class="shift-name">🧩 Shift Change Layout (1st + 2nd)</div><div class="shift-time">Overlap staging and shared floor use</div></div>
-        <div class="shift-total" id="s2-hc">—</div>
-      </div>
-      <div class="shift-body" id="s2-body" style="padding:12px;"></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-title">Picker Calculation Detail</div>
-    <table id="staff-detail-table"></table>
-  </div>
-  
-  <div class="map-wrap">
-    <div class="card-title">Zone Flow Map — Associate Movement</div>
-    <p style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:12px;">Shows standing position, start/end points by zone, and movement direction for selected shift.</p>
-    <canvas id="flow-canvas"></canvas>
-  </div>
-</div>
-
-<!-- RAMP -->
-<div id="sec-ramp" class="section">
-  <div class="card">
-    <div class="card-title">4-Week Operational Ramp Plan</div>
-    <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:16px;line-height:1.8;">
-      S1 carries structural headcount premium throughout ramp. Efficiency assumptions: Wk1=70% · Wk2=85% · Steady=100% of UPH target.<br>
-      S1 always larger than S2 · Cross-training completes by end of Week 2 · Full zone coverage from Day 1.
-    </p>
-    <div class="plan-controls">
-      <div class="plan-field">
-        <label>Ramp Shift</label>
-        <select id="ramp-shift" onchange="syncShiftInputs('ramp'); buildRamp()">
-          <option value="s1">1st Shift (06:00–14:00)</option>
-          <option value="s2">2nd Shift (14:00–22:00)</option>
-          <option value="s3">3rd Shift (22:00–06:00)</option>
-        </select>
-      </div>
-      <div class="plan-field">
-        <label>Start Time</label>
-        <input id="ramp-start" type="time" value="06:00" onchange="buildRamp()">
-      </div>
-      <div class="plan-field">
-        <label>End Time</label>
-        <input id="ramp-end" type="time" value="14:00" onchange="buildRamp()">
-      </div>
-      <div class="mini-note" id="ramp-volume-note"></div>
-    </div>
-    <table class="ramp-tbl">
-      <thead>
-        <tr>
-          <th>Zone</th><th>UPH</th><th>Daily Units</th>
-          <th colspan="2" style="text-align:center;background:rgba(6,182,212,0.07);color:var(--cyan)">CALC PICKERS</th>
-          <th colspan="2" style="text-align:center;background:rgba(59,130,246,0.07);color:#93c5fd">WEEK 1</th>
-          <th colspan="2" style="text-align:center;background:rgba(34,197,94,0.07);color:#86efac">WEEK 2</th>
-          <th colspan="2" style="text-align:center;background:rgba(245,158,11,0.07);color:#fcd34d">WK 3–4 STEADY</th>
-        </tr>
-        <tr style="font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3)">
-          <th></th><th></th><th></th>
-          <th style="text-align:center;background:rgba(6,182,212,0.04);color:var(--cyan)">S1</th>
-          <th style="text-align:center;background:rgba(6,182,212,0.04);color:var(--cyan)">S2</th>
-          <th style="text-align:center;background:rgba(59,130,246,0.04)">S1</th>
-          <th style="text-align:center;background:rgba(59,130,246,0.04)">S2</th>
-          <th style="text-align:center;background:rgba(34,197,94,0.04)">S1</th>
-          <th style="text-align:center;background:rgba(34,197,94,0.04)">S2</th>
-          <th style="text-align:center;background:rgba(245,158,11,0.04)">S1</th>
-          <th style="text-align:center;background:rgba(245,158,11,0.04)">S2</th>
-        </tr>
-      </thead>
-      <tbody id="ramp-body"></tbody>
-      <tfoot>
-        <tr style="border-top:2px solid var(--border);font-weight:700;font-family:'IBM Plex Mono',monospace;">
-          <td colspan="5" style="font-size:11px;letter-spacing:.06em;">TOTAL SCHEDULED</td>
-          <td class="rc" id="r-w1s1" style="background:rgba(59,130,246,0.07);color:#93c5fd"></td>
-          <td class="rc" id="r-w1s2" style="background:rgba(59,130,246,0.07);color:#93c5fd"></td>
-          <td class="rc" id="r-w2s1" style="background:rgba(34,197,94,0.07);color:#86efac"></td>
-          <td class="rc" id="r-w2s2" style="background:rgba(34,197,94,0.07);color:#86efac"></td>
-          <td class="rc" id="r-wss1" style="background:rgba(245,158,11,0.07);color:#fcd34d"></td>
-          <td class="rc" id="r-wss2" style="background:rgba(245,158,11,0.07);color:#fcd34d"></td>
-        </tr>
-      </tfoot>
-    </table>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
-    <div style="background:rgba(59,130,246,0.07);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:14px;">
-      <div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:8px;letter-spacing:.06em">📅 WEEK 1 — LEARNING</div>
-      <div style="font-size:11px;color:var(--text2);line-height:1.7;font-family:'IBM Plex Mono',monospace;">Extra S1 pickers for shadowing & zone orientation. ~70% efficiency. S2 at minimum viable crew. All zones covered Day 1.</div>
-    </div>
-    <div style="background:rgba(34,197,94,0.07);border:1px solid rgba(34,197,94,0.2);border-radius:8px;padding:14px;">
-      <div style="font-size:11px;font-weight:700;color:#86efac;margin-bottom:8px;letter-spacing:.06em">📅 WEEK 2 — BUILD</div>
-      <div style="font-size:11px;color:var(--text2);line-height:1.7;font-family:'IBM Plex Mono',monospace;">S1 holds +2 buffer pickers. UPH at ~85% of target. S2 absorbs steady-state volume. Cross-training across zones begins.</div>
-    </div>
-    <div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:14px;">
-      <div style="font-size:11px;font-weight:700;color:#fcd34d;margin-bottom:8px;letter-spacing:.06em">📅 WK 3–4 — STEADY</div>
-      <div style="font-size:11px;color:var(--text2);line-height:1.7;font-family:'IBM Plex Mono',monospace;">Full UPH targets met. S1 premium maintained for zone coverage. Continuous monitoring. KPI review weekly.</div>
-    </div>
-  </div>
-</div>
 
 <!-- FORECAST DASHBOARD -->
 <div id="sec-forecast" class="section">
@@ -1577,42 +1428,47 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
 </div>
 
-<!-- ORDERS BY CATEGORY DASHBOARD -->
-<div id="sec-ordersmix" class="section">
+<!-- MATERIAL BANK ORDER VIEW DASHBOARD -->
+<div id="sec-ordersmix-mb" class="section">
 
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
     <div style="display:flex;align-items:center;gap:10px;">
-      <span style="font-size:16px;font-weight:700;letter-spacing:-0.02em;">Overview of Daily Orders by Product Mix Based on Category</span>
+      <span style="font-size:16px;font-weight:700;letter-spacing:-0.02em;">Material Bank Order View Details</span>
     </div>
-    <span id="om-date-label" style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+    <span id="mb-date-label" style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
   </div>
 
   <!-- KPI Row -->
-  <div class="kpi-row" style="grid-template-columns:repeat(5,1fr);">
+  <div class="kpi-row" style="grid-template-columns:repeat(6,1fr);">
     <div class="kpi" style="--kpi-color:var(--cyan)">
       <div class="kpi-lbl">Total Orders</div>
-      <div class="kpi-val" id="om-kpi-orders">—</div>
-      <div class="kpi-sub" id="om-kpi-orders-sub">unique order numbers</div>
+      <div class="kpi-val" id="mb-kpi-orders">—</div>
+      <div class="kpi-sub" id="mb-kpi-orders-sub">unique order numbers</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--blue)">
       <div class="kpi-lbl">Total Units</div>
-      <div class="kpi-val" id="om-kpi-units">—</div>
-      <div class="kpi-sub" id="om-kpi-units-sub">across all orders</div>
+      <div class="kpi-val" id="mb-kpi-units">—</div>
+      <div class="kpi-sub" id="mb-kpi-units-sub">across all orders</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--green)">
       <div class="kpi-lbl">Units per Order</div>
-      <div class="kpi-val" id="om-kpi-upo">—</div>
+      <div class="kpi-val" id="mb-kpi-upo">—</div>
       <div class="kpi-sub">avg units / order</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--amber)">
       <div class="kpi-lbl">Product Categories</div>
-      <div class="kpi-val" id="om-kpi-cats">—</div>
+      <div class="kpi-val" id="mb-kpi-cats">—</div>
       <div class="kpi-sub">distinct product categories</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--purple)">
       <div class="kpi-lbl">Product Brands</div>
-      <div class="kpi-val" id="om-kpi-brands">—</div>
+      <div class="kpi-val" id="mb-kpi-brands">—</div>
       <div class="kpi-sub">distinct brands</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#f97316">
+      <div class="kpi-lbl">Non-Tile/Carpet/WG</div>
+      <div class="kpi-val" id="mb-kpi-nontcw">—</div>
+      <div class="kpi-sub">orders without Tile, Carpet, or Wolf Gordon</div>
     </div>
   </div>
 
@@ -1620,7 +1476,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px;">
     <div class="card">
       <div class="card-title">Product Category Mix — % of Orders</div>
-      <canvas id="om-donut-canvas" width="300" height="300"></canvas>
+      <canvas id="mb-donut-canvas" width="300" height="300"></canvas>
     </div>
     <div class="card">
       <div class="card-title">Product Category Breakdown</div>
@@ -1636,13 +1492,13 @@ tr:hover td { background: rgba(255,255,255,0.015); }
             <th style="width:160px;padding:8px 6px;">Distribution</th>
           </tr>
         </thead>
-        <tbody id="om-cat-body"></tbody>
+        <tbody id="mb-cat-body"></tbody>
         <tfoot>
           <tr style="border-top:2px solid var(--border);font-weight:700;">
             <td style="padding:8px 6px;">TOTAL</td>
-            <td style="text-align:center;padding:8px 6px;" id="om-cat-total-orders">—</td>
-            <td style="text-align:center;padding:8px 6px;" id="om-cat-total-units">—</td>
-            <td style="text-align:center;padding:8px 6px;" id="om-cat-total-upo">—</td>
+            <td style="text-align:center;padding:8px 6px;" id="mb-cat-total-orders">—</td>
+            <td style="text-align:center;padding:8px 6px;" id="mb-cat-total-units">—</td>
+            <td style="text-align:center;padding:8px 6px;" id="mb-cat-total-upo">—</td>
             <td style="text-align:center;padding:8px 6px;">100%</td>
             <td style="text-align:center;padding:8px 6px;">100%</td>
             <td></td>
@@ -1655,7 +1511,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <!-- Hourly Orders Chart -->
   <div class="card" style="margin-bottom:16px;">
     <div class="card-title">Hourly Order Volume by Product Category</div>
-    <canvas id="om-hourly-canvas" height="200"></canvas>
+    <canvas id="mb-hourly-canvas" height="200"></canvas>
   </div>
 
   <!-- Brand Breakdown Table -->
@@ -1673,18 +1529,19 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <th style="width:180px;padding:8px 6px;">Volume Bar</th>
         </tr>
       </thead>
-      <tbody id="om-brand-body"></tbody>
+      <tbody id="mb-brand-body"></tbody>
     </table>
   </div>
 
   <!-- Order Detail Table -->
   <div class="card">
-    <div class="card-title">Order Details <span id="om-detail-count" style="font-size:10px;font-weight:400;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <div class="card-title">Order Details <span id="mb-detail-count" style="font-size:10px;font-weight:400;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
     <div style="max-height:400px;overflow-y:auto;">
       <table style="width:100%;font-size:11px;font-family:'IBM Plex Mono',monospace;">
         <thead style="position:sticky;top:0;background:var(--surf2);z-index:1;">
           <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
             <th style="text-align:left;padding:8px 6px;">Order Number</th>
+            <th style="text-align:center;padding:8px 6px;">Drop Off Location</th>
             <th style="text-align:center;padding:8px 6px;">Product Category</th>
             <th style="text-align:center;padding:8px 6px;">Product Brand</th>
             <th style="text-align:center;padding:8px 6px;">Units</th>
@@ -1693,7 +1550,131 @@ tr:hover td { background: rgba(255,255,255,0.015); }
             <th style="text-align:left;padding:8px 6px;">Picker(s)</th>
           </tr>
         </thead>
-        <tbody id="om-detail-body"></tbody>
+        <tbody id="mb-detail-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- FULFILLMENT ORDER VIEW DASHBOARD -->
+<div id="sec-ordersmix-ful" class="section">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-size:16px;font-weight:700;letter-spacing:-0.02em;">Fulfillment Order View Details</span>
+    </div>
+    <span id="ful-date-label" style="font-size:11px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+  </div>
+
+  <!-- KPI Row -->
+  <div class="kpi-row" style="grid-template-columns:repeat(5,1fr);">
+    <div class="kpi" style="--kpi-color:var(--cyan)">
+      <div class="kpi-lbl">Total Orders</div>
+      <div class="kpi-val" id="ful-kpi-orders">—</div>
+      <div class="kpi-sub" id="ful-kpi-orders-sub">unique order numbers</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--blue)">
+      <div class="kpi-lbl">Total Units</div>
+      <div class="kpi-val" id="ful-kpi-units">—</div>
+      <div class="kpi-sub" id="ful-kpi-units-sub">across all orders</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--green)">
+      <div class="kpi-lbl">Units per Order</div>
+      <div class="kpi-val" id="ful-kpi-upo">—</div>
+      <div class="kpi-sub">avg units / order</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--amber)">
+      <div class="kpi-lbl">Product Categories</div>
+      <div class="kpi-val" id="ful-kpi-cats">—</div>
+      <div class="kpi-sub">distinct product categories</div>
+    </div>
+    <div class="kpi" style="--kpi-color:var(--purple)">
+      <div class="kpi-lbl">Product Brands</div>
+      <div class="kpi-val" id="ful-kpi-brands">—</div>
+      <div class="kpi-sub">distinct brands</div>
+    </div>
+  </div>
+
+  <!-- Category Mix Donut + Table -->
+  <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px;">
+    <div class="card">
+      <div class="card-title">Product Category Mix — % of Orders</div>
+      <canvas id="ful-donut-canvas" width="300" height="300"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">Product Category Breakdown</div>
+      <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+            <th style="text-align:left;padding:8px 6px;">Product Category</th>
+            <th style="text-align:center;padding:8px 6px;">Orders</th>
+            <th style="text-align:center;padding:8px 6px;">Units</th>
+            <th style="text-align:center;padding:8px 6px;">Units/Order</th>
+            <th style="text-align:center;padding:8px 6px;">% of Orders</th>
+            <th style="text-align:center;padding:8px 6px;">% of Units</th>
+            <th style="width:160px;padding:8px 6px;">Distribution</th>
+          </tr>
+        </thead>
+        <tbody id="ful-cat-body"></tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border);font-weight:700;">
+            <td style="padding:8px 6px;">TOTAL</td>
+            <td style="text-align:center;padding:8px 6px;" id="ful-cat-total-orders">—</td>
+            <td style="text-align:center;padding:8px 6px;" id="ful-cat-total-units">—</td>
+            <td style="text-align:center;padding:8px 6px;" id="ful-cat-total-upo">—</td>
+            <td style="text-align:center;padding:8px 6px;">100%</td>
+            <td style="text-align:center;padding:8px 6px;">100%</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Hourly Orders Chart -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Hourly Order Volume by Product Category</div>
+    <canvas id="ful-hourly-canvas" height="200"></canvas>
+  </div>
+
+  <!-- Brand Breakdown Table -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Product Brand Breakdown</div>
+    <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+          <th style="text-align:left;padding:8px 6px;">Product Brand</th>
+          <th style="text-align:center;padding:8px 6px;">Product Category</th>
+          <th style="text-align:center;padding:8px 6px;">Orders</th>
+          <th style="text-align:center;padding:8px 6px;">Units</th>
+          <th style="text-align:center;padding:8px 6px;">Units/Order</th>
+          <th style="text-align:center;padding:8px 6px;">% of Orders</th>
+          <th style="width:180px;padding:8px 6px;">Volume Bar</th>
+        </tr>
+      </thead>
+      <tbody id="ful-brand-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Order Detail Table -->
+  <div class="card">
+    <div class="card-title">Order Details <span id="ful-detail-count" style="font-size:10px;font-weight:400;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <div style="max-height:400px;overflow-y:auto;">
+      <table style="width:100%;font-size:11px;font-family:'IBM Plex Mono',monospace;">
+        <thead style="position:sticky;top:0;background:var(--surf2);z-index:1;">
+          <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+            <th style="text-align:left;padding:8px 6px;">Order Number</th>
+            <th style="text-align:center;padding:8px 6px;">Drop Off Location</th>
+            <th style="text-align:center;padding:8px 6px;">Product Category</th>
+            <th style="text-align:center;padding:8px 6px;">Product Brand</th>
+            <th style="text-align:center;padding:8px 6px;">Units</th>
+            <th style="text-align:center;padding:8px 6px;">Lines</th>
+            <th style="text-align:center;padding:8px 6px;">First Pick</th>
+            <th style="text-align:left;padding:8px 6px;">Picker(s)</th>
+          </tr>
+        </thead>
+        <tbody id="ful-detail-body"></tbody>
       </table>
     </div>
   </div>
@@ -2102,7 +2083,7 @@ function handleFile(file) {
       // Support "complete dashboard" exports by locating the actual header row/columns
       // instead of assuming A–E are always Time, X, Y, Units, User ID.
       let headerRowIdx = 0;
-      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colDay = 6, colPromo = 7, colOrder = 8, colBrand = 9;
+      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colDay = 6, colPromo = 7, colOrder = 8, colBrand = 9, colDropOff = -1;
       for(let i = 0; i < Math.min(rows.length, 30); i++) {
         const hdr = (rows[i] || []).map(normalizeHeader);
         const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'time']);
@@ -2127,6 +2108,8 @@ function handleFile(file) {
           if(orderIdx >= 0) colOrder = orderIdx;
           const brandIdx = findFirstMatch(hdr, ['product brand', 'brand', 'productbrand']);
           if(brandIdx >= 0) colBrand = brandIdx;
+          const dropOffIdx = findFirstMatch(hdr, ['drop off location', 'dropoff location', 'drop off', 'dropofflocation']);
+          if(dropOffIdx >= 0) colDropOff = dropOffIdx;
           break;
         }
       }
@@ -2178,7 +2161,8 @@ function handleFile(file) {
         const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
         const productBrand = (r[colBrand] != null && r[colBrand] !== '') ? String(r[colBrand]).trim() : '';
         const dayOfWeek = (r[colDay] != null && r[colDay] !== '') ? String(r[colDay]).trim() : '';
-        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek});
+        const dropOffLocation = (colDropOff >= 0 && r[colDropOff] != null && r[colDropOff] !== '') ? String(r[colDropOff]).trim() : '';
+        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek, dropOffLocation});
       }
       setProgress(80);
       
@@ -2480,12 +2464,11 @@ function renderAll() {
   runSectionUpdate('zone-stats', buildZoneStats);
   runSectionUpdate('shift-breakdown', buildShiftBreakdown);
   runSectionUpdate('pick-path', buildPickerList);
-  runSectionUpdate('staffing', buildStaffing);
-  runSectionUpdate('ramp-plan', buildRamp);
   runSectionUpdate('zone-bounds-table', buildBoundsTable);
   runSectionUpdate('uph-targets', buildUPHTargets);
   runSectionUpdate('inactive-leaderboard', buildInactiveLeaderboard);
-  runSectionUpdate('orders-mix', buildOrdersMix);
+  runSectionUpdate('orders-mb', buildOrdersMixMB);
+  runSectionUpdate('orders-ful', buildOrdersMixFul);
   updateDataBadge();
 }
 
@@ -6197,6 +6180,20 @@ function fcBuildHourlyChart() {
 })();
 
 // ═══════════════════════════════════════════════
+// DROP OFF LOCATION CATEGORIZATION
+// ═══════════════════════════════════════════════
+const MB_LOCATIONS = new Set(['vlm-1','express','express2','express3','express1','cons01','pack','exceptionlocation'].map(s => s.toLowerCase()));
+const FUL_LOCATIONS = new Set(['fuldrop1','dspack','dspack1','dspack2','dspack3','wgful','carpetfulpack','dsconsol'].map(s => s.toLowerCase()));
+
+function classifyDropOffLocation(loc) {
+  if(!loc) return 'Unknown';
+  const key = loc.trim().toLowerCase();
+  if(MB_LOCATIONS.has(key)) return 'Material Bank';
+  if(FUL_LOCATIONS.has(key)) return 'Fulfillment';
+  return 'Unknown';
+}
+
+// ═══════════════════════════════════════════════
 // ORDERS BY CATEGORY DASHBOARD
 // ═══════════════════════════════════════════════
 
@@ -6251,23 +6248,13 @@ function lookupProductCategory(brandName) {
   return 'Other';
 }
 
-function buildOrdersMix() {
-  if(!txData.length) return;
-
-  // Gather order data — group by order number
-  const orderMap = {};  // orderNumber -> { category, brand, units, lines, hour, pickers }
+function gatherOrderData(filterType) {
+  if(!txData.length) return null;
   const rowsWithOrders = txData.filter(r => r.orderNumber && r.orderNumber.length > 0);
+  if(!rowsWithOrders.length) return null;
 
-  if(!rowsWithOrders.length) {
-    document.getElementById('om-kpi-orders').textContent = '—';
-    document.getElementById('om-kpi-units').textContent = '—';
-    document.getElementById('om-kpi-upo').textContent = '—';
-    document.getElementById('om-kpi-cats').textContent = '—';
-    document.getElementById('om-kpi-brands').textContent = '—';
-    document.getElementById('om-kpi-orders-sub').textContent = 'no order data — ensure Column I has Order Numbers';
-    return;
-  }
-
+  // Group by order number
+  const orderMap = {};
   for(const r of rowsWithOrders) {
     const oKey = r.orderNumber;
     const brand = r.productBrand || 'Unknown';
@@ -6281,25 +6268,37 @@ function buildOrdersMix() {
         lines: 0,
         hour: r.hour,
         minute: r.minute,
-        pickers: new Set()
+        pickers: new Set(),
+        dropOffLocation: r.dropOffLocation || '',
+        orderType: classifyDropOffLocation(r.dropOffLocation)
       };
     }
     orderMap[oKey].units += r.units;
     orderMap[oKey].lines += 1;
     orderMap[oKey].pickers.add(r.userId);
+    if(!orderMap[oKey].dropOffLocation && r.dropOffLocation) {
+      orderMap[oKey].dropOffLocation = r.dropOffLocation;
+      orderMap[oKey].orderType = classifyDropOffLocation(r.dropOffLocation);
+    }
     const txMin = r.hour * 60 + (r.minute || 0);
     const curMin = orderMap[oKey].hour * 60 + (orderMap[oKey].minute || 0);
     if(txMin < curMin) { orderMap[oKey].hour = r.hour; orderMap[oKey].minute = r.minute; }
   }
 
-  const orders = Object.entries(orderMap);
+  // Filter by type
+  const allOrders = Object.entries(orderMap);
+  const filtered = filterType === 'all' ? allOrders : allOrders.filter(([,o]) => o.orderType === filterType);
+  return { orders: filtered, rowsWithOrders };
+}
+
+function renderOrderView(prefix, orders, rowsWithOrders, showNonTCW) {
   const totalOrders = orders.length;
   const totalUnits = orders.reduce((s, [,o]) => s + o.units, 0);
   const productCategories = [...new Set(orders.map(([,o]) => o.productCategory))].sort();
   const brands = [...new Set(orders.map(([,o]) => o.brand))].filter(b => b !== 'Unknown').sort();
 
   // Update date label
-  const dateLabel = document.getElementById('om-date-label');
+  const dateLabel = document.getElementById(prefix + '-date-label');
   if(dateLabel) {
     const dateVal = selectedOpsDate || (txData[0] && txData[0].dateValue) || '';
     const dayVal = rowsWithOrders[0]?.dayOfWeek || '';
@@ -6307,15 +6306,30 @@ function buildOrdersMix() {
   }
 
   // KPIs
-  document.getElementById('om-kpi-orders').textContent = totalOrders.toLocaleString();
-  document.getElementById('om-kpi-units').textContent = totalUnits.toLocaleString();
-  document.getElementById('om-kpi-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
-  document.getElementById('om-kpi-cats').textContent = productCategories.length;
-  document.getElementById('om-kpi-brands').textContent = brands.length;
-  document.getElementById('om-kpi-orders-sub').textContent = 'unique order numbers';
-  document.getElementById('om-kpi-units-sub').textContent = 'across all orders';
+  document.getElementById(prefix + '-kpi-orders').textContent = totalOrders.toLocaleString();
+  document.getElementById(prefix + '-kpi-units').textContent = totalUnits.toLocaleString();
+  document.getElementById(prefix + '-kpi-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
+  document.getElementById(prefix + '-kpi-cats').textContent = productCategories.length;
+  document.getElementById(prefix + '-kpi-brands').textContent = brands.length;
+  document.getElementById(prefix + '-kpi-orders-sub').textContent = 'unique order numbers';
+  document.getElementById(prefix + '-kpi-units-sub').textContent = 'across all orders';
 
-  // ── Product Category Breakdown ──
+  // Non-Tile/Carpet/Wolf Gordon count (Material Bank only)
+  if(showNonTCW) {
+    const EXCLUDED_CATS = new Set(['Tile']);
+    const EXCLUDED_BRAND_KEYWORDS = ['carpet', 'wolf gordon', 'wolf-gordon'];
+    const nonTCWCount = orders.filter(([,o]) => {
+      const cat = (o.productCategory || '').toLowerCase();
+      const brand = (o.brand || '').toLowerCase();
+      if(EXCLUDED_CATS.has(o.productCategory)) return false;
+      if(EXCLUDED_BRAND_KEYWORDS.some(kw => brand.includes(kw) || cat.includes(kw))) return false;
+      return true;
+    }).length;
+    const el = document.getElementById(prefix + '-kpi-nontcw');
+    if(el) el.textContent = nonTCWCount.toLocaleString();
+  }
+
+  // Product Category Breakdown
   const catStats = {};
   for(const [, o] of orders) {
     const cat = o.productCategory;
@@ -6325,7 +6339,7 @@ function buildOrdersMix() {
   }
 
   const catEntries = Object.entries(catStats).sort((a,b) => b[1].orders - a[1].orders);
-  const catBody = document.getElementById('om-cat-body');
+  const catBody = document.getElementById(prefix + '-cat-body');
   catBody.innerHTML = '';
 
   catEntries.forEach(([cat, st], idx) => {
@@ -6347,17 +6361,17 @@ function buildOrdersMix() {
     catBody.appendChild(tr);
   });
 
-  document.getElementById('om-cat-total-orders').textContent = totalOrders.toLocaleString();
-  document.getElementById('om-cat-total-units').textContent = totalUnits.toLocaleString();
-  document.getElementById('om-cat-total-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
+  document.getElementById(prefix + '-cat-total-orders').textContent = totalOrders.toLocaleString();
+  document.getElementById(prefix + '-cat-total-units').textContent = totalUnits.toLocaleString();
+  document.getElementById(prefix + '-cat-total-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
 
-  // ── Donut Chart ──
-  drawOrdersDonut(catEntries, totalOrders);
+  // Donut Chart
+  drawOrdersDonut(catEntries, totalOrders, prefix + '-donut-canvas');
 
-  // ── Hourly Orders Chart ──
-  drawOrdersHourlyChart(orders, productCategories);
+  // Hourly Orders Chart
+  drawOrdersHourlyChart(orders, productCategories, prefix + '-hourly-canvas');
 
-  // ── Brand Breakdown ──
+  // Brand Breakdown
   const brandStats = {};
   for(const [, o] of orders) {
     const bKey = o.brand;
@@ -6370,7 +6384,7 @@ function buildOrdersMix() {
     .map(([,s]) => s)
     .sort((a,b) => b.orders - a.orders);
 
-  const brandBody = document.getElementById('om-brand-body');
+  const brandBody = document.getElementById(prefix + '-brand-body');
   brandBody.innerHTML = '';
   const maxBrandOrders = brandEntries.length ? brandEntries[0].orders : 1;
 
@@ -6394,10 +6408,10 @@ function buildOrdersMix() {
     brandBody.appendChild(tr);
   });
 
-  // ── Order Detail Table ──
-  const detailBody = document.getElementById('om-detail-body');
+  // Order Detail Table
+  const detailBody = document.getElementById(prefix + '-detail-body');
   detailBody.innerHTML = '';
-  document.getElementById('om-detail-count').textContent = `(${totalOrders} orders)`;
+  document.getElementById(prefix + '-detail-count').textContent = `(${totalOrders} orders)`;
 
   const sortedOrders = orders.sort((a,b) => {
     const aMin = a[1].hour * 60 + (a[1].minute || 0);
@@ -6412,6 +6426,7 @@ function buildOrdersMix() {
     tr.style.borderBottom = '1px solid var(--border)';
     tr.innerHTML = `
       <td style="padding:6px;color:var(--cyan);">${orderNum}</td>
+      <td style="text-align:center;padding:6px;">${o.dropOffLocation || '—'}</td>
       <td style="text-align:center;padding:6px;">${o.productCategory}</td>
       <td style="text-align:center;padding:6px;">${o.brand}</td>
       <td style="text-align:center;padding:6px;font-weight:600;">${o.units}</td>
@@ -6423,8 +6438,34 @@ function buildOrdersMix() {
   });
 }
 
-function drawOrdersDonut(catEntries, totalOrders) {
-  const canvas = document.getElementById('om-donut-canvas');
+function buildOrdersMixMB() {
+  const data = gatherOrderData('Material Bank');
+  if(!data || !data.orders.length) {
+    ['mb-kpi-orders','mb-kpi-units','mb-kpi-upo','mb-kpi-cats','mb-kpi-brands','mb-kpi-nontcw'].forEach(id => {
+      const el = document.getElementById(id); if(el) el.textContent = '—';
+    });
+    const sub = document.getElementById('mb-kpi-orders-sub');
+    if(sub) sub.textContent = 'no Material Bank order data';
+    return;
+  }
+  renderOrderView('mb', data.orders, data.rowsWithOrders, true);
+}
+
+function buildOrdersMixFul() {
+  const data = gatherOrderData('Fulfillment');
+  if(!data || !data.orders.length) {
+    ['ful-kpi-orders','ful-kpi-units','ful-kpi-upo','ful-kpi-cats','ful-kpi-brands'].forEach(id => {
+      const el = document.getElementById(id); if(el) el.textContent = '—';
+    });
+    const sub = document.getElementById('ful-kpi-orders-sub');
+    if(sub) sub.textContent = 'no Fulfillment order data';
+    return;
+  }
+  renderOrderView('ful', data.orders, data.rowsWithOrders, false);
+}
+
+function drawOrdersDonut(catEntries, totalOrders, canvasId) {
+  const canvas = document.getElementById(canvasId || 'mb-donut-canvas');
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
@@ -6496,8 +6537,8 @@ function drawOrdersDonut(catEntries, totalOrders) {
   });
 }
 
-function drawOrdersHourlyChart(orders, productCategories) {
-  const canvas = document.getElementById('om-hourly-canvas');
+function drawOrdersHourlyChart(orders, productCategories, canvasId) {
+  const canvas = document.getElementById(canvasId || 'mb-hourly-canvas');
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
@@ -6623,7 +6664,8 @@ document.querySelectorAll('.tab').forEach(tab => {
       if(id==='pickpath') { drawPickPathCanvas([], ppCurrentUser); if(ppCurrentUser) renderPickPath(); }
       if(id==='shiftbreakdown' && txData.length > 0) { buildShiftBreakdown(); }
       if(id==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
-      if(id==='ordersmix' && txData.length > 0) { buildOrdersMix(); }
+      if(id==='ordersmix-mb' && txData.length > 0) { buildOrdersMixMB(); }
+      if(id==='ordersmix-ful' && txData.length > 0) { buildOrdersMixFul(); }
     }, 30);
   });
 });
@@ -6640,7 +6682,8 @@ window.addEventListener('resize', () => {
   if(active==='uphtargets') drawUPHPickPath();
   if(active==='pickpath') renderPickPath();
   if(active==='forecast' && fcData.length > 0) { fcDrawZoneMap(); fcDrawHeatMap(); fcBuildHourlyChart(); }
-  if(active==='ordersmix' && txData.length > 0) { buildOrdersMix(); }
+  if(active==='ordersmix-mb' && txData.length > 0) { buildOrdersMixMB(); }
+  if(active==='ordersmix-ful' && txData.length > 0) { buildOrdersMixFul(); }
 });
 </script>
 </body>
