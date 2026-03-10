@@ -871,8 +871,8 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <input type="file" id="file-input" accept=".xlsx,.xls,.csv" onchange="handleFile(this.files[0])">
     <div class="drop-icon">📂</div>
     <div class="drop-text">
-      <strong>Drop updated ops file here (used across all dashboard tabs)</strong>
-      <span>Sheet: "drop the data" · Columns: Time of transaction, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand, Drop Off Location</span>
+      <strong id="drop-file-label">Drop updated ops file here (used across all dashboard tabs)</strong>
+      <span id="drop-sheet-label">Sheet: auto-detect from upload · Columns: Time of transaction, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand, Drop Off Location</span>
     </div>
   </div>
   <div class="drop-hint" style="min-width:240px;">
@@ -2047,6 +2047,20 @@ function setUploadStatus(message) {
   if(status) status.textContent = message;
 }
 
+function setDropLabels(fileName, sheetName) {
+  const fileLbl = document.getElementById('drop-file-label');
+  const sheetLbl = document.getElementById('drop-sheet-label');
+  if(fileLbl) {
+    fileLbl.textContent = fileName
+      ? `Loaded file: ${fileName}`
+      : 'Drop updated ops file here (used across all dashboard tabs)';
+  }
+  if(sheetLbl) {
+    const prefix = sheetName ? `Sheet: ${sheetName}` : 'Sheet: auto-detect from upload';
+    sheetLbl.textContent = `${prefix} · Columns: Time of transaction, X, Y, Units, User ID, Date, Day, Category, Order Number, Product Brand, Drop Off Location`;
+  }
+}
+
 function handleFile(file) {
   if(!file) return;
   const fileInput = document.getElementById('file-input');
@@ -2054,6 +2068,7 @@ function handleFile(file) {
   isOpsDataProcessing = true;
   pendingShiftBreakdownCalc = false;
   setProgress(0);
+  setDropLabels(file.name, '');
   setUploadStatus(`Processing ${file.name} ...`);
   const reader = new FileReader();
   reader.onload = e => {
@@ -2061,10 +2076,6 @@ function handleFile(file) {
     setTimeout(() => {
       try {
       const wb = XLSX.read(e.target.result, {type:'array'});
-      const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('drop')) || wb.SheetNames[0];
-      setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
-      const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
       setProgress(60);
       
       const newTx = [];
@@ -2097,34 +2108,66 @@ function handleFile(file) {
         { key: 'brand', patterns: ['product brand', 'brand', 'productbrand'] },
         { key: 'dropoff', patterns: ['drop off location', 'dropoff location', 'drop off', 'dropofflocation'] }
       ];
-      for(let i = 0; i < Math.min(rows.length, 120); i++) {
-        const hdr = (rows[i] || []).map(normalizeHeader);
-        const matches = {};
-        expectedCols.forEach(c => { matches[c.key] = findFirstMatch(hdr, c.patterns); });
-        const requiredScore = ['time', 'x', 'y', 'units'].filter(k => matches[k] >= 0).length;
-        const fullScore = Object.values(matches).filter(idx => idx >= 0).length;
-        const score = fullScore * 10 + requiredScore;
-        if(requiredScore < 4 || score <= bestHeaderScore) continue;
+      let rows = [];
+      let sheetName = '';
+      for(const sn of wb.SheetNames) {
+        const ws = wb.Sheets[sn];
+        const candidateRows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
+        if(!candidateRows.length) continue;
 
-        headerRowIdx = i;
-        bestHeaderScore = score;
-        if(matches.time >= 0) colTime = matches.time;
-        if(matches.x >= 0) colX = matches.x;
-        if(matches.y >= 0) colY = matches.y;
-        if(matches.units >= 0) colUnits = matches.units;
-        if(matches.user >= 0) colUser = matches.user;
-        if(matches.date >= 0) colDate = matches.date;
-        if(matches.category >= 0) colPromo = matches.category;
-        if(matches.day >= 0) colDay = matches.day;
-        if(matches.order >= 0) colOrder = matches.order;
-        if(matches.brand >= 0) colBrand = matches.brand;
-        if(matches.dropoff >= 0) colDropOff = matches.dropoff;
-        if(fullScore === expectedCols.length) break;
+        let candidateHeaderRowIdx = 0;
+        let candidateBestScore = -1;
+        const candidateCols = { time: 0, x: 1, y: 2, units: 3, user: 4, date: 5, day: 6, category: 7, order: 8, brand: 9, dropoff: -1 };
+
+        for(let i = 0; i < Math.min(candidateRows.length, 120); i++) {
+          const hdr = (candidateRows[i] || []).map(normalizeHeader);
+          const matches = {};
+          expectedCols.forEach(c => { matches[c.key] = findFirstMatch(hdr, c.patterns); });
+          const requiredScore = ['time', 'x', 'y', 'units'].filter(k => matches[k] >= 0).length;
+          const fullScore = Object.values(matches).filter(idx => idx >= 0).length;
+          const score = fullScore * 10 + requiredScore;
+          if(requiredScore < 4 || score <= candidateBestScore) continue;
+
+          candidateHeaderRowIdx = i;
+          candidateBestScore = score;
+          if(matches.time >= 0) candidateCols.time = matches.time;
+          if(matches.x >= 0) candidateCols.x = matches.x;
+          if(matches.y >= 0) candidateCols.y = matches.y;
+          if(matches.units >= 0) candidateCols.units = matches.units;
+          if(matches.user >= 0) candidateCols.user = matches.user;
+          if(matches.date >= 0) candidateCols.date = matches.date;
+          if(matches.category >= 0) candidateCols.category = matches.category;
+          if(matches.day >= 0) candidateCols.day = matches.day;
+          if(matches.order >= 0) candidateCols.order = matches.order;
+          if(matches.brand >= 0) candidateCols.brand = matches.brand;
+          if(matches.dropoff >= 0) candidateCols.dropoff = matches.dropoff;
+          if(fullScore === expectedCols.length) break;
+        }
+
+        if(candidateBestScore <= bestHeaderScore) continue;
+        rows = candidateRows;
+        sheetName = sn;
+        bestHeaderScore = candidateBestScore;
+        headerRowIdx = candidateHeaderRowIdx;
+        colTime = candidateCols.time;
+        colX = candidateCols.x;
+        colY = candidateCols.y;
+        colUnits = candidateCols.units;
+        colUser = candidateCols.user;
+        colDate = candidateCols.date;
+        colDay = candidateCols.day;
+        colPromo = candidateCols.category;
+        colOrder = candidateCols.order;
+        colBrand = candidateCols.brand;
+        colDropOff = candidateCols.dropoff;
       }
 
       if(bestHeaderScore < 0) {
         throw new Error('Unable to detect required columns (Time of transaction, x, y, Units).');
       }
+
+      setDropLabels(file.name, sheetName);
+      setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
 
       for(let i = headerRowIdx + 1; i < rows.length; i++) {
         const r = rows[i] || [];
@@ -2194,6 +2237,7 @@ function handleFile(file) {
         isOpsDataProcessing = false;
         pendingShiftBreakdownCalc = false;
         setProgress(100);
+        setDropLabels('', '');
         setUploadStatus('Upload failed · please verify sheet/columns');
         showRefreshToast('⚠️ Upload parse failed. Please verify the sheet/columns and try again.');
         console.error('handleFile parse error', err);
