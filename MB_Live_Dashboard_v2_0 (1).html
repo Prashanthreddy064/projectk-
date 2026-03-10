@@ -1282,11 +1282,12 @@ tr:hover td { background: rgba(255,255,255,0.015); }
 
   <!-- Controls -->
   <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Forecasting Dashboard — TensorFlow.js Time-Series Model</div>
+    <div class="card-title">Forecasting Dashboard — Multi-Output TCN Model</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;margin-bottom:14px;">
-      Uses <strong style="color:var(--cyan)">TensorFlow.js</strong> regression model trained on the uploaded ops data.<br>
-      Features: <strong style="color:var(--cyan)">Timestamp</strong> (hour of day), <strong style="color:var(--cyan)">Day</strong> (one-hot encoded), <strong style="color:var(--cyan)">Category</strong> (one-hot encoded).<br>
-      The model predicts hourly unit volumes per zone. Filter by Category and Day to see forecasted staffing needs.
+      Uses a <strong style="color:var(--cyan)">Temporal Convolutional Network (TCN)</strong> with causal dilated convolutions trained on the uploaded ops data.<br>
+      Sequence input: <strong style="color:var(--cyan)">Lag units</strong> (rolling window). Covariates: <strong style="color:var(--cyan)">sin/cos hour</strong>, <strong style="color:var(--cyan)">Day</strong> (one-hot), <strong style="color:var(--cyan)">Category</strong> (one-hot).<br>
+      <strong style="color:var(--green)">Output 1</strong>: Units forecast (regression) · <strong style="color:var(--amber)">Output 2</strong>: Product Brand probabilities (softmax) · <strong style="color:var(--purple)">Output 3</strong>: Zone probabilities (softmax).<br>
+      Predicts units volume, which brand to pick, and in which zone — by time of day, day type, and category (esp. Promo).
     </p>
 
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
@@ -1296,7 +1297,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
 
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-      <button class="mctl" type="button" onclick="fcTrainAndForecast()" id="fc-train-btn">Train Model & Forecast</button>
+      <button class="mctl" type="button" onclick="fcTrainAndForecast()" id="fc-train-btn">Train TCN & Forecast</button>
       <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear Filters</button>
     </div>
 
@@ -1324,7 +1325,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   </div>
 
   <!-- KPI Summary -->
-  <div class="kpi-row" id="fc-kpi-row" style="grid-template-columns:repeat(5,1fr);">
+  <div class="kpi-row" id="fc-kpi-row" style="grid-template-columns:repeat(4,1fr);">
     <div class="kpi" style="--kpi-color:#3b82f6">
       <div class="kpi-lbl">Forecasted Units</div>
       <div class="kpi-val mono" id="fc-kpi-volume">—</div>
@@ -1336,19 +1337,36 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div class="kpi-sub">from uploaded data</div>
     </div>
     <div class="kpi" style="--kpi-color:#f59e0b">
-      <div class="kpi-lbl">Model Accuracy</div>
+      <div class="kpi-lbl">Model R²</div>
       <div class="kpi-val mono" id="fc-kpi-pickers">—</div>
-      <div class="kpi-sub">R-squared</div>
+      <div class="kpi-sub">units regression accuracy</div>
     </div>
     <div class="kpi" style="--kpi-color:#8b5cf6">
       <div class="kpi-lbl">Peak Hour</div>
       <div class="kpi-val" id="fc-kpi-peak" style="font-size:18px;">—</div>
       <div class="kpi-sub" id="fc-kpi-peak-sub">highest predicted volume</div>
     </div>
+  </div>
+  <div class="kpi-row" style="grid-template-columns:repeat(4,1fr);margin-top:-8px;">
     <div class="kpi" style="--kpi-color:#06b6d4">
       <div class="kpi-lbl">Training Loss</div>
       <div class="kpi-val mono" id="fc-kpi-active-hours">—</div>
-      <div class="kpi-sub" id="fc-kpi-active-hours-sub">MSE after training</div>
+      <div class="kpi-sub" id="fc-kpi-active-hours-sub">combined multi-output loss</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#f97316">
+      <div class="kpi-lbl">Top Predicted Brand</div>
+      <div class="kpi-val" id="fc-kpi-top-brand" style="font-size:14px;">—</div>
+      <div class="kpi-sub" id="fc-kpi-top-brand-sub">highest probability</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#ec4899">
+      <div class="kpi-lbl">Top Predicted Zone</div>
+      <div class="kpi-val" id="fc-kpi-top-zone" style="font-size:14px;">—</div>
+      <div class="kpi-sub" id="fc-kpi-top-zone-sub">highest probability</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#a78bfa">
+      <div class="kpi-lbl">Model Outputs</div>
+      <div class="kpi-val" id="fc-kpi-outputs" style="font-size:14px;">—</div>
+      <div class="kpi-sub">units + brands + zones</div>
     </div>
   </div>
 
@@ -1358,9 +1376,48 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <canvas id="fc-hourly-canvas" height="220"></canvas>
   </div>
 
+  <!-- Brand Prediction Table -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Predicted Product Brand Distribution <span id="fc-brand-label" style="font-size:10px;font-weight:400;color:var(--amber);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
+      Brand probabilities predicted by the TCN softmax head. Shows which brands are most likely to be picked during selected hours.
+    </p>
+    <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+          <th style="text-align:left;padding:8px 6px;">Product Brand</th>
+          <th style="text-align:center;padding:8px 6px;">Predicted Probability</th>
+          <th style="text-align:center;padding:8px 6px;">Actual Units</th>
+          <th style="width:200px;padding:8px 6px;">Distribution</th>
+        </tr>
+      </thead>
+      <tbody id="fc-brand-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Zone Prediction Table -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Predicted Zone Distribution <span id="fc-zone-pred-label" style="font-size:10px;font-weight:400;color:var(--purple);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
+      Zone probabilities predicted by the TCN softmax head. Shows which zones will have the most pick activity.
+    </p>
+    <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+          <th style="text-align:left;padding:8px 6px;">Zone</th>
+          <th style="text-align:center;padding:8px 6px;">Predicted Probability</th>
+          <th style="text-align:center;padding:8px 6px;">Predicted Units</th>
+          <th style="text-align:center;padding:8px 6px;">Actual Units</th>
+          <th style="width:200px;padding:8px 6px;">Distribution</th>
+        </tr>
+      </thead>
+      <tbody id="fc-zone-pred-body"></tbody>
+    </table>
+  </div>
+
   <!-- Zone Forecast Staffing Table -->
   <div class="card">
-    <div class="card-title">Zone Volume & Staffing — Forecast</div>
+    <div class="card-title">Zone Volume & Staffing — Forecast (TCN Predicted)</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
       Forecasted volume and staffing per zone. Required Pickers = ceil(Forecasted Units ÷ (Zone UPH x Hours)).
     </p>
@@ -5086,17 +5143,26 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
 
 
 // ═══════════════════════════════════════════════
-// FORECAST DASHBOARD
+// FORECAST DASHBOARD — Multi-Output TCN Model
+// Architecture: Temporal Convolutional Network with 3 output heads
+//   Output 1: Units (regression via MSE)
+//   Output 2: Brand probabilities (softmax via categorical crossentropy)
+//   Output 3: Zone probabilities (softmax via categorical crossentropy)
 // ═══════════════════════════════════════════════
-let fcData = [];          // aggregated training data [{hour, day, category, zone, units, date}]
+let fcData = [];          // aggregated training data
 let fcFiltered = [];      // filtered subset for display
-let fcModel = null;       // TensorFlow.js trained model
+let fcModel = null;       // TensorFlow.js multi-output TCN model
 let fcPredictions = {};   // { hour -> predictedUnits }
 let fcActuals = {};       // { hour -> actualUnits }
 let fcZonePredictions = {}; // { zone -> predictedUnits }
 let fcZoneActuals = {};   // { zone -> actualUnits }
+let fcBrandPredictions = {}; // { brand -> probability }
+let fcBrandActuals = {};    // { brand -> actualUnits }
 let fcTrainingLoss = null;
 let fcR2 = null;
+
+const FC_SEQ_LEN = 6;       // sequence length for TCN input (6 hours of context)
+const FC_MAX_BRANDS = 20;    // top N brands for softmax output
 
 // Active filter state for toggle buttons
 let fcFilterCat = 'all';
@@ -5119,44 +5185,103 @@ function sortByOpHour(a, b) {
 }
 
 // ═══════════════════════════════════════════════
-// TENSORFLOW.JS FORECAST MODEL
+// TCN MULTI-OUTPUT FORECAST MODEL
 // ═══════════════════════════════════════════════
 
 function fcPrepareTrainingData() {
-  // Use main uploaded data (uploadedTxAll) to build training dataset
+  // Build sequence-based training data for multi-output TCN
   if(!uploadedTxAll || !uploadedTxAll.length) return null;
 
-  // Collect unique days and categories
   const days = [...new Set(uploadedTxAll.map(r => r.dayOfWeek || '').filter(Boolean))];
   const categories = [...new Set(uploadedTxAll.map(r => r.promoType || '').filter(Boolean))];
   const zones = [...new Set(uploadedTxAll.map(r => r.zone || '').filter(Boolean))];
 
-  // Aggregate by date + hour + day + category + zone
-  const agg = {};
+  // Collect brand frequencies and limit to top FC_MAX_BRANDS
+  const brandFreq = {};
   uploadedTxAll.forEach(r => {
-    const key = `${r.dateValue}|${r.hour}|${r.dayOfWeek || 'Unknown'}|${r.promoType || 'Unknown'}|${r.zone || 'No Location'}`;
-    if(!agg[key]) agg[key] = { date: r.dateValue, hour: r.hour, day: r.dayOfWeek || 'Unknown', category: r.promoType || 'Unknown', zone: r.zone || 'No Location', units: 0 };
-    agg[key].units += r.units;
+    const b = r.productBrand || '';
+    if(b) brandFreq[b] = (brandFreq[b] || 0) + r.units;
+  });
+  const sortedBrands = Object.entries(brandFreq).sort((a, b) => b[1] - a[1]);
+  const topBrands = sortedBrands.slice(0, FC_MAX_BRANDS).map(([b]) => b);
+  const brands = [...topBrands, 'Other'];
+
+  // Aggregate by date+hour for sequence building
+  const hourlyAgg = {};
+  uploadedTxAll.forEach(r => {
+    const key = `${r.dateValue}|${r.hour}`;
+    if(!hourlyAgg[key]) {
+      hourlyAgg[key] = {
+        date: r.dateValue, hour: r.hour,
+        day: r.dayOfWeek || 'Unknown',
+        category: r.promoType || 'Unknown',
+        units: 0,
+        brandCounts: {},
+        zoneCounts: {}
+      };
+    }
+    hourlyAgg[key].units += r.units;
+    let b = r.productBrand || 'Other';
+    if(!topBrands.includes(b)) b = 'Other';
+    const z = r.zone || 'No Location';
+    hourlyAgg[key].brandCounts[b] = (hourlyAgg[key].brandCounts[b] || 0) + r.units;
+    hourlyAgg[key].zoneCounts[z] = (hourlyAgg[key].zoneCounts[z] || 0) + r.units;
   });
 
-  const rows = Object.values(agg);
-  if(!rows.length) return null;
+  // Sort by date+hour
+  const sortedHours = Object.values(hourlyAgg).sort((a, b) => {
+    if(a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return opHourIndex(a.hour) - opHourIndex(b.hour);
+  });
 
-  return { rows, days, categories, zones };
+  if(sortedHours.length < FC_SEQ_LEN + 1) return null;
+
+  // Compute max units for normalization
+  const maxUnits = Math.max(...sortedHours.map(s => s.units), 1);
+
+  // Feature size per timestep: units_norm + sin_hour + cos_hour + day_onehot + cat_onehot
+  const featureSize = 1 + 2 + days.length + categories.length;
+
+  // Build sliding-window sequences and multi-output targets
+  const sequences = [];
+  const unitTargets = [];
+  const brandTargets = [];
+  const zoneTargets = [];
+
+  for(let i = FC_SEQ_LEN; i < sortedHours.length; i++) {
+    const target = sortedHours[i];
+    const seq = [];
+    for(let j = i - FC_SEQ_LEN; j < i; j++) {
+      const s = sortedHours[j];
+      const hourRad = (s.hour / 24) * 2 * Math.PI;
+      seq.push([
+        s.units / maxUnits,
+        Math.sin(hourRad), Math.cos(hourRad),
+        ...days.map(d => d === s.day ? 1 : 0),
+        ...categories.map(c => c === s.category ? 1 : 0)
+      ]);
+    }
+    sequences.push(seq);
+
+    // Unit target (normalized)
+    unitTargets.push(target.units / maxUnits);
+
+    // Brand distribution target (soft labels from unit proportions)
+    const brandDist = brands.map(b => target.brandCounts[b] || 0);
+    const brandTotal = brandDist.reduce((s, v) => s + v, 0) || 1;
+    brandTargets.push(brandDist.map(v => v / brandTotal));
+
+    // Zone distribution target (soft labels from unit proportions)
+    const zoneDist = zones.map(z => target.zoneCounts[z] || 0);
+    const zoneTotal = zoneDist.reduce((s, v) => s + v, 0) || 1;
+    zoneTargets.push(zoneDist.map(v => v / zoneTotal));
+  }
+
+  return { sequences, unitTargets, brandTargets, zoneTargets, days, categories, zones, brands, maxUnits, featureSize, sortedHours };
 }
 
 function fcOneHotEncode(value, classes) {
   return classes.map(c => c === value ? 1 : 0);
-}
-
-function fcBuildFeatureVector(hour, day, category, days, categories) {
-  // Features: [hour_sin, hour_cos, ...day_one_hot, ...category_one_hot]
-  const hourRad = (hour / 24) * 2 * Math.PI;
-  const hourSin = Math.sin(hourRad);
-  const hourCos = Math.cos(hourRad);
-  const dayOH = fcOneHotEncode(day, days);
-  const catOH = fcOneHotEncode(category, categories);
-  return [hourSin, hourCos, ...dayOH, ...catOH];
 }
 
 async function fcTrainAndForecast() {
@@ -5169,103 +5294,125 @@ async function fcTrainAndForecast() {
   }
 
   btn.disabled = true;
-  btn.textContent = 'Training...';
-  statusEl.textContent = 'Preparing data...';
+  btn.textContent = 'Training TCN...';
+  statusEl.textContent = 'Preparing sequences...';
 
   await new Promise(r => setTimeout(r, 50));
 
   try {
     const prepared = fcPrepareTrainingData();
     if(!prepared) {
-      statusEl.textContent = 'Could not prepare training data';
+      statusEl.textContent = 'Not enough hourly data for sequences (need > ' + FC_SEQ_LEN + ' hours)';
       btn.disabled = false;
-      btn.textContent = 'Train Model & Forecast';
+      btn.textContent = 'Train TCN & Forecast';
       return;
     }
 
-    const { rows, days, categories, zones } = prepared;
-    const featureSize = 2 + days.length + categories.length;
+    const { sequences, unitTargets, brandTargets, zoneTargets, days, categories, zones, brands, maxUnits, featureSize, sortedHours } = prepared;
+    const numBrands = brands.length;
+    const numZones = zones.length;
 
-    // Build tensors
-    const xs = [];
-    const ys = [];
-    rows.forEach(r => {
-      xs.push(fcBuildFeatureVector(r.hour, r.day, r.category, days, categories));
-      ys.push(r.units);
-    });
-
-    // Normalize targets
-    const maxUnits = Math.max(...ys, 1);
-    const normalizedYs = ys.map(y => y / maxUnits);
-
-    statusEl.textContent = `Training on ${rows.length} data points (${featureSize} features)...`;
+    statusEl.textContent = `Building TCN model (${sequences.length} sequences, ${featureSize} features/step, ${numBrands} brands, ${numZones} zones)...`;
     await new Promise(r => setTimeout(r, 50));
 
-    // Dispose old model if exists
+    // Dispose old model
     if(fcModel) { fcModel.dispose(); fcModel = null; }
 
-    // Build TensorFlow.js model
-    const model = tf.sequential();
-    model.add(tf.layers.dense({ inputShape: [featureSize], units: 64, activation: 'relu' }));
-    model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
-    model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
-    model.add(tf.layers.dense({ units: 1, activation: 'linear' }));
+    // ─── Build Multi-Output TCN ───────────────────
+    const input = tf.input({ shape: [FC_SEQ_LEN, featureSize] });
+
+    // TCN Block 1: dilation=1 — captures short-range patterns
+    let tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 1, padding: 'causal', activation: 'relu' }).apply(input);
+    tcn = tf.layers.batchNormalization().apply(tcn);
+    tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
+
+    // TCN Block 2: dilation=2 — captures medium-range patterns
+    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 2, padding: 'causal', activation: 'relu' }).apply(tcn);
+    tcn = tf.layers.batchNormalization().apply(tcn);
+    tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
+
+    // TCN Block 3: dilation=4 — captures long-range patterns
+    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 4, padding: 'causal', activation: 'relu' }).apply(tcn);
+    tcn = tf.layers.batchNormalization().apply(tcn);
+
+    // Global pooling to aggregate temporal information
+    const pooled = tf.layers.globalAveragePooling1d().apply(tcn);
+
+    // Shared dense representation
+    const shared = tf.layers.dense({ units: 64, activation: 'relu' }).apply(pooled);
+
+    // Output 1: Units regression head
+    let unitsHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(shared);
+    const unitsOutput = tf.layers.dense({ units: 1, activation: 'linear', name: 'units_output' }).apply(unitsHead);
+
+    // Output 2: Brand classification head (softmax)
+    let brandHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(shared);
+    const brandOutput = tf.layers.dense({ units: numBrands, activation: 'softmax', name: 'brand_output' }).apply(brandHead);
+
+    // Output 3: Zone classification head (softmax)
+    let zoneHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(shared);
+    const zoneOutput = tf.layers.dense({ units: numZones, activation: 'softmax', name: 'zone_output' }).apply(zoneHead);
+
+    const model = tf.model({ inputs: input, outputs: [unitsOutput, brandOutput, zoneOutput] });
 
     model.compile({
-      optimizer: tf.train.adam(0.005),
-      loss: 'meanSquaredError'
+      optimizer: tf.train.adam(0.003),
+      loss: ['meanSquaredError', 'categoricalCrossentropy', 'categoricalCrossentropy'],
+      lossWeights: [1.0, 0.3, 0.3]
     });
 
-    const xTensor = tf.tensor2d(xs);
-    const yTensor = tf.tensor2d(normalizedYs, [normalizedYs.length, 1]);
+    // Build tensors
+    const xTensor = tf.tensor3d(sequences);
+    const yUnitsTensor = tf.tensor2d(unitTargets.map(y => [y]));
+    const yBrandTensor = tf.tensor2d(brandTargets);
+    const yZoneTensor = tf.tensor2d(zoneTargets);
 
-    // Train
-    const history = await model.fit(xTensor, yTensor, {
-      epochs: 100,
-      batchSize: Math.min(64, Math.max(8, Math.floor(rows.length / 4))),
+    statusEl.textContent = `Training TCN on ${sequences.length} sequences...`;
+    await new Promise(r => setTimeout(r, 50));
+
+    // Train multi-output model
+    const history = await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
+      epochs: 80,
+      batchSize: Math.min(32, Math.max(8, Math.floor(sequences.length / 4))),
       validationSplit: 0.15,
       shuffle: true,
       callbacks: {
         onEpochEnd: (epoch, logs) => {
-          if(epoch % 20 === 0) {
-            statusEl.textContent = `Epoch ${epoch + 1}/100 — loss: ${logs.loss.toFixed(6)}`;
+          if(epoch % 10 === 0) {
+            statusEl.textContent = `Epoch ${epoch + 1}/80 — loss: ${logs.loss.toFixed(4)}`;
           }
         }
       }
     });
 
     fcModel = model;
-    fcTrainingLoss = history.history.loss[history.history.loss.length - 1];
+    const losses = history.history.loss;
+    fcTrainingLoss = losses[losses.length - 1];
 
     // Store metadata for predictions
-    fcModel._fcMeta = { days, categories, zones, maxUnits, featureSize };
+    fcModel._fcMeta = { days, categories, zones, brands, maxUnits, featureSize, sortedHours };
 
-    // Generate predictions for all combinations and compute R²
-    const allPredXs = [];
-    const allActualYs = [];
-    rows.forEach(r => {
-      allPredXs.push(fcBuildFeatureVector(r.hour, r.day, r.category, days, categories));
-      allActualYs.push(r.units);
-    });
+    // Compute R² for units regression output
+    const allPreds = model.predict(xTensor);
+    const unitPredData = (await allPreds[0].data()).map(v => Math.max(0, v * maxUnits));
+    const unitActualData = unitTargets.map(v => v * maxUnits);
 
-    const predTensor = model.predict(tf.tensor2d(allPredXs));
-    const predValues = (await predTensor.data()).map(v => Math.max(0, v * maxUnits));
-    predTensor.dispose();
-
-    // R² calculation
-    const meanActual = allActualYs.reduce((s, v) => s + v, 0) / allActualYs.length;
+    const meanActual = unitActualData.reduce((s, v) => s + v, 0) / unitActualData.length;
     let ssRes = 0, ssTot = 0;
-    for(let i = 0; i < allActualYs.length; i++) {
-      ssRes += (allActualYs[i] - predValues[i]) ** 2;
-      ssTot += (allActualYs[i] - meanActual) ** 2;
+    for(let i = 0; i < unitActualData.length; i++) {
+      ssRes += (unitActualData[i] - unitPredData[i]) ** 2;
+      ssTot += (unitActualData[i] - meanActual) ** 2;
     }
     fcR2 = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
 
-    // Clean up tensors
+    // Cleanup tensors
+    allPreds.forEach(t => t.dispose());
     xTensor.dispose();
-    yTensor.dispose();
+    yUnitsTensor.dispose();
+    yBrandTensor.dispose();
+    yZoneTensor.dispose();
 
-    statusEl.textContent = `Model trained — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(6)}`;
+    statusEl.textContent = `TCN trained — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(4)} · Outputs: Units + ${numBrands} brands + ${numZones} zones`;
 
     // Build toggle buttons and populate filters
     fcBuildToggleButtons();
@@ -5273,26 +5420,26 @@ async function fcTrainAndForecast() {
     // Update badge
     const badge = document.getElementById('fc-data-badge');
     badge.className = 'data-badge live';
-    badge.textContent = 'MODEL READY';
-    document.getElementById('fc-row-count').textContent = `${rows.length} training samples · ${uploadedTxAll.length} transactions`;
+    badge.textContent = 'TCN READY';
+    document.getElementById('fc-row-count').textContent = `${sequences.length} sequences · ${uploadedTxAll.length} transactions`;
 
     // Apply filters and render
     fcApplyFiltersAndPredict();
 
     btn.disabled = false;
-    btn.textContent = 'Train Model & Forecast';
+    btn.textContent = 'Train TCN & Forecast';
 
   } catch(err) {
-    console.error('[forecast] Training failed', err);
+    console.error('[forecast] TCN training failed', err);
     statusEl.textContent = 'Training failed: ' + err.message;
     btn.disabled = false;
-    btn.textContent = 'Train Model & Forecast';
+    btn.textContent = 'Train TCN & Forecast';
   }
 }
 
 function fcApplyFiltersAndPredict() {
   if(!fcModel || !fcModel._fcMeta) return;
-  const { days, categories, zones, maxUnits } = fcModel._fcMeta;
+  const { days, categories, zones, brands, maxUnits, featureSize } = fcModel._fcMeta;
 
   // Filter source data by category and day
   let filtered = uploadedTxAll.slice();
@@ -5313,46 +5460,97 @@ function fcApplyFiltersAndPredict() {
     fcZoneActuals[z] = (fcZoneActuals[z] || 0) + r.units;
   });
 
-  // Predict: for each hour, predict with the selected day/category
-  const targetDay = fcFilterDay !== 'all' ? fcFilterDay : (days[0] || 'Unknown');
-  const targetCat = fcFilterCat !== 'all' ? fcFilterCat : (categories[0] || 'Unknown');
-
-  // If "all" is selected, sum predictions across all days/categories
-  const dayList = fcFilterDay !== 'all' ? [fcFilterDay] : days;
-  const catList = fcFilterCat !== 'all' ? [fcFilterCat] : categories;
-
-  fcPredictions = {};
-  FC_HOURS.forEach(h => fcPredictions[h] = 0);
-  fcZonePredictions = {};
-
-  const predXs = [];
-  const predMeta = [];
-  dayList.forEach(d => {
-    catList.forEach(c => {
-      FC_HOURS.forEach(h => {
-        predXs.push(fcBuildFeatureVector(h, d, c, days, categories));
-        predMeta.push({ hour: h, day: d, category: c });
-      });
-    });
+  // Actual brand totals
+  fcBrandActuals = {};
+  const topBrands = brands.slice(0, -1); // exclude 'Other'
+  filtered.forEach(r => {
+    let b = r.productBrand || 'Other';
+    if(!topBrands.includes(b)) b = 'Other';
+    fcBrandActuals[b] = (fcBrandActuals[b] || 0) + r.units;
   });
 
-  if(predXs.length > 0) {
-    const predTensor = fcModel.predict(tf.tensor2d(predXs));
-    const predData = predTensor.dataSync();
-    predTensor.dispose();
+  // ─── Build prediction sequences for each operational hour ───
+  // Aggregate filtered data by hour for building context sequences
+  const filteredHourly = {};
+  filtered.forEach(r => {
+    const h = r.hour;
+    if(!filteredHourly[h]) filteredHourly[h] = { units: 0, day: r.dayOfWeek || 'Unknown', category: r.promoType || 'Unknown' };
+    filteredHourly[h].units += r.units;
+  });
 
-    predMeta.forEach((m, i) => {
-      const val = Math.max(0, predData[i] * maxUnits);
-      fcPredictions[m.hour] = (fcPredictions[m.hour] || 0) + val;
+  fcPredictions = {};
+  const brandProbsPerHour = {};
+  const zoneProbsPerHour = {};
+
+  const predSequences = [];
+  const predHoursList = [];
+
+  FC_HOURS.forEach(h => {
+    const seq = [];
+    for(let offset = FC_SEQ_LEN; offset > 0; offset--) {
+      let prevH = h - offset;
+      if(prevH < 0) prevH += 24;
+      const data = filteredHourly[prevH] || {
+        units: 0,
+        day: fcFilterDay !== 'all' ? fcFilterDay : (days[0] || 'Unknown'),
+        category: fcFilterCat !== 'all' ? fcFilterCat : (categories[0] || 'Unknown')
+      };
+      const hourRad = (prevH / 24) * 2 * Math.PI;
+      seq.push([
+        data.units / maxUnits,
+        Math.sin(hourRad), Math.cos(hourRad),
+        ...days.map(d => d === data.day ? 1 : 0),
+        ...categories.map(c => c === data.category ? 1 : 0)
+      ]);
+    }
+    predSequences.push(seq);
+    predHoursList.push(h);
+  });
+
+  if(predSequences.length > 0) {
+    const predTensor = tf.tensor3d(predSequences);
+    const preds = fcModel.predict(predTensor);
+    const unitPreds = preds[0].dataSync();
+    const brandPreds = preds[1].dataSync();
+    const zonePreds = preds[2].dataSync();
+
+    predHoursList.forEach((h, i) => {
+      fcPredictions[h] = Math.max(0, unitPreds[i] * maxUnits);
+
+      // Brand probabilities for this hour
+      const bStart = i * brands.length;
+      brandProbsPerHour[h] = brands.map((b, bi) => brandPreds[bStart + bi]);
+
+      // Zone probabilities for this hour
+      const zStart = i * zones.length;
+      zoneProbsPerHour[h] = zones.map((z, zi) => zonePreds[zStart + zi]);
     });
+
+    preds.forEach(t => t.dispose());
+    predTensor.dispose();
   }
 
-  // Distribute zone predictions proportionally based on actual zone distribution
-  const totalActual = Object.values(fcZoneActuals).reduce((s, v) => s + v, 0);
-  const totalPredicted = Object.values(fcPredictions).reduce((s, v) => s + v, 0);
-  zones.forEach(z => {
-    const zoneShare = totalActual > 0 ? (fcZoneActuals[z] || 0) / totalActual : 1 / zones.length;
-    fcZonePredictions[z] = totalPredicted * zoneShare;
+  // Aggregate brand predictions (weighted by predicted units per hour)
+  fcBrandPredictions = {};
+  const totalPredUnits = Object.values(fcPredictions).reduce((s, v) => s + v, 0) || 1;
+  brands.forEach((b, bi) => {
+    let weightedProb = 0;
+    FC_HOURS.forEach(h => {
+      const probs = brandProbsPerHour[h];
+      if(probs) weightedProb += probs[bi] * (fcPredictions[h] || 0);
+    });
+    fcBrandPredictions[b] = weightedProb / totalPredUnits;
+  });
+
+  // Aggregate zone predictions (predicted units per zone from softmax * predicted volume)
+  fcZonePredictions = {};
+  zones.forEach((z, zi) => {
+    let weightedUnits = 0;
+    FC_HOURS.forEach(h => {
+      const probs = zoneProbsPerHour[h];
+      if(probs) weightedUnits += probs[zi] * (fcPredictions[h] || 0);
+    });
+    fcZonePredictions[z] = weightedUnits;
   });
 
   // Apply hour filter for display
@@ -5364,6 +5562,8 @@ function fcApplyFiltersAndPredict() {
   // Render everything
   fcBuildKPIs();
   fcBuildHourlyChart();
+  fcBuildBrandPredictionTable();
+  fcBuildZonePredictionTable();
   fcBuildStaffingTable();
 }
 
@@ -5484,7 +5684,7 @@ function fcBuildKPIs() {
   document.getElementById('fc-kpi-volume').textContent = Math.round(dispForecast).toLocaleString();
   document.getElementById('fc-kpi-zones').textContent = Math.round(dispActual).toLocaleString();
   document.getElementById('fc-kpi-pickers').textContent = fcR2 != null ? fcR2.toFixed(4) : '—';
-  document.getElementById('fc-kpi-active-hours').textContent = fcTrainingLoss != null ? fcTrainingLoss.toFixed(6) : '—';
+  document.getElementById('fc-kpi-active-hours').textContent = fcTrainingLoss != null ? fcTrainingLoss.toFixed(4) : '—';
 
   // Peak hour
   let peakHour = null, peakVol = 0;
@@ -5494,10 +5694,107 @@ function fcBuildKPIs() {
   document.getElementById('fc-kpi-peak').textContent = peakHour != null ? fcFormatHour(peakHour) : '—';
   document.getElementById('fc-kpi-peak-sub').textContent = peakVol > 0 ? Math.round(peakVol).toLocaleString() + ' predicted units' : '';
 
+  // Top predicted brand
+  let topBrand = '—', topBrandProb = 0;
+  for(const [b, prob] of Object.entries(fcBrandPredictions)) {
+    if(prob > topBrandProb) { topBrand = b; topBrandProb = prob; }
+  }
+  const topBrandEl = document.getElementById('fc-kpi-top-brand');
+  if(topBrandEl) topBrandEl.textContent = topBrand;
+  const topBrandSub = document.getElementById('fc-kpi-top-brand-sub');
+  if(topBrandSub) topBrandSub.textContent = topBrandProb > 0 ? (topBrandProb * 100).toFixed(1) + '% probability' : '';
+
+  // Top predicted zone
+  let topZone = '—', topZoneUnits = 0;
+  for(const [z, units] of Object.entries(fcZonePredictions)) {
+    if(units > topZoneUnits) { topZone = z; topZoneUnits = units; }
+  }
+  const topZoneEl = document.getElementById('fc-kpi-top-zone');
+  if(topZoneEl) topZoneEl.textContent = topZone;
+  const topZoneSub = document.getElementById('fc-kpi-top-zone-sub');
+  if(topZoneSub) topZoneSub.textContent = topZoneUnits > 0 ? Math.round(topZoneUnits).toLocaleString() + ' predicted units' : '';
+
+  // Model outputs count
+  const outputsEl = document.getElementById('fc-kpi-outputs');
+  if(outputsEl && fcModel && fcModel._fcMeta) {
+    outputsEl.textContent = `3 heads`;
+  }
+
   const parts = [];
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
   if(fcFilterDay !== 'all') parts.push(fcFilterDay);
   document.getElementById('fc-kpi-volume-sub').textContent = parts.length ? parts.join(' · ') : 'all data';
+}
+
+// ─── Brand Prediction Table ─────────────────
+function fcBuildBrandPredictionTable() {
+  const tbody = document.getElementById('fc-brand-body');
+  if(!tbody) return;
+  tbody.innerHTML = '';
+
+  const brandEntries = Object.entries(fcBrandPredictions)
+    .filter(([b, p]) => p > 0.001)
+    .sort((a, b) => b[1] - a[1]);
+
+  const maxProb = brandEntries.length ? brandEntries[0][1] : 1;
+  const labelEl = document.getElementById('fc-brand-label');
+  const parts = [];
+  if(fcFilterCat !== 'all') parts.push(fcFilterCat);
+  if(fcFilterDay !== 'all') parts.push(fcFilterDay);
+  if(labelEl) labelEl.textContent = parts.length ? parts.join(' · ') : 'All Data';
+
+  brandEntries.forEach(([brand, prob], idx) => {
+    const pctStr = (prob * 100).toFixed(1) + '%';
+    const barW = (prob / maxProb * 100).toFixed(1);
+    const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
+    const actualUnits = fcBrandActuals[brand] || 0;
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:8px 6px;font-weight:500;">${brand}</td>
+      <td style="text-align:center;padding:8px 6px;color:${color};font-weight:600;">${pctStr}</td>
+      <td style="text-align:center;padding:8px 6px;">${actualUnits.toLocaleString()}</td>
+      <td style="padding:8px 6px;"><div style="background:rgba(255,255,255,0.05);border-radius:4px;height:16px;overflow:hidden;"><div style="width:${barW}%;height:100%;background:${color};border-radius:4px;opacity:0.7;"></div></div></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ─── Zone Prediction Table ──────────────────
+function fcBuildZonePredictionTable() {
+  const tbody = document.getElementById('fc-zone-pred-body');
+  if(!tbody) return;
+  tbody.innerHTML = '';
+
+  const totalPredicted = Object.values(fcZonePredictions).reduce((s, v) => s + v, 0) || 1;
+  const zoneEntries = Object.entries(fcZonePredictions)
+    .filter(([z, u]) => u > 0)
+    .sort((a, b) => b[1] - a[1]);
+
+  const maxUnits = zoneEntries.length ? zoneEntries[0][1] : 1;
+  const labelEl = document.getElementById('fc-zone-pred-label');
+  const parts = [];
+  if(fcFilterCat !== 'all') parts.push(fcFilterCat);
+  if(fcFilterDay !== 'all') parts.push(fcFilterDay);
+  if(labelEl) labelEl.textContent = parts.length ? parts.join(' · ') : 'All Data';
+
+  zoneEntries.forEach(([zone, predUnits]) => {
+    const prob = predUnits / totalPredicted;
+    const pctStr = (prob * 100).toFixed(1) + '%';
+    const actual = fcZoneActuals[zone] || 0;
+    const barW = (predUnits / maxUnits * 100).toFixed(1);
+    const color = ZONE_COLORS[zone] || '#64748b';
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:8px 6px;"><span class="zpill" style="background:${color}18;color:${color};border:1px solid ${color}40"><span class="leg-sq" style="background:${color}"></span> ${zone}</span></td>
+      <td style="text-align:center;padding:8px 6px;color:${color};font-weight:600;">${pctStr}</td>
+      <td style="text-align:center;padding:8px 6px;">${Math.round(predUnits).toLocaleString()}</td>
+      <td style="text-align:center;padding:8px 6px;">${Math.round(actual).toLocaleString()}</td>
+      <td style="padding:8px 6px;"><div style="background:rgba(255,255,255,0.05);border-radius:4px;height:16px;overflow:hidden;"><div style="width:${barW}%;height:100%;background:${color};border-radius:4px;opacity:0.7;"></div></div></td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
 // ─── Staffing Table ──────────────────────────
