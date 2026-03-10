@@ -1284,7 +1284,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <div class="card" style="margin-bottom:16px;">
     <div class="card-title">Forecasting Dashboard — Multi-Output TCN Model</div>
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;line-height:1.8;margin-bottom:14px;">
-      Uses a <strong style="color:var(--cyan)">Temporal Convolutional Network (TCN)</strong> with causal dilated convolutions trained on the uploaded ops data.<br>
+      Uses a <strong style="color:var(--cyan)">Temporal Convolutional Network (TCN)</strong> with dilated convolutions trained on the uploaded ops data.<br>
       Sequence input: <strong style="color:var(--cyan)">Lag units</strong> (rolling window). Covariates: <strong style="color:var(--cyan)">sin/cos hour</strong>, <strong style="color:var(--cyan)">Day</strong> (one-hot), <strong style="color:var(--cyan)">Category</strong> (one-hot).<br>
       <strong style="color:var(--green)">Output 1</strong>: Units forecast (regression) · <strong style="color:var(--amber)">Output 2</strong>: Product Brand probabilities (softmax) · <strong style="color:var(--purple)">Output 3</strong>: Zone probabilities (softmax).<br>
       Predicts units volume, which brand to pick, and in which zone — by time of day, day type, and category (esp. Promo).
@@ -1779,30 +1779,44 @@ function updateOpsMetadataLabels() {
 
 function parseOpsDateValue(cell) {
   if(cell == null || cell === '') return '';
+  // JavaScript Date object (from cellDates:true or native Date)
+  if(Object.prototype.toString.call(cell) === '[object Date]' && !isNaN(cell.getTime())) {
+    // Skip time-only dates (Excel base date 1899-12-30 or 1900-01-01)
+    if(cell.getFullYear() > 1970) {
+      return `${cell.getFullYear()}-${String(cell.getMonth()+1).padStart(2,'0')}-${String(cell.getDate()).padStart(2,'0')}`;
+    }
+    return '';
+  }
   // Excel serial date number
   if(typeof cell === 'number' && Number.isFinite(cell) && cell > 1) {
     try {
       const dateObj = XLSX.SSF.parse_date_code(cell);
-      if(dateObj && dateObj.y) {
+      if(dateObj && dateObj.y && dateObj.y > 1970) {
         return `${String(dateObj.y).padStart(4,'0')}-${String(dateObj.m).padStart(2,'0')}-${String(dateObj.d).padStart(2,'0')}`;
       }
     } catch(e) { /* fall through to string parsing */ }
   }
-  // JavaScript Date object
-  if(Object.prototype.toString.call(cell) === '[object Date]' && !isNaN(cell.getTime())) {
-    return `${cell.getFullYear()}-${String(cell.getMonth()+1).padStart(2,'0')}-${String(cell.getDate()).padStart(2,'0')}`;
-  }
   // String date parsing — handles "M/D/YYYY", "MM/DD/YYYY", "YYYY-MM-DD", "M-D-YYYY" etc.
   const s = String(cell).trim();
   // Try M/D/YYYY or MM/DD/YYYY (with / or -)
-  const mdy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  const mdy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
   if(mdy) {
-    return `${mdy[3]}-${String(mdy[1]).padStart(2,'0')}-${String(mdy[2]).padStart(2,'0')}`;
+    let yr = mdy[3];
+    if(yr.length === 2) yr = (parseInt(yr) > 50 ? '19' : '20') + yr;
+    return `${yr}-${String(mdy[1]).padStart(2,'0')}-${String(mdy[2]).padStart(2,'0')}`;
   }
   // Try YYYY-MM-DD or YYYY/MM/DD
   const ymd = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
   if(ymd) {
     return `${ymd[1]}-${String(ymd[2]).padStart(2,'0')}-${String(ymd[3]).padStart(2,'0')}`;
+  }
+  // Try "Mon DD, YYYY" or "Month DD, YYYY"
+  const mname = s.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  if(mname) {
+    const dt = new Date(s);
+    if(!isNaN(dt.getTime()) && dt.getFullYear() > 1970) {
+      return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+    }
   }
   // Fallback: try Date constructor
   const dt = new Date(s);
@@ -1830,9 +1844,17 @@ function updateOpsDateSelector() {
     selectedOpsDate = '';
     return;
   }
-  select.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
-  if(!selectedOpsDate || !dates.includes(selectedOpsDate)) selectedOpsDate = dates[0];
-  select.value = selectedOpsDate;
+  const allOption = '<option value="">All Dates</option>';
+  select.innerHTML = allOption + dates.map(d => `<option value="${d}">${d}</option>`).join('');
+  if(selectedOpsDate && dates.includes(selectedOpsDate)) {
+    select.value = selectedOpsDate;
+  } else if(dates.length === 1) {
+    selectedOpsDate = dates[0];
+    select.value = selectedOpsDate;
+  } else {
+    selectedOpsDate = '';
+    select.value = '';
+  }
 }
 
 function applyOpsFilters() {
@@ -1852,7 +1874,9 @@ function applyOpsFilters() {
   document.getElementById('date-range').textContent = selectedOpsDate ? `${selectedOpsDate} · ${categoryText} · ${dayText}` : (droppedFileName || 'Uploaded file');
 
   if(!filtered.length) {
-    showRefreshToast('⚠️ No valid transaction rows found in uploaded file for the selected date.');
+    const totalRows = uploadedTxAll.length;
+    const uniqueDates = [...new Set(uploadedTxAll.map(r => r.dateValue).filter(Boolean))];
+    showRefreshToast(`⚠️ No valid transaction rows found for the selected date. Total rows: ${totalRows}, available dates: ${uniqueDates.join(', ') || 'none parsed'}`);
   }
 
   updateLastRefreshed();
@@ -2111,7 +2135,7 @@ function handleFile(file) {
     setProgress(30);
     setTimeout(() => {
       try {
-      const wb = XLSX.read(e.target.result, {type:'array'});
+      const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
       const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('drop')) || wb.SheetNames[0];
       setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
       const ws = wb.Sheets[sheetName];
@@ -5322,17 +5346,17 @@ async function fcTrainAndForecast() {
     const input = tf.input({ shape: [FC_SEQ_LEN, featureSize] });
 
     // TCN Block 1: dilation=1 — captures short-range patterns
-    let tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 1, padding: 'causal', activation: 'relu' }).apply(input);
+    let tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 1, padding: 'same', activation: 'relu' }).apply(input);
     tcn = tf.layers.batchNormalization().apply(tcn);
     tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
 
     // TCN Block 2: dilation=2 — captures medium-range patterns
-    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 2, padding: 'causal', activation: 'relu' }).apply(tcn);
+    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 2, padding: 'same', activation: 'relu' }).apply(tcn);
     tcn = tf.layers.batchNormalization().apply(tcn);
     tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
 
     // TCN Block 3: dilation=4 — captures long-range patterns
-    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 4, padding: 'causal', activation: 'relu' }).apply(tcn);
+    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 4, padding: 'same', activation: 'relu' }).apply(tcn);
     tcn = tf.layers.batchNormalization().apply(tcn);
 
     // Global pooling to aggregate temporal information
