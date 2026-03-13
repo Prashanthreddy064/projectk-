@@ -5291,20 +5291,23 @@ async function fcTrainAndForecast() {
     if(fcModel) { fcModel.dispose(); fcModel = null; }
 
     // ─── Build Multi-Output TCN ───────────────────
+    // TensorFlow.js does not support gradients for dilationRate > 1 in conv1d,
+    // so we use stacked conv1d layers (all dilation=1) with increasing kernel
+    // sizes to grow the receptive field without dilated convolutions.
     const input = tf.input({ shape: [FC_SEQ_LEN, featureSize] });
 
-    // TCN Block 1: dilation=1 — captures short-range patterns
-    let tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 1, padding: 'same', activation: 'relu' }).apply(input);
+    // Block 1: kernel=3, receptive field 3 — short-range patterns
+    let tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(input);
     tcn = tf.layers.batchNormalization().apply(tcn);
     tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
 
-    // TCN Block 2: dilation=2 — captures medium-range patterns
-    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 2, padding: 'same', activation: 'relu' }).apply(tcn);
+    // Block 2: kernel=3, stacked receptive field 5 — medium-range patterns
+    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(tcn);
     tcn = tf.layers.batchNormalization().apply(tcn);
     tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
 
-    // TCN Block 3: dilation=4 — captures long-range patterns
-    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, dilationRate: 4, padding: 'same', activation: 'relu' }).apply(tcn);
+    // Block 3: kernel=5, stacked receptive field 9 — long-range patterns
+    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 5, padding: 'same', activation: 'relu' }).apply(tcn);
     tcn = tf.layers.batchNormalization().apply(tcn);
 
     // Global pooling to aggregate temporal information
