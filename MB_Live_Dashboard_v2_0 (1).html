@@ -1299,6 +1299,19 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <span id="fc-model-status" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
     </div>
 
+    <!-- Filtered-out rows summary (blank/zero/text units) -->
+    <div id="fc-filtered-rows-section" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <span style="font-size:11px;font-weight:600;color:var(--amber);">Data Quality Filter</span>
+        <span id="fc-filtered-count" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;"></span>
+      </div>
+      <div id="fc-filtered-details" style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;line-height:1.6;"></div>
+      <details style="margin-top:6px;">
+        <summary style="font-size:10px;color:var(--text3);cursor:pointer;font-family:'IBM Plex Mono',monospace;">Show filtered rows</summary>
+        <div id="fc-filtered-table-wrap" style="max-height:200px;overflow-y:auto;margin-top:6px;"></div>
+      </details>
+    </div>
+
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
       <button class="mctl" type="button" onclick="fcTrainAndForecast()" id="fc-train-btn">Train TCN & Forecast</button>
       <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear Filters</button>
@@ -5216,22 +5229,106 @@ function sortByOpHour(a, b) {
 // TCN MULTI-OUTPUT FORECAST MODEL
 // ═══════════════════════════════════════════════
 
+function fcShowFilteredRows(filteredRows) {
+  const section = document.getElementById('fc-filtered-rows-section');
+  const countEl = document.getElementById('fc-filtered-count');
+  const detailsEl = document.getElementById('fc-filtered-details');
+  const tableWrap = document.getElementById('fc-filtered-table-wrap');
+  if(!section) return;
+
+  const totalFiltered = filteredRows.blank.length + filteredRows.zero.length + filteredRows.text.length + filteredRows.negative.length;
+
+  if(totalFiltered === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+  countEl.textContent = `${totalFiltered.toLocaleString()} rows excluded from training`;
+
+  const parts = [];
+  if(filteredRows.blank.length) parts.push(`Blank/empty units: ${filteredRows.blank.length.toLocaleString()}`);
+  if(filteredRows.zero.length) parts.push(`Zero units: ${filteredRows.zero.length.toLocaleString()}`);
+  if(filteredRows.text.length) parts.push(`Non-numeric/NaN units: ${filteredRows.text.length.toLocaleString()}`);
+  if(filteredRows.negative.length) parts.push(`Negative units: ${filteredRows.negative.length.toLocaleString()}`);
+  detailsEl.innerHTML = parts.join(' · ');
+
+  // Build a small sample table (max 50 rows)
+  const allFiltered = [
+    ...filteredRows.blank.map(r => ({ ...r, _reason: 'Blank' })),
+    ...filteredRows.zero.map(r => ({ ...r, _reason: 'Zero' })),
+    ...filteredRows.text.map(r => ({ ...r, _reason: 'Text/NaN' })),
+    ...filteredRows.negative.map(r => ({ ...r, _reason: 'Negative' }))
+  ];
+  const sample = allFiltered.slice(0, 50);
+
+  let html = '<table style="width:100%;font-size:10px;border-collapse:collapse;font-family:\'IBM Plex Mono\',monospace;">';
+  html += '<tr style="color:var(--text3);border-bottom:1px solid rgba(255,255,255,0.06);">';
+  html += '<th style="text-align:left;padding:3px 6px;">Reason</th>';
+  html += '<th style="text-align:left;padding:3px 6px;">Date</th>';
+  html += '<th style="text-align:left;padding:3px 6px;">Hour</th>';
+  html += '<th style="text-align:left;padding:3px 6px;">Units</th>';
+  html += '<th style="text-align:left;padding:3px 6px;">Brand</th>';
+  html += '<th style="text-align:left;padding:3px 6px;">Zone</th>';
+  html += '</tr>';
+  sample.forEach(r => {
+    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+    html += `<td style="padding:2px 6px;color:var(--amber);">${r._reason}</td>`;
+    html += `<td style="padding:2px 6px;">${r.dateValue || '—'}</td>`;
+    html += `<td style="padding:2px 6px;">${r.hour != null ? r.hour : '—'}</td>`;
+    html += `<td style="padding:2px 6px;">${r.units != null ? r.units : '—'}</td>`;
+    html += `<td style="padding:2px 6px;">${r.productBrand || '—'}</td>`;
+    html += `<td style="padding:2px 6px;">${r.zone || '—'}</td>`;
+    html += '</tr>';
+  });
+  html += '</table>';
+  if(allFiltered.length > 50) {
+    html += `<div style="padding:4px 6px;color:var(--text3);font-size:9px;">...and ${(allFiltered.length - 50).toLocaleString()} more rows</div>`;
+  }
+  tableWrap.innerHTML = html;
+}
+
 function fcPrepareTrainingData() {
   // Build sequence-based training data for multi-output TCN
   if(!uploadedTxAll || !uploadedTxAll.length) return null;
 
-  const days = [...new Set(uploadedTxAll.map(r => r.dayOfWeek || '').filter(Boolean))];
-  const categories = [...new Set(uploadedTxAll.map(r => r.promoType || '').filter(Boolean))];
+  // ─── Filter out rows with invalid units (blank, zero, NaN, text) ───
+  const validRows = [];
+  const filteredRows = { blank: [], zero: [], text: [], negative: [] };
+  uploadedTxAll.forEach(r => {
+    const u = r.units;
+    if(u == null || u === '') {
+      filteredRows.blank.push(r);
+    } else if(typeof u === 'string' && isNaN(parseFloat(u))) {
+      filteredRows.text.push(r);
+    } else if(isNaN(u) || !isFinite(u)) {
+      filteredRows.text.push(r);
+    } else if(u === 0) {
+      filteredRows.zero.push(r);
+    } else if(u < 0) {
+      filteredRows.negative.push(r);
+    } else {
+      validRows.push(r);
+    }
+  });
+
+  // Show filtered rows in the UI
+  fcShowFilteredRows(filteredRows);
+
+  if(!validRows.length) return null;
+
+  const days = [...new Set(validRows.map(r => r.dayOfWeek || '').filter(Boolean))];
+  const categories = [...new Set(validRows.map(r => r.promoType || '').filter(Boolean))];
 
   // Keep at least one zone class so the zone softmax head is always valid.
   // Some uploads may not contain a populated location column.
-  const zoneSet = new Set(uploadedTxAll.map(r => r.zone || 'No Location').filter(Boolean));
+  const zoneSet = new Set(validRows.map(r => r.zone || 'No Location').filter(Boolean));
   if(!zoneSet.size) zoneSet.add('No Location');
   const zones = [...zoneSet];
 
   // Collect brand frequencies and limit to top FC_MAX_BRANDS
   const brandFreq = {};
-  uploadedTxAll.forEach(r => {
+  validRows.forEach(r => {
     const b = r.productBrand || '';
     if(b) brandFreq[b] = (brandFreq[b] || 0) + r.units;
   });
@@ -5241,7 +5338,7 @@ function fcPrepareTrainingData() {
 
   // Aggregate by date+hour+category for sequence building (separates Promo / Non-Promo)
   const hourlyAgg = {};
-  uploadedTxAll.forEach(r => {
+  validRows.forEach(r => {
     const key = `${r.dateValue}|${r.hour}|${r.promoType || 'Unknown'}`;
     if(!hourlyAgg[key]) {
       hourlyAgg[key] = {
@@ -5337,14 +5434,15 @@ async function fcTrainAndForecast() {
 
   btn.disabled = true;
   btn.textContent = 'Training TCN...';
-  statusEl.textContent = 'Preparing sequences...';
+  statusEl.textContent = 'Filtering data & preparing sequences...';
 
-  await new Promise(r => setTimeout(r, 50));
+  // Yield to browser so status shows before heavy computation
+  await new Promise(r => setTimeout(r, 100));
 
   try {
     const prepared = fcPrepareTrainingData();
     if(!prepared) {
-      statusEl.textContent = 'Not enough hourly data for sequences (need > ' + FC_SEQ_LEN + ' hours)';
+      statusEl.textContent = 'Not enough valid data for sequences (need > ' + FC_SEQ_LEN + ' hours with non-zero units)';
       btn.disabled = false;
       btn.textContent = 'Train TCN & Forecast';
       return;
@@ -5355,7 +5453,8 @@ async function fcTrainAndForecast() {
     const numZones = zones.length;
 
     statusEl.textContent = `Building TCN model (${sequences.length} sequences, ${featureSize} features/step, ${numBrands} brands, ${numZones} zones)...`;
-    await new Promise(r => setTimeout(r, 50));
+    // Extra yield for large datasets before model build
+    await new Promise(r => setTimeout(r, sequences.length > 500 ? 200 : 50));
 
     // Dispose old model
     if(fcModel) { fcModel.dispose(); fcModel = null; }
@@ -5415,24 +5514,40 @@ async function fcTrainAndForecast() {
     statusEl.textContent = `Training TCN on ${sequences.length} sequences...`;
     await new Promise(r => setTimeout(r, 50));
 
-    // Train multi-output model
-    const epochCount = Math.min(60, Math.max(25, Math.floor(sequences.length / 8)));
+    // Train multi-output model — increased limits for large files
+    const epochCount = Math.min(120, Math.max(30, Math.floor(sequences.length / 5)));
+    const batchSize = Math.min(128, Math.max(16, Math.floor(sequences.length / 6)));
+
+    // Custom early stopping to avoid tf.callbacks.earlyStopping() setParams bug
+    let bestValLoss = Infinity;
+    let earlyStopWait = 0;
+    const earlyStopPatience = 12;
+
     const history = await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
       epochs: epochCount,
-      batchSize: Math.min(64, Math.max(16, Math.floor(sequences.length / 6))),
+      batchSize: batchSize,
       validationSplit: 0.15,
       shuffle: true,
-      callbacks: [
-        tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 8 }),
-        {
-          onEpochEnd: async (epoch, logs) => {
-            if(epoch % 5 === 0) {
-              statusEl.textContent = `Epoch ${epoch + 1}/${epochCount} — loss: ${logs.loss.toFixed(4)}`;
+      callbacks: {
+        onEpochEnd: async (epoch, logs) => {
+          // Manual early stopping
+          const vl = logs.val_loss;
+          if(vl < bestValLoss) {
+            bestValLoss = vl;
+            earlyStopWait = 0;
+          } else {
+            earlyStopWait++;
+            if(earlyStopWait >= earlyStopPatience) {
+              model.stopTraining = true;
             }
-            await tf.nextFrame();
           }
+          if(epoch % 3 === 0) {
+            statusEl.textContent = `Epoch ${epoch + 1}/${epochCount} — loss: ${logs.loss.toFixed(4)} · val_loss: ${vl.toFixed(4)}`;
+          }
+          // Yield to browser to keep UI responsive (important for large files)
+          await tf.nextFrame();
         }
-      ]
+      }
     });
 
     fcModel = model;
