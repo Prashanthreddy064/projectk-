@@ -1,6 +1,9 @@
 
 
 
+
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1461,7 +1464,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   </div>
 
   <!-- KPI Row -->
-  <div class="kpi-row" style="grid-template-columns:repeat(6,1fr);">
+  <div class="kpi-row" style="grid-template-columns:repeat(7,1fr);">
     <div class="kpi" style="--kpi-color:var(--cyan)">
       <div class="kpi-lbl">Total Orders</div>
       <div class="kpi-val" id="mb-kpi-orders">—</div>
@@ -1476,6 +1479,11 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div class="kpi-lbl">Units per Order</div>
       <div class="kpi-val" id="mb-kpi-upo">—</div>
       <div class="kpi-sub">avg units / order</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#14b8a6">
+      <div class="kpi-lbl">UPH</div>
+      <div class="kpi-val" id="mb-kpi-uph">—</div>
+      <div class="kpi-sub" id="mb-kpi-uph-sub">units / picker hour</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--amber)">
       <div class="kpi-lbl">Product Categories</div>
@@ -1530,22 +1538,24 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
   </div>
 
-  <!-- Brand Breakdown Table -->
   <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Product Brand Breakdown</div>
+    <div class="card-title" style="margin-bottom:0">Hourly Pick Orders <span id="mb-hour-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <canvas id="mb-hourly-canvas" height="180"></canvas>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Product Category Mix <span id="mb-dropoff-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
     <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
       <thead>
         <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
-          <th style="text-align:left;padding:8px 6px;">Product Brand</th>
-          <th style="text-align:center;padding:8px 6px;">Product Category</th>
+          <th style="text-align:left;padding:8px 6px;">Product Category</th>
           <th style="text-align:center;padding:8px 6px;">Orders</th>
           <th style="text-align:center;padding:8px 6px;">Units</th>
-          <th style="text-align:center;padding:8px 6px;">Units/Order</th>
           <th style="text-align:center;padding:8px 6px;">% of Orders</th>
-          <th style="width:180px;padding:8px 6px;">Volume Bar</th>
+          <th style="width:180px;padding:8px 6px;">Mix Bar</th>
         </tr>
       </thead>
-      <tbody id="mb-brand-body"></tbody>
+      <tbody id="mb-dropoff-body"></tbody>
     </table>
   </div>
 
@@ -1563,7 +1573,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   </div>
 
   <!-- KPI Row -->
-  <div class="kpi-row" style="grid-template-columns:repeat(5,1fr);">
+  <div class="kpi-row" style="grid-template-columns:repeat(6,1fr);">
     <div class="kpi" style="--kpi-color:var(--cyan)">
       <div class="kpi-lbl">Total Orders</div>
       <div class="kpi-val" id="ful-kpi-orders">—</div>
@@ -1578,6 +1588,11 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <div class="kpi-lbl">Units per Order</div>
       <div class="kpi-val" id="ful-kpi-upo">—</div>
       <div class="kpi-sub">avg units / order</div>
+    </div>
+    <div class="kpi" style="--kpi-color:#14b8a6">
+      <div class="kpi-lbl">UPH</div>
+      <div class="kpi-val" id="ful-kpi-uph">—</div>
+      <div class="kpi-sub" id="ful-kpi-uph-sub">units / picker hour</div>
     </div>
     <div class="kpi" style="--kpi-color:var(--amber)">
       <div class="kpi-lbl">Product Categories</div>
@@ -1627,22 +1642,24 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
   </div>
 
-  <!-- Brand Breakdown Table -->
   <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Product Brand Breakdown</div>
+    <div class="card-title" style="margin-bottom:0">Hourly Pick Orders <span id="ful-hour-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <canvas id="ful-hourly-canvas" height="180"></canvas>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Drop Off Location Mix <span id="ful-dropoff-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
     <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
       <thead>
         <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
-          <th style="text-align:left;padding:8px 6px;">Product Brand</th>
-          <th style="text-align:center;padding:8px 6px;">Product Category</th>
+          <th style="text-align:left;padding:8px 6px;">Drop Off Location</th>
           <th style="text-align:center;padding:8px 6px;">Orders</th>
           <th style="text-align:center;padding:8px 6px;">Units</th>
-          <th style="text-align:center;padding:8px 6px;">Units/Order</th>
           <th style="text-align:center;padding:8px 6px;">% of Orders</th>
-          <th style="width:180px;padding:8px 6px;">Volume Bar</th>
+          <th style="width:180px;padding:8px 6px;">Mix Bar</th>
         </tr>
       </thead>
-      <tbody id="ful-brand-body"></tbody>
+      <tbody id="ful-dropoff-body"></tbody>
     </table>
   </div>
 
@@ -3095,6 +3112,45 @@ function fmt12(h) {
   if(h<12) return h+' AM';
   if(h===12) return '12 PM';
   return (h-12)+' PM';
+}
+
+function buildThreeHourIntervals(hoursArray) {
+  const unique = [...new Set(hoursArray.filter(h => !isNaN(h)))].sort((a,b) => {
+    const ai = a < 6 ? a + 24 : a;
+    const bi = b < 6 ? b + 24 : b;
+    return ai - bi;
+  });
+  if(!unique.length) return [];
+  const intervals = [];
+  const opOrder = unique.map(h => h < 6 ? h + 24 : h);
+  const minOp = Math.min(...opOrder);
+  const maxOp = Math.max(...opOrder);
+  let start = Math.floor(minOp / 3) * 3;
+  while(start <= maxOp) {
+    const end = start + 3;
+    const hours = [];
+    for(let h = start; h < end; h++) {
+      const actual = h >= 24 ? h - 24 : h;
+      if(unique.includes(actual)) hours.push(actual);
+    }
+    if(hours.length) {
+      const startActual = start >= 24 ? start - 24 : start;
+      const endActual = end >= 24 ? end - 24 : end;
+      intervals.push({
+        key: `${startActual}-${endActual}`,
+        startHour: startActual,
+        endHour: endActual,
+        opStart: start,
+        hours
+      });
+    }
+    start += 3;
+  }
+  return intervals;
+}
+
+function formatIntervalLabel(interval) {
+  return fmt12(interval.startHour) + ' – ' + fmt12(interval.endHour);
 }
 
 function getHeatIntervals() {
@@ -5145,7 +5201,7 @@ const FC_DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday
 const FC_HOURS = [];
 (function() {
   for(let h = 6; h <= 23; h++) FC_HOURS.push(h);
-  FC_HOURS.push(0); FC_HOURS.push(1); FC_HOURS.push(2);
+  for(let h = 0; h <= 5; h++) FC_HOURS.push(h);
 })();
 
 function opHourIndex(hour) {
@@ -5166,7 +5222,12 @@ function fcPrepareTrainingData() {
 
   const days = [...new Set(uploadedTxAll.map(r => r.dayOfWeek || '').filter(Boolean))];
   const categories = [...new Set(uploadedTxAll.map(r => r.promoType || '').filter(Boolean))];
-  const zones = [...new Set(uploadedTxAll.map(r => r.zone || '').filter(Boolean))];
+
+  // Keep at least one zone class so the zone softmax head is always valid.
+  // Some uploads may not contain a populated location column.
+  const zoneSet = new Set(uploadedTxAll.map(r => r.zone || 'No Location').filter(Boolean));
+  if(!zoneSet.size) zoneSet.add('No Location');
+  const zones = [...zoneSet];
 
   // Collect brand frequencies and limit to top FC_MAX_BRANDS
   const brandFreq = {};
@@ -5178,10 +5239,10 @@ function fcPrepareTrainingData() {
   const topBrands = sortedBrands.slice(0, FC_MAX_BRANDS).map(([b]) => b);
   const brands = [...topBrands, 'Other'];
 
-  // Aggregate by date+hour for sequence building
+  // Aggregate by date+hour+category for sequence building (separates Promo / Non-Promo)
   const hourlyAgg = {};
   uploadedTxAll.forEach(r => {
-    const key = `${r.dateValue}|${r.hour}`;
+    const key = `${r.dateValue}|${r.hour}|${r.promoType || 'Unknown'}`;
     if(!hourlyAgg[key]) {
       hourlyAgg[key] = {
         date: r.dateValue, hour: r.hour,
@@ -5211,14 +5272,15 @@ function fcPrepareTrainingData() {
   // Compute max units for normalization
   const maxUnits = Math.max(...sortedHours.map(s => s.units), 1);
 
-  // Feature size per timestep: units_norm + sin_hour + cos_hour + day_onehot + cat_onehot
-  const featureSize = 1 + 2 + days.length + categories.length;
+  // Feature size per timestep: units_norm + sin_hour + cos_hour + day_onehot + promo_binary
+  const featureSize = 1 + 2 + days.length + 1;
 
   // Build sliding-window sequences and multi-output targets
   const sequences = [];
   const unitTargets = [];
   const brandTargets = [];
   const zoneTargets = [];
+  const targetMeta = [];
 
   for(let i = FC_SEQ_LEN; i < sortedHours.length; i++) {
     const target = sortedHours[i];
@@ -5230,7 +5292,7 @@ function fcPrepareTrainingData() {
         s.units / maxUnits,
         Math.sin(hourRad), Math.cos(hourRad),
         ...days.map(d => d === s.day ? 1 : 0),
-        ...categories.map(c => c === s.category ? 1 : 0)
+        s.category === 'Promo' ? 1 : 0
       ]);
     }
     sequences.push(seq);
@@ -5247,9 +5309,17 @@ function fcPrepareTrainingData() {
     const zoneDist = zones.map(z => target.zoneCounts[z] || 0);
     const zoneTotal = zoneDist.reduce((s, v) => s + v, 0) || 1;
     zoneTargets.push(zoneDist.map(v => v / zoneTotal));
+
+    targetMeta.push({
+      date: target.date,
+      hour: target.hour,
+      day: target.day,
+      category: target.category,
+      actualUnits: target.units
+    });
   }
 
-  return { sequences, unitTargets, brandTargets, zoneTargets, days, categories, zones, brands, maxUnits, featureSize, sortedHours };
+  return { sequences, unitTargets, brandTargets, zoneTargets, targetMeta, days, categories, zones, brands, maxUnits, featureSize, sortedHours };
 }
 
 function fcOneHotEncode(value, classes) {
@@ -5280,7 +5350,7 @@ async function fcTrainAndForecast() {
       return;
     }
 
-    const { sequences, unitTargets, brandTargets, zoneTargets, days, categories, zones, brands, maxUnits, featureSize, sortedHours } = prepared;
+    const { sequences, unitTargets, brandTargets, zoneTargets, targetMeta, days, categories, zones, brands, maxUnits, featureSize, sortedHours } = prepared;
     const numBrands = brands.length;
     const numZones = zones.length;
 
@@ -5346,18 +5416,23 @@ async function fcTrainAndForecast() {
     await new Promise(r => setTimeout(r, 50));
 
     // Train multi-output model
+    const epochCount = Math.min(60, Math.max(25, Math.floor(sequences.length / 8)));
     const history = await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
-      epochs: 80,
-      batchSize: Math.min(32, Math.max(8, Math.floor(sequences.length / 4))),
+      epochs: epochCount,
+      batchSize: Math.min(64, Math.max(16, Math.floor(sequences.length / 6))),
       validationSplit: 0.15,
       shuffle: true,
-      callbacks: {
-        onEpochEnd: (epoch, logs) => {
-          if(epoch % 10 === 0) {
-            statusEl.textContent = `Epoch ${epoch + 1}/80 — loss: ${logs.loss.toFixed(4)}`;
+      callbacks: [
+        tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 8 }),
+        {
+          onEpochEnd: async (epoch, logs) => {
+            if(epoch % 5 === 0) {
+              statusEl.textContent = `Epoch ${epoch + 1}/${epochCount} — loss: ${logs.loss.toFixed(4)}`;
+            }
+            await tf.nextFrame();
           }
         }
-      }
+      ]
     });
 
     fcModel = model;
@@ -5365,7 +5440,7 @@ async function fcTrainAndForecast() {
     fcTrainingLoss = losses[losses.length - 1];
 
     // Store metadata for predictions
-    fcModel._fcMeta = { days, categories, zones, brands, maxUnits, featureSize, sortedHours };
+    fcModel._fcMeta = { days, categories, zones, brands, maxUnits, featureSize, sortedHours, sequences, targetMeta };
 
     // Compute R² for units regression output
     const allPreds = model.predict(xTensor);
@@ -5414,7 +5489,7 @@ async function fcTrainAndForecast() {
 
 function fcApplyFiltersAndPredict() {
   if(!fcModel || !fcModel._fcMeta) return;
-  const { days, categories, zones, brands, maxUnits, featureSize } = fcModel._fcMeta;
+  const { zones, brands, maxUnits, sequences, targetMeta } = fcModel._fcMeta;
 
   // Filter source data by category and day
   let filtered = uploadedTxAll.slice();
@@ -5444,88 +5519,59 @@ function fcApplyFiltersAndPredict() {
     fcBrandActuals[b] = (fcBrandActuals[b] || 0) + r.units;
   });
 
-  // ─── Build prediction sequences for each operational hour ───
-  // Aggregate filtered data by hour for building context sequences
-  const filteredHourly = {};
-  filtered.forEach(r => {
-    const h = r.hour;
-    if(!filteredHourly[h]) filteredHourly[h] = { units: 0, day: r.dayOfWeek || 'Unknown', category: r.promoType || 'Unknown' };
-    filteredHourly[h].units += r.units;
+  // Use real historical sequences that match the active filters.
+  const selectedIndices = [];
+  (targetMeta || []).forEach((m, idx) => {
+    if(fcFilterCat !== 'all' && m.category !== fcFilterCat) return;
+    if(fcFilterDay !== 'all' && m.day !== fcFilterDay) return;
+    if(fcFilterHours.length > 0 && !fcFilterHours.includes(m.hour)) return;
+    selectedIndices.push(idx);
   });
 
   fcPredictions = {};
-  const brandProbsPerHour = {};
-  const zoneProbsPerHour = {};
+  FC_HOURS.forEach(h => fcPredictions[h] = 0);
+  const brandWeighted = new Array(brands.length).fill(0);
+  const zoneWeighted = new Array(zones.length).fill(0);
 
-  const predSequences = [];
-  const predHoursList = [];
-
-  FC_HOURS.forEach(h => {
-    const seq = [];
-    for(let offset = FC_SEQ_LEN; offset > 0; offset--) {
-      let prevH = h - offset;
-      if(prevH < 0) prevH += 24;
-      const data = filteredHourly[prevH] || {
-        units: 0,
-        day: fcFilterDay !== 'all' ? fcFilterDay : (days[0] || 'Unknown'),
-        category: fcFilterCat !== 'all' ? fcFilterCat : (categories[0] || 'Unknown')
-      };
-      const hourRad = (prevH / 24) * 2 * Math.PI;
-      seq.push([
-        data.units / maxUnits,
-        Math.sin(hourRad), Math.cos(hourRad),
-        ...days.map(d => d === data.day ? 1 : 0),
-        ...categories.map(c => c === data.category ? 1 : 0)
-      ]);
-    }
-    predSequences.push(seq);
-    predHoursList.push(h);
-  });
-
-  if(predSequences.length > 0) {
+  if(selectedIndices.length > 0) {
+    const predSequences = selectedIndices.map(i => sequences[i]);
     const predTensor = tf.tensor3d(predSequences);
     const preds = fcModel.predict(predTensor);
     const unitPreds = preds[0].dataSync();
     const brandPreds = preds[1].dataSync();
     const zonePreds = preds[2].dataSync();
 
-    predHoursList.forEach((h, i) => {
-      fcPredictions[h] = Math.max(0, unitPreds[i] * maxUnits);
+    selectedIndices.forEach((srcIdx, i) => {
+      const h = targetMeta[srcIdx].hour;
+      const predUnits = Math.max(0, unitPreds[i] * maxUnits);
+      fcPredictions[h] = (fcPredictions[h] || 0) + predUnits;
 
-      // Brand probabilities for this hour
       const bStart = i * brands.length;
-      brandProbsPerHour[h] = brands.map((b, bi) => brandPreds[bStart + bi]);
+      for(let bi = 0; bi < brands.length; bi++) {
+        brandWeighted[bi] += brandPreds[bStart + bi] * predUnits;
+      }
 
-      // Zone probabilities for this hour
       const zStart = i * zones.length;
-      zoneProbsPerHour[h] = zones.map((z, zi) => zonePreds[zStart + zi]);
+      for(let zi = 0; zi < zones.length; zi++) {
+        zoneWeighted[zi] += zonePreds[zStart + zi] * predUnits;
+      }
     });
 
     preds.forEach(t => t.dispose());
     predTensor.dispose();
   }
 
-  // Aggregate brand predictions (weighted by predicted units per hour)
+  // Aggregate brand predictions (weighted by predicted units)
   fcBrandPredictions = {};
   const totalPredUnits = Object.values(fcPredictions).reduce((s, v) => s + v, 0) || 1;
   brands.forEach((b, bi) => {
-    let weightedProb = 0;
-    FC_HOURS.forEach(h => {
-      const probs = brandProbsPerHour[h];
-      if(probs) weightedProb += probs[bi] * (fcPredictions[h] || 0);
-    });
-    fcBrandPredictions[b] = weightedProb / totalPredUnits;
+    fcBrandPredictions[b] = brandWeighted[bi] / totalPredUnits;
   });
 
-  // Aggregate zone predictions (predicted units per zone from softmax * predicted volume)
+  // Aggregate zone predictions (predicted units per zone)
   fcZonePredictions = {};
   zones.forEach((z, zi) => {
-    let weightedUnits = 0;
-    FC_HOURS.forEach(h => {
-      const probs = zoneProbsPerHour[h];
-      if(probs) weightedUnits += probs[zi] * (fcPredictions[h] || 0);
-    });
-    fcZonePredictions[z] = weightedUnits;
+    fcZonePredictions[z] = zoneWeighted[zi];
   });
 
   // Apply hour filter for display
@@ -5972,7 +6018,7 @@ function gatherOrderData(filterType) {
   const rowsWithOrders = txData.filter(r => r.orderNumber && r.orderNumber.length > 0);
   if(!rowsWithOrders.length) return null;
 
-  // Group by order number
+  // Group by order number and use LAST pick transaction as completion time
   const orderMap = {};
   for(const r of rowsWithOrders) {
     const oKey = r.orderNumber;
@@ -5980,64 +6026,98 @@ function gatherOrderData(filterType) {
     const prodCat = lookupProductCategory(brand);
     if(!orderMap[oKey]) {
       orderMap[oKey] = {
+        orderNumber: oKey,
         promoType: r.promoType || 'Unknown',
         brand: brand,
         productCategory: prodCat,
         units: 0,
         lines: 0,
-        hour: r.hour,
-        minute: r.minute,
+        completionHour: r.hour,
+        completionMinute: r.minute,
         pickers: new Set(),
-        dropOffLocation: r.dropOffLocation || '',
+        dropOffLocation: r.dropOffLocation || 'Unknown',
         orderType: classifyDropOffLocation(r.dropOffLocation)
       };
     }
     orderMap[oKey].units += r.units;
     orderMap[oKey].lines += 1;
     orderMap[oKey].pickers.add(r.userId);
-    if(!orderMap[oKey].dropOffLocation && r.dropOffLocation) {
+
+    if(r.dropOffLocation) {
       orderMap[oKey].dropOffLocation = r.dropOffLocation;
       orderMap[oKey].orderType = classifyDropOffLocation(r.dropOffLocation);
     }
+
     const txMin = r.hour * 60 + (r.minute || 0);
-    const curMin = orderMap[oKey].hour * 60 + (orderMap[oKey].minute || 0);
-    if(txMin < curMin) { orderMap[oKey].hour = r.hour; orderMap[oKey].minute = r.minute; }
+    const curMin = orderMap[oKey].completionHour * 60 + (orderMap[oKey].completionMinute || 0);
+    if(txMin > curMin) {
+      orderMap[oKey].completionHour = r.hour;
+      orderMap[oKey].completionMinute = r.minute;
+    }
   }
 
-  // Filter by type
   const allOrders = Object.entries(orderMap);
   const filtered = filterType === 'all' ? allOrders : allOrders.filter(([,o]) => o.orderType === filterType);
   return { orders: filtered, rowsWithOrders };
 }
 
-function renderOrderView(prefix, orders, rowsWithOrders, showNonTCW) {
-  const totalOrders = orders.length;
-  const totalUnits = orders.reduce((s, [,o]) => s + o.units, 0);
-  const productCategories = [...new Set(orders.map(([,o]) => o.productCategory))].sort();
-  const brands = [...new Set(orders.map(([,o]) => o.brand))].filter(b => b !== 'Unknown').sort();
+const orderViewState = {
+  mb: { selectedHour: null, hourRects: [] },
+  ful: { selectedHour: null, hourRects: [] }
+};
 
-  // Update date label
+function formatHourShort(hour) {
+  if(hour === null || hour === undefined) return 'All Hours';
+  return hour === 0 ? '12a' : hour < 12 ? `${hour}a` : hour === 12 ? '12p' : `${hour-12}p`;
+}
+
+function renderOrderView(prefix, orders, rowsWithOrders, showNonTCW) {
+  const state = orderViewState[prefix] || { selectedHour: null };
+  const selectedOrderHour = state.selectedHour;
+
+  const filteredOrders = selectedOrderHour === null
+    ? orders
+    : orders.filter(([,o]) => o.completionHour === selectedOrderHour);
+
+  const selectedOrderNumbers = new Set(filteredOrders.map(([oNum]) => oNum));
+  const filteredRowsForOrders = rowsWithOrders.filter(r => selectedOrderNumbers.has(r.orderNumber));
+
+  const totalOrders = filteredOrders.length;
+  const totalUnits = filteredOrders.reduce((s, [,o]) => s + o.units, 0);
+  const productCategories = [...new Set(filteredOrders.map(([,o]) => o.productCategory))].sort();
+  const brands = [...new Set(filteredOrders.map(([,o]) => o.brand))].filter(b => b !== 'Unknown').sort();
+
   const dateLabel = document.getElementById(prefix + '-date-label');
   if(dateLabel) {
     const dateVal = selectedOpsDate || (txData[0] && txData[0].dateValue) || '';
     const dayVal = rowsWithOrders[0]?.dayOfWeek || '';
-    dateLabel.textContent = dateVal ? `${dateVal}${dayVal ? ' · ' + dayVal : ''}` : '';
+    const hourVal = selectedOrderHour === null ? 'All Hours' : formatHourShort(selectedOrderHour);
+    dateLabel.textContent = dateVal ? `${dateVal}${dayVal ? ' · ' + dayVal : ''} · ${hourVal}` : hourVal;
   }
 
-  // KPIs
   document.getElementById(prefix + '-kpi-orders').textContent = totalOrders.toLocaleString();
   document.getElementById(prefix + '-kpi-units').textContent = totalUnits.toLocaleString();
   document.getElementById(prefix + '-kpi-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
   document.getElementById(prefix + '-kpi-cats').textContent = productCategories.length;
   document.getElementById(prefix + '-kpi-brands').textContent = brands.length;
-  document.getElementById(prefix + '-kpi-orders-sub').textContent = 'unique order numbers';
-  document.getElementById(prefix + '-kpi-units-sub').textContent = 'across all orders';
+  document.getElementById(prefix + '-kpi-orders-sub').textContent = selectedOrderHour === null ? 'unique order numbers' : `completed in ${formatHourShort(selectedOrderHour)}`;
+  document.getElementById(prefix + '-kpi-units-sub').textContent = selectedOrderHour === null ? 'across all orders' : 'orders completed this hour';
 
-  // Non-Tile/Carpet/Wolf Gordon count (Material Bank only)
+  const uphEl = document.getElementById(prefix + '-kpi-uph');
+  const uphSub = document.getElementById(prefix + '-kpi-uph-sub');
+  if(uphEl) {
+    const pickerCount = new Set(filteredRowsForOrders.map(r => r.userId).filter(Boolean)).size;
+    const uph = pickerCount > 0 ? (totalUnits / pickerCount) : 0;
+    uphEl.textContent = pickerCount > 0 ? uph.toFixed(1) : '—';
+    if(uphSub) uphSub.textContent = pickerCount > 0
+      ? `${pickerCount.toLocaleString()} active picker${pickerCount === 1 ? '' : 's'}`
+      : 'no active pickers';
+  }
+
   if(showNonTCW) {
     const EXCLUDED_CATS = new Set(['Tile']);
     const EXCLUDED_BRAND_KEYWORDS = ['carpet', 'wolf gordon', 'wolf-gordon'];
-    const nonTCWCount = orders.filter(([,o]) => {
+    const nonTCWCount = filteredOrders.filter(([,o]) => {
       const cat = (o.productCategory || '').toLowerCase();
       const brand = (o.brand || '').toLowerCase();
       if(EXCLUDED_CATS.has(o.productCategory)) return false;
@@ -6048,9 +6128,8 @@ function renderOrderView(prefix, orders, rowsWithOrders, showNonTCW) {
     if(el) el.textContent = nonTCWCount.toLocaleString();
   }
 
-  // Product Category Breakdown
   const catStats = {};
-  for(const [, o] of orders) {
+  for(const [, o] of filteredOrders) {
     const cat = o.productCategory;
     if(!catStats[cat]) catStats[cat] = { orders: 0, units: 0 };
     catStats[cat].orders++;
@@ -6062,8 +6141,8 @@ function renderOrderView(prefix, orders, rowsWithOrders, showNonTCW) {
   catBody.innerHTML = '';
 
   catEntries.forEach(([cat, st], idx) => {
-    const pctOrders = ((st.orders / totalOrders) * 100).toFixed(1);
-    const pctUnits = ((st.units / totalUnits) * 100).toFixed(1);
+    const pctOrders = totalOrders > 0 ? ((st.orders / totalOrders) * 100).toFixed(1) : '0.0';
+    const pctUnits = totalUnits > 0 ? ((st.units / totalUnits) * 100).toFixed(1) : '0.0';
     const upo = st.orders > 0 ? (st.units / st.orders).toFixed(2) : '—';
     const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
     const tr = document.createElement('tr');
@@ -6084,56 +6163,226 @@ function renderOrderView(prefix, orders, rowsWithOrders, showNonTCW) {
   document.getElementById(prefix + '-cat-total-units').textContent = totalUnits.toLocaleString();
   document.getElementById(prefix + '-cat-total-upo').textContent = totalOrders > 0 ? (totalUnits / totalOrders).toFixed(2) : '—';
 
-  // Donut Chart
-  drawOrdersDonut(catEntries, totalOrders, prefix + '-donut-canvas');
+  drawOrdersDonut(catEntries, Math.max(totalOrders, 1), prefix + '-donut-canvas');
+  drawOrdersHourlyChart(prefix, orders);
+  drawDropOffMixTable(prefix, filteredOrders, totalOrders);
+}
 
-  // Brand Breakdown
-  const brandStats = {};
-  for(const [, o] of orders) {
-    const bKey = o.brand;
-    if(!brandStats[bKey]) brandStats[bKey] = { brand: bKey, productCategory: o.productCategory, orders: 0, units: 0 };
-    brandStats[bKey].orders++;
-    brandStats[bKey].units += o.units;
+function drawOrdersDonut(catEntries, totalOrders, canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const size = Math.min(canvas.parentElement.clientWidth - 20, 300);
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  canvas.style.width = size + 'px';
+  canvas.style.height = size + 'px';
+  ctx.clearRect(0, 0, size, size);
+
+  if(!catEntries.length) {
+    ctx.fillStyle = '#475569';
+    ctx.font = '12px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('No data', size / 2, size / 2);
+    return;
   }
 
-  const brandEntries = Object.entries(brandStats)
-    .map(([,s]) => s)
-    .sort((a,b) => b.orders - a.orders);
+  const cx = size / 2;
+  const cy = size / 2;
+  const outerR = size / 2 - 10;
+  const innerR = outerR * 0.55;
+  let startAngle = -Math.PI / 2;
 
-  const brandBody = document.getElementById(prefix + '-brand-body');
-  brandBody.innerHTML = '';
-  const maxBrandOrders = brandEntries.length ? brandEntries[0].orders : 1;
+  catEntries.forEach(([cat, st], idx) => {
+    const sliceAngle = (st.orders / totalOrders) * 2 * Math.PI;
+    const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
 
-  brandEntries.forEach(st => {
-    const pctOrders = ((st.orders / totalOrders) * 100).toFixed(1);
-    const upo = st.orders > 0 ? (st.units / st.orders).toFixed(2) : '—';
-    const catIdx = productCategories.indexOf(st.productCategory);
-    const color = OM_CAT_COLORS[catIdx >= 0 ? catIdx % OM_CAT_COLORS.length : 0];
-    const barW = (st.orders / maxBrandOrders) * 100;
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, startAngle, startAngle + sliceAngle);
+    ctx.arc(cx, cy, innerR, startAngle + sliceAngle, startAngle, true);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.85;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Label for slices > 5%
+    if(st.orders / totalOrders > 0.05) {
+      const midAngle = startAngle + sliceAngle / 2;
+      const labelR = (outerR + innerR) / 2;
+      const lx = cx + Math.cos(midAngle) * labelR;
+      const ly = cy + Math.sin(midAngle) * labelR;
+      const pct = ((st.orders / totalOrders) * 100).toFixed(0) + '%';
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pct, lx, ly);
+    }
+
+    startAngle += sliceAngle;
+  });
+
+  // Center text
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = 'bold 16px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(totalOrders.toLocaleString(), cx, cy - 8);
+  ctx.fillStyle = '#64748b';
+  ctx.font = '10px "IBM Plex Mono", monospace';
+  ctx.fillText('orders', cx, cy + 10);
+}
+
+function drawDropOffMixTable(prefix, filteredOrders, totalOrders) {
+  const body = document.getElementById(prefix + '-dropoff-body');
+  if(!body) return;
+  body.innerHTML = '';
+
+  const label = document.getElementById(prefix + '-dropoff-label');
+  const selectedOrderHour = orderViewState[prefix]?.selectedHour ?? null;
+  if(label) label.textContent = selectedOrderHour === null ? 'All Hours' : formatHourShort(selectedOrderHour);
+
+  const stats = {};
+  for(const [, o] of filteredOrders) {
+    const key = prefix === 'mb' ? (o.productCategory || 'Other') : (o.dropOffLocation || 'Unknown');
+    if(!stats[key]) stats[key] = { orders: 0, units: 0 };
+    stats[key].orders += 1;
+    stats[key].units += o.units;
+  }
+
+  const entries = Object.entries(stats).sort((a,b) => b[1].orders - a[1].orders);
+  const maxOrders = entries.length ? entries[0][1].orders : 1;
+
+  entries.forEach(([loc, st]) => {
+    const pctOrders = totalOrders > 0 ? ((st.orders / totalOrders) * 100).toFixed(1) : '0.0';
+    const barW = maxOrders > 0 ? (st.orders / maxOrders) * 100 : 0;
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid var(--border)';
     tr.innerHTML = `
-      <td style="padding:8px 6px;font-weight:500;">${st.brand}</td>
-      <td style="text-align:center;padding:8px 6px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px;vertical-align:middle;"></span>${st.productCategory}</td>
+      <td style="padding:8px 6px;font-weight:500;">${loc}</td>
       <td style="text-align:center;padding:8px 6px;">${st.orders.toLocaleString()}</td>
       <td style="text-align:center;padding:8px 6px;">${st.units.toLocaleString()}</td>
-      <td style="text-align:center;padding:8px 6px;">${upo}</td>
-      <td style="text-align:center;padding:8px 6px;">${pctOrders}%</td>
-      <td style="padding:8px 6px;"><div style="background:rgba(255,255,255,0.05);border-radius:4px;height:16px;overflow:hidden;"><div style="width:${barW}%;height:100%;background:${color};border-radius:4px;opacity:0.7;"></div></div></td>
+      <td style="text-align:center;padding:8px 6px;color:var(--cyan);font-weight:600;">${pctOrders}%</td>
+      <td style="padding:8px 6px;"><div style="background:rgba(255,255,255,0.05);border-radius:4px;height:16px;overflow:hidden;"><div style="width:${barW}%;height:100%;background:linear-gradient(90deg,var(--cyan),var(--blue));border-radius:4px;opacity:0.8;"></div></div></td>
     `;
-    brandBody.appendChild(tr);
+    body.appendChild(tr);
   });
 
+  if(!entries.length) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="5" style="padding:12px 6px;color:var(--text3);text-align:center;">No orders for selected hour</td>';
+    body.appendChild(tr);
+  }
 }
+
+function drawOrdersHourlyChart(prefix, allOrders) {
+  const canvas = document.getElementById(prefix + '-hourly-canvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.parentElement.clientWidth - 40;
+  const h = 180;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+
+  const hourData = Array.from({ length: 24 }, (_, hour) => ({ hour, orders: 0 }));
+  for(const [, o] of allOrders) {
+    if(Number.isInteger(o.completionHour) && o.completionHour >= 0 && o.completionHour <= 23) {
+      hourData[o.completionHour].orders += 1;
+    }
+  }
+
+  const activeHours = hourData.filter(hd => hd.orders > 0).map(hd => hd.hour);
+  const startHr = activeHours.length ? Math.max(0, Math.min(...activeHours) - 1) : 6;
+  const endHr = activeHours.length ? Math.min(23, Math.max(...activeHours) + 1) : 22;
+  const hours = [];
+  for(let hr = startHr; hr <= endHr; hr++) hours.push(hr);
+
+  const maxVal = Math.max(1, ...hours.map(hr => hourData[hr].orders));
+  const pad = { t: 18, r: 18, b: 28, l: 42 };
+  const plotW = Math.max(10, w - pad.l - pad.r);
+  const plotH = Math.max(10, h - pad.t - pad.b);
+  const gap = plotW / Math.max(1, hours.length);
+  const barW = Math.min(28, gap * 0.68);
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  for(let i = 0; i <= 4; i++) {
+    const y = pad.t + plotH - (plotH * (i / 4));
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(w - pad.r, y);
+    ctx.stroke();
+  }
+
+  const state = orderViewState[prefix];
+  state.hourRects = [];
+
+  for(let i = 0; i < hours.length; i++) {
+    const hr = hours[i];
+    const x = pad.l + i * gap + (gap - barW) / 2;
+    const val = hourData[hr].orders;
+    const barH = (val / maxVal) * plotH;
+    const y = pad.t + plotH - barH;
+    const isSelected = state.selectedHour === hr;
+
+    ctx.fillStyle = isSelected ? '#06b6d4' : '#3b82f6';
+    ctx.globalAlpha = state.selectedHour === null || isSelected ? 0.9 : 0.35;
+    ctx.fillRect(x, y, barW, barH);
+    ctx.globalAlpha = 1;
+
+    if(val > 0) {
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '500 9px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(val.toString(), x + barW / 2, y - 2);
+    }
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(formatHourShort(hr), x + barW / 2, pad.t + plotH + 6);
+
+    state.hourRects.push({ hour: hr, x, y, w: barW, h: barH });
+  }
+
+  const label = document.getElementById(prefix + '-hour-label');
+  if(label) label.textContent = state.selectedHour === null ? 'All Hours' : formatHourShort(state.selectedHour);
+
+  canvas.onclick = (evt) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    const hit = state.hourRects.find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h && r.h > 0);
+    state.selectedHour = hit ? (state.selectedHour === hit.hour ? null : hit.hour) : null;
+    if(prefix === 'mb') buildOrdersMixMB(); else buildOrdersMixFul();
+  };
+}
+
 
 function buildOrdersMixMB() {
   const data = gatherOrderData('Material Bank');
   if(!data || !data.orders.length) {
-    ['mb-kpi-orders','mb-kpi-units','mb-kpi-upo','mb-kpi-cats','mb-kpi-brands','mb-kpi-nontcw'].forEach(id => {
+    ['mb-kpi-orders','mb-kpi-units','mb-kpi-upo','mb-kpi-cats','mb-kpi-brands','mb-kpi-nontcw','mb-kpi-uph'].forEach(id => {
       const el = document.getElementById(id); if(el) el.textContent = '—';
     });
     const sub = document.getElementById('mb-kpi-orders-sub');
     if(sub) sub.textContent = 'no Material Bank order data';
+    const uphSub = document.getElementById('mb-kpi-uph-sub');
+    if(uphSub) uphSub.textContent = 'units / picker hour';
+    const body = document.getElementById('mb-dropoff-body');
+    if(body) body.innerHTML = '';
     return;
   }
   renderOrderView('mb', data.orders, data.rowsWithOrders, true);
@@ -6142,196 +6391,18 @@ function buildOrdersMixMB() {
 function buildOrdersMixFul() {
   const data = gatherOrderData('Fulfillment');
   if(!data || !data.orders.length) {
-    ['ful-kpi-orders','ful-kpi-units','ful-kpi-upo','ful-kpi-cats','ful-kpi-brands'].forEach(id => {
+    ['ful-kpi-orders','ful-kpi-units','ful-kpi-upo','ful-kpi-cats','ful-kpi-brands','ful-kpi-uph'].forEach(id => {
       const el = document.getElementById(id); if(el) el.textContent = '—';
     });
     const sub = document.getElementById('ful-kpi-orders-sub');
     if(sub) sub.textContent = 'no Fulfillment order data';
+    const uphSub = document.getElementById('ful-kpi-uph-sub');
+    if(uphSub) uphSub.textContent = 'units / picker hour';
+    const body = document.getElementById('ful-dropoff-body');
+    if(body) body.innerHTML = '';
     return;
   }
   renderOrderView('ful', data.orders, data.rowsWithOrders, false);
-}
-
-function drawOrdersDonut(catEntries, totalOrders, canvasId) {
-  const canvas = document.getElementById(canvasId || 'mb-donut-canvas');
-  if(!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = 300 * dpr;
-  canvas.height = 300 * dpr;
-  ctx.scale(dpr, dpr);
-  canvas.style.width = '300px';
-  canvas.style.height = '300px';
-
-  const cx = 150, cy = 150, outerR = 120, innerR = 70;
-  ctx.clearRect(0, 0, 300, 300);
-
-  if(!catEntries.length) return;
-
-  let startAngle = -Math.PI / 2;
-  catEntries.forEach(([cat, st], idx) => {
-    const sliceAngle = (st.orders / totalOrders) * Math.PI * 2;
-    const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, outerR, startAngle, startAngle + sliceAngle);
-    ctx.arc(cx, cy, innerR, startAngle + sliceAngle, startAngle, true);
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-
-    // Label
-    if(sliceAngle > 0.15) {
-      const midAngle = startAngle + sliceAngle / 2;
-      const labelR = (outerR + innerR) / 2;
-      const lx = cx + Math.cos(midAngle) * labelR;
-      const ly = cy + Math.sin(midAngle) * labelR;
-      const pct = ((st.orders / totalOrders) * 100).toFixed(0);
-      ctx.fillStyle = '#fff';
-      ctx.font = '600 11px "Syne", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`${pct}%`, lx, ly);
-    }
-
-    startAngle += sliceAngle;
-  });
-
-  // Center text
-  ctx.fillStyle = '#e2e8f0';
-  ctx.font = '800 24px "IBM Plex Mono", monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(totalOrders.toLocaleString(), cx, cy - 8);
-  ctx.fillStyle = '#475569';
-  ctx.font = '500 10px "IBM Plex Mono", monospace';
-  ctx.fillText('ORDERS', cx, cy + 14);
-
-  // Legend
-  const legendY = 280;
-  const legendStartX = 20;
-  let lx = legendStartX;
-  catEntries.forEach(([cat], idx) => {
-    if(idx > 5) return; // max 6 legend items
-    const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
-    ctx.fillStyle = color;
-    ctx.fillRect(lx, legendY, 8, 8);
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '400 9px "IBM Plex Mono", monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(cat, lx + 12, legendY);
-    lx += ctx.measureText(cat).width + 24;
-  });
-}
-
-function drawOrdersHourlyChart(orders, productCategories, canvasId) {
-  const canvas = document.getElementById(canvasId || 'mb-hourly-canvas');
-  if(!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.parentElement.clientWidth - 40;
-  const h = 200;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  ctx.scale(dpr, dpr);
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
-
-  // Group orders by hour and product category
-  const hourCat = {};
-  for(let hr = 0; hr < 24; hr++) {
-    hourCat[hr] = {};
-    productCategories.forEach(c => hourCat[hr][c] = 0);
-  }
-
-  for(const [, o] of orders) {
-    const hr = o.hour;
-    if(hourCat[hr]) {
-      hourCat[hr][o.productCategory] = (hourCat[hr][o.productCategory] || 0) + 1;
-    }
-  }
-
-  // Find hours with data
-  const activeHours = [];
-  for(let hr = 0; hr < 24; hr++) {
-    const total = Object.values(hourCat[hr]).reduce((s,v) => s + v, 0);
-    if(total > 0) activeHours.push(hr);
-  }
-  if(!activeHours.length) return;
-
-  const startHr = Math.max(0, activeHours[0] - 1);
-  const endHr = Math.min(23, activeHours[activeHours.length - 1] + 1);
-  const hours = [];
-  for(let hr = startHr; hr <= endHr; hr++) hours.push(hr);
-
-  // Compute max stacked value
-  let maxVal = 0;
-  hours.forEach(hr => {
-    const total = Object.values(hourCat[hr]).reduce((s,v) => s + v, 0);
-    if(total > maxVal) maxVal = total;
-  });
-  maxVal = Math.max(maxVal, 1);
-
-  const pad = { t: 20, r: 20, b: 30, l: 50 };
-  const plotW = w - pad.l - pad.r;
-  const plotH = h - pad.t - pad.b;
-  const barW = Math.min(30, (plotW / hours.length) * 0.7);
-  const gap = plotW / hours.length;
-
-  ctx.clearRect(0, 0, w, h);
-
-  // Y-axis gridlines
-  const ySteps = 5;
-  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-  ctx.lineWidth = 1;
-  for(let i = 0; i <= ySteps; i++) {
-    const yVal = (maxVal / ySteps) * i;
-    const yPos = pad.t + plotH - (plotH * (yVal / maxVal));
-    ctx.beginPath();
-    ctx.moveTo(pad.l, yPos);
-    ctx.lineTo(w - pad.r, yPos);
-    ctx.stroke();
-    ctx.fillStyle = '#475569';
-    ctx.font = '10px "IBM Plex Mono", monospace';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(Math.round(yVal).toString(), pad.l - 8, yPos);
-  }
-
-  // Stacked bars
-  hours.forEach((hr, i) => {
-    const x = pad.l + i * gap + (gap - barW) / 2;
-    let yOffset = 0;
-
-    productCategories.forEach((cat, ci) => {
-      const val = hourCat[hr][cat] || 0;
-      if(val <= 0) return;
-      const barH = (val / maxVal) * plotH;
-      const color = OM_CAT_COLORS[ci % OM_CAT_COLORS.length];
-      ctx.fillStyle = color;
-      ctx.fillRect(x, pad.t + plotH - yOffset - barH, barW, barH);
-      yOffset += barH;
-    });
-
-    // Hour label
-    ctx.fillStyle = '#475569';
-    ctx.font = '10px "IBM Plex Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    const label = hr === 0 ? '12a' : hr < 12 ? `${hr}a` : hr === 12 ? '12p' : `${hr-12}p`;
-    ctx.fillText(label, x + barW / 2, pad.t + plotH + 6);
-
-    // Total on top
-    const totalVal = Object.values(hourCat[hr]).reduce((s,v) => s + v, 0);
-    if(totalVal > 0) {
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '500 9px "IBM Plex Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(totalVal.toString(), x + barW / 2, pad.t + plotH - yOffset - 3);
-    }
-  });
 }
 
 document.querySelectorAll('.tab').forEach(tab => {
@@ -6374,5 +6445,70 @@ window.addEventListener('resize', () => {
   if(active==='ordersmix-ful' && txData.length > 0) { buildOrdersMixFul(); }
 });
 </script>
+
+<!-- ─── MERGED STATE + ORDERS COMPONENT ENGINE ───────────────────────── -->
+<script>
+const APP_STATE = {
+  selectedDate:null,
+  selectedDay:null,
+  selectedCategory:null,
+  selectedHour:null,
+  dataRows:[],
+  filteredRows:[]
+};
+
+function OrdersByCategory(rows){
+  const result = {};
+  rows.forEach(r=>{
+    const brand = r["Product Brand"] || "Unknown";
+    if(!result[brand]){
+      result[brand] = {orders:0,units:0};
+    }
+    result[brand].orders++;
+    result[brand].units += Number(r["Units"] || 0);
+  });
+  return result;
+}
+
+function renderOrdersTable(data,tableId){
+  const table = document.getElementById(tableId);
+  if(!table) return;
+  table.innerHTML="";
+  Object.keys(data).forEach(brand=>{
+    const row=document.createElement("tr");
+    const u=data[brand].units;
+    const o=data[brand].orders;
+    row.innerHTML=`
+      <td>${brand}</td>
+      <td>${o}</td>
+      <td>${u}</td>
+      <td>${(u/o).toFixed(2)}</td>
+    `;
+    table.appendChild(row);
+  });
+}
+
+function renderMaterialBank(){
+  const rows = APP_STATE.filteredRows.filter(r=>r.Category==="Material Bank");
+  const summary = OrdersByCategory(rows);
+  renderOrdersTable(summary,"mb-orders-table");
+}
+
+function renderFulfillment(){
+  const rows = APP_STATE.filteredRows.filter(r=>r.Category==="Fulfillment");
+  const summary = OrdersByCategory(rows);
+  renderOrdersTable(summary,"ful-orders-table");
+}
+
+function refreshAllDashboards(){
+  if(typeof renderOverview==="function") renderOverview();
+  if(typeof renderZoneMap==="function") renderZoneMap();
+  if(typeof renderZoneStats==="function") renderZoneStats();
+  renderMaterialBank();
+  renderFulfillment();
+}
+
+</script>
+
 </body>
 </html>
