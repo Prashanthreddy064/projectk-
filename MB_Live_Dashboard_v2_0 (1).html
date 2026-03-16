@@ -1317,6 +1317,30 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear Filters</button>
     </div>
 
+    <!-- Date Range & Forecast Mode -->
+    <div style="margin-bottom:14px;padding:10px 14px;border-radius:8px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.15);">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
+        <div>
+          <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Date Range</label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="date" id="fc-date-from" style="background:var(--card);color:var(--text1);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:11px;font-family:'IBM Plex Mono',monospace;" onchange="fcApplyDateRange()">
+            <span style="color:var(--text3);font-size:10px;">to</span>
+            <input type="date" id="fc-date-to" style="background:var(--card);color:var(--text1);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:11px;font-family:'IBM Plex Mono',monospace;" onchange="fcApplyDateRange()">
+            <button class="mctl" type="button" onclick="fcResetDateRange()" style="font-size:9px;padding:3px 8px;">All Dates</button>
+          </div>
+          <div id="fc-date-range-info" style="font-size:9px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-top:3px;"></div>
+        </div>
+        <div style="border-left:1px solid rgba(255,255,255,0.06);padding-left:12px;">
+          <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Forecast Mode</label>
+          <div style="display:flex;gap:6px;">
+            <button class="mctl active" id="fc-mode-avg" onclick="fcSetMode('average')">Per-Day Average</button>
+            <button class="mctl" id="fc-mode-sum" onclick="fcSetMode('sum')">Total (Sum)</button>
+          </div>
+          <div style="font-size:9px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-top:3px;">Average = forecast for <strong style="color:var(--cyan)">one</strong> day · Sum = all days combined</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Filter Controls — Toggle Buttons -->
     <div style="margin-top:14px;">
       <div style="margin-bottom:12px;">
@@ -5209,6 +5233,9 @@ const FC_MAX_BRANDS = 20;    // top N brands for softmax output
 let fcFilterCat = 'all';
 let fcFilterDay = 'all';
 let fcFilterHours = [];
+let fcDateFrom = '';       // date range filter (YYYY-MM-DD or '' for all)
+let fcDateTo = '';
+let fcMode = 'average';    // 'average' = per-day forecast, 'sum' = total across all days
 
 const FC_DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const FC_HOURS = [];
@@ -5606,17 +5633,28 @@ function fcApplyFiltersAndPredict() {
   if(!fcModel || !fcModel._fcMeta) return;
   const { zones, brands, maxUnits, sequences, targetMeta } = fcModel._fcMeta;
 
-  // Filter source data by category and day
-  let filtered = uploadedTxAll.slice();
+  // ─── Step 1: Filter source data by date range, category, and day ───
+  // Uses source data (uploadedTxAll), NOT dashboard output cells
+  let filtered = fcGetDateFilteredData();
   if(fcFilterCat !== 'all') filtered = filtered.filter(r => r.promoType === fcFilterCat);
   if(fcFilterDay !== 'all') filtered = filtered.filter(r => r.dayOfWeek === fcFilterDay);
 
-  // Actual hourly totals
+  // ─── Step 2: Count unique dates for averaging ───
+  // This is the key fix: instead of SUM across all days, we AVERAGE per day
+  const uniqueDatesInFiltered = new Set(filtered.map(r => r.dateValue).filter(Boolean));
+  const numDays = Math.max(uniqueDatesInFiltered.size, 1);
+  const useAverage = (fcMode === 'average');
+
+  // ─── Step 3: Actual hourly totals (from source data) ───
   fcActuals = {};
   FC_HOURS.forEach(h => fcActuals[h] = 0);
   filtered.forEach(r => {
     if(FC_HOURS.includes(r.hour)) fcActuals[r.hour] += r.units;
   });
+  // Convert to per-day average if in average mode
+  if(useAverage) {
+    FC_HOURS.forEach(h => { fcActuals[h] = fcActuals[h] / numDays; });
+  }
 
   // Actual zone totals
   fcZoneActuals = {};
@@ -5624,6 +5662,9 @@ function fcApplyFiltersAndPredict() {
     const z = r.zone || 'No Location';
     fcZoneActuals[z] = (fcZoneActuals[z] || 0) + r.units;
   });
+  if(useAverage) {
+    Object.keys(fcZoneActuals).forEach(z => { fcZoneActuals[z] /= numDays; });
+  }
 
   // Actual brand totals
   fcBrandActuals = {};
@@ -5633,16 +5674,26 @@ function fcApplyFiltersAndPredict() {
     if(!topBrands.includes(b)) b = 'Other';
     fcBrandActuals[b] = (fcBrandActuals[b] || 0) + r.units;
   });
+  if(useAverage) {
+    Object.keys(fcBrandActuals).forEach(b => { fcBrandActuals[b] /= numDays; });
+  }
 
-  // Use real historical sequences that match the active filters.
+  // ─── Step 4: Select matching sequences (with date range filter) ───
   const selectedIndices = [];
   (targetMeta || []).forEach((m, idx) => {
+    if(fcDateFrom && m.date < fcDateFrom) return;
+    if(fcDateTo && m.date > fcDateTo) return;
     if(fcFilterCat !== 'all' && m.category !== fcFilterCat) return;
     if(fcFilterDay !== 'all' && m.day !== fcFilterDay) return;
     if(fcFilterHours.length > 0 && !fcFilterHours.includes(m.hour)) return;
     selectedIndices.push(idx);
   });
 
+  // Count unique dates in selected sequences (for prediction averaging)
+  const predDatesSet = new Set(selectedIndices.map(i => targetMeta[i].date));
+  const numPredDays = Math.max(predDatesSet.size, 1);
+
+  // ─── Step 5: Run model predictions ───
   fcPredictions = {};
   FC_HOURS.forEach(h => fcPredictions[h] = 0);
   const brandWeighted = new Array(brands.length).fill(0);
@@ -5676,6 +5727,14 @@ function fcApplyFiltersAndPredict() {
     predTensor.dispose();
   }
 
+  // ─── Step 6: AVERAGE predictions per day (not SUM) ───
+  // e.g. 3 Mondays with 100, 110, 120 → average = 110, not sum = 330
+  if(useAverage) {
+    FC_HOURS.forEach(h => { fcPredictions[h] = fcPredictions[h] / numPredDays; });
+    for(let bi = 0; bi < brands.length; bi++) { brandWeighted[bi] /= numPredDays; }
+    for(let zi = 0; zi < zones.length; zi++) { zoneWeighted[zi] /= numPredDays; }
+  }
+
   // Aggregate brand predictions (weighted by predicted units)
   fcBrandPredictions = {};
   const totalPredUnits = Object.values(fcPredictions).reduce((s, v) => s + v, 0) || 1;
@@ -5694,6 +5753,9 @@ function fcApplyFiltersAndPredict() {
   if(fcFilterHours.length > 0) {
     fcFiltered = filtered.filter(r => fcFilterHours.includes(r.hour));
   }
+
+  // Store day counts for KPI display
+  fcModel._fcDayCounts = { numDays, numPredDays, useAverage };
 
   // Render everything
   fcBuildKPIs();
@@ -5750,6 +5812,9 @@ function fcBuildToggleButtons() {
   fcFilterCat = 'all';
   fcFilterDay = 'all';
   fcFilterHours = [];
+
+  // Initialize date range pickers with dynamic min/max from data
+  fcInitDateRange();
 }
 
 function fcFormatHour(h) {
@@ -5793,6 +5858,7 @@ function fcClearAllFilters() {
   fcFilterCat = 'all';
   fcFilterDay = 'all';
   fcFilterHours = [];
+  fcResetDateRange();
   // Reset UI
   ['fc-cat-btns','fc-day-btns','fc-hour-btns'].forEach(id => {
     const container = document.getElementById(id);
@@ -5802,6 +5868,59 @@ function fcClearAllFilters() {
     if(first) first.classList.add('active');
   });
   if(fcModel) fcApplyFiltersAndPredict();
+}
+
+// ─── Date Range Filter ──────────────────────
+function fcInitDateRange() {
+  // Auto-detect date range from uploaded data (dynamic — adjusts when new data is dropped)
+  if(!uploadedTxAll || !uploadedTxAll.length) return;
+  const dates = [...new Set(uploadedTxAll.map(r => r.dateValue).filter(Boolean))].sort();
+  if(!dates.length) return;
+
+  const fromEl = document.getElementById('fc-date-from');
+  const toEl = document.getElementById('fc-date-to');
+  if(fromEl) { fromEl.min = dates[0]; fromEl.max = dates[dates.length - 1]; }
+  if(toEl)   { toEl.min = dates[0];   toEl.max = dates[dates.length - 1]; }
+
+  // Default: show full range, no restriction
+  if(!fcDateFrom) { if(fromEl) fromEl.value = ''; }
+  if(!fcDateTo)   { if(toEl)   toEl.value = ''; }
+
+  const infoEl = document.getElementById('fc-date-range-info');
+  if(infoEl) infoEl.textContent = `Data spans ${dates.length} date(s): ${dates[0]} to ${dates[dates.length - 1]}`;
+}
+
+function fcApplyDateRange() {
+  const fromEl = document.getElementById('fc-date-from');
+  const toEl = document.getElementById('fc-date-to');
+  fcDateFrom = fromEl ? fromEl.value : '';
+  fcDateTo = toEl ? toEl.value : '';
+  if(fcModel) fcApplyFiltersAndPredict();
+}
+
+function fcResetDateRange() {
+  fcDateFrom = '';
+  fcDateTo = '';
+  const fromEl = document.getElementById('fc-date-from');
+  const toEl = document.getElementById('fc-date-to');
+  if(fromEl) fromEl.value = '';
+  if(toEl)   toEl.value = '';
+  // Don't call fcApplyFiltersAndPredict here — caller does it
+}
+
+function fcSetMode(mode) {
+  fcMode = mode;
+  document.getElementById('fc-mode-avg').classList.toggle('active', mode === 'average');
+  document.getElementById('fc-mode-sum').classList.toggle('active', mode === 'sum');
+  if(fcModel) fcApplyFiltersAndPredict();
+}
+
+// Helper: get uploadedTxAll filtered by current date range
+function fcGetDateFilteredData() {
+  let data = uploadedTxAll;
+  if(fcDateFrom) data = data.filter(r => r.dateValue >= fcDateFrom);
+  if(fcDateTo) data = data.filter(r => r.dateValue <= fcDateTo);
+  return data;
 }
 
 // ─── KPIs ────────────────────────────────────
@@ -5859,7 +5978,13 @@ function fcBuildKPIs() {
   const parts = [];
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
   if(fcFilterDay !== 'all') parts.push(fcFilterDay);
-  document.getElementById('fc-kpi-volume-sub').textContent = parts.length ? parts.join(' · ') : 'all data';
+  const dayCounts = fcModel && fcModel._fcDayCounts ? fcModel._fcDayCounts : {};
+  if(dayCounts.useAverage) {
+    parts.push('avg of ' + dayCounts.numDays + ' day' + (dayCounts.numDays !== 1 ? 's' : ''));
+  } else {
+    parts.push('total across ' + (dayCounts.numDays || '?') + ' days');
+  }
+  document.getElementById('fc-kpi-volume-sub').textContent = parts.join(' · ');
 }
 
 // ─── Brand Prediction Table ─────────────────
