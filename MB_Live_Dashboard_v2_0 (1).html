@@ -1418,7 +1418,9 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   <!-- Forecast Hourly Chart — Actual vs Predicted -->
   <div class="card" style="margin-bottom:16px;">
     <div class="card-title">Hourly Volume — Actual vs Forecast <span id="fc-hourly-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
-    <canvas id="fc-hourly-canvas" height="220"></canvas>
+    <p style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:6px;">Click bars to select/deselect hours. Selection filters Brand, Zone, and Staffing tables below.</p>
+    <canvas id="fc-hourly-canvas" height="220" style="cursor:pointer;"></canvas>
+    <div id="fc-chart-selection-info" style="font-size:9px;color:var(--amber);font-family:'IBM Plex Mono',monospace;margin-top:4px;"></div>
   </div>
 
   <!-- Brand Prediction Table -->
@@ -1427,13 +1429,15 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
       Brand probabilities predicted by the TCN softmax head. Shows which brands are most likely to be picked during selected hours.
     </p>
+    <div id="fc-brand-filter-info" style="font-size:9px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-bottom:8px;"></div>
     <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
       <thead>
         <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
           <th style="text-align:left;padding:8px 6px;">Product Brand</th>
-          <th style="text-align:center;padding:8px 6px;">Predicted Probability</th>
+          <th style="text-align:center;padding:8px 6px;">Predicted Prob</th>
+          <th style="text-align:center;padding:8px 6px;">Forecasted Units</th>
           <th style="text-align:center;padding:8px 6px;">Actual Units</th>
-          <th style="width:200px;padding:8px 6px;">Distribution</th>
+          <th style="width:180px;padding:8px 6px;">Distribution</th>
         </tr>
       </thead>
       <tbody id="fc-brand-body"></tbody>
@@ -5743,11 +5747,29 @@ function fcApplyFiltersAndPredict() {
   if(fcFilterCat !== 'all') filtered = filtered.filter(r => r.promoType === fcFilterCat);
   if(fcFilterDay !== 'all') filtered = filtered.filter(r => r.dayOfWeek === fcFilterDay);
 
-  // ─── Step 2: Actuals — show the most recent matching day's data as baseline ───
-  // Find the most recent date in filtered data to show as "actual" comparison
+  // ─── Step 2: Actuals — dynamically match target date's weekday ───
+  // When a target date is set, find the closest same-weekday date in data
   const sortedActualDates = [...new Set(filtered.map(r => r.dateValue).filter(Boolean))].sort();
-  const mostRecentDate = sortedActualDates.length ? sortedActualDates[sortedActualDates.length - 1] : null;
-  const actualsForDay = mostRecentDate ? filtered.filter(r => r.dateValue === mostRecentDate) : [];
+  let actualsDate = null;
+  if(fcTargetDate) {
+    const targetDt = new Date(fcTargetDate + 'T00:00:00');
+    const targetDow = FC_DAY_ORDER[targetDt.getDay()];
+    // Find all dates with the same day-of-week
+    const sameDowDates = sortedActualDates.filter(d => {
+      const dt = new Date(d + 'T00:00:00');
+      return FC_DAY_ORDER[dt.getDay()] === targetDow;
+    });
+    if(sameDowDates.length > 0) {
+      // Pick the most recent same-weekday date before the target
+      const beforeTarget = sameDowDates.filter(d => d < fcTargetDate);
+      actualsDate = beforeTarget.length ? beforeTarget[beforeTarget.length - 1] : sameDowDates[sameDowDates.length - 1];
+    } else {
+      actualsDate = sortedActualDates.length ? sortedActualDates[sortedActualDates.length - 1] : null;
+    }
+  } else {
+    actualsDate = sortedActualDates.length ? sortedActualDates[sortedActualDates.length - 1] : null;
+  }
+  const actualsForDay = actualsDate ? filtered.filter(r => r.dateValue === actualsDate) : [];
 
   fcActuals = {};
   FC_HOURS.forEach(h => fcActuals[h] = 0);
@@ -5842,7 +5864,7 @@ function fcApplyFiltersAndPredict() {
 
     // Show weight breakdown
     fcRenderWeightBreakdown(blend.weightInfo, blend.targetDow);
-    fcModel._fcForecastInfo = { targetDate: fcTargetDate, targetDow: blend.targetDow, weightInfo: blend.weightInfo, mostRecentActual: mostRecentDate };
+    fcModel._fcForecastInfo = { targetDate: fcTargetDate, targetDow: blend.targetDow, weightInfo: blend.weightInfo, mostRecentActual: actualsDate };
   } else {
     // No target date: fall back to TCN-only per-day average
     fcPredictions = tcnHourly;
@@ -5856,7 +5878,7 @@ function fcApplyFiltersAndPredict() {
 
     const breakdownEl = document.getElementById('fc-weight-breakdown');
     if(breakdownEl) breakdownEl.style.display = 'none';
-    fcModel._fcForecastInfo = { targetDate: null, targetDow: null, mostRecentActual: mostRecentDate };
+    fcModel._fcForecastInfo = { targetDate: null, targetDow: null, mostRecentActual: actualsDate };
   }
 
   // Apply hour filter for display
@@ -6349,28 +6371,48 @@ function fcBuildBrandPredictionTable() {
   if(!tbody) return;
   tbody.innerHTML = '';
 
-  const brandEntries = Object.entries(fcBrandPredictions)
-    .filter(([b, p]) => p > 0.001)
-    .sort((a, b) => b[1] - a[1]);
+  // Calculate forecasted units per brand from probability × total forecast
+  const totalForecast = Object.values(fcPredictions).reduce((s, v) => s + v, 0);
+  // If hours are selected, scope to those hours
+  const scopedForecast = fcFilterHours.length > 0
+    ? fcFilterHours.reduce((s, h) => s + (fcPredictions[h] || 0), 0)
+    : totalForecast;
 
-  const maxProb = brandEntries.length ? brandEntries[0][1] : 1;
+  // Build brand entries with forecasted units and filter >250
+  const brandEntries = Object.entries(fcBrandPredictions)
+    .map(([b, prob]) => {
+      const forecastedUnits = prob * scopedForecast;
+      const actualUnits = fcBrandActuals[b] || 0;
+      return [b, prob, forecastedUnits, actualUnits];
+    })
+    .filter(([b, prob, fc, ac]) => fc > 250 || ac > 250)
+    .sort((a, b) => b[2] - a[2]); // sort by forecasted units desc
+
+  const maxFc = brandEntries.length ? Math.max(...brandEntries.map(e => e[2])) : 1;
   const labelEl = document.getElementById('fc-brand-label');
   const parts = [];
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
   if(fcFilterDay !== 'all') parts.push(fcFilterDay);
+  if(fcFilterHours.length > 0) parts.push(fcFilterHours.length + ' hour(s) selected');
   if(labelEl) labelEl.textContent = parts.length ? parts.join(' · ') : 'All Data';
 
-  brandEntries.forEach(([brand, prob], idx) => {
+  const filterInfo = document.getElementById('fc-brand-filter-info');
+  const totalBrands = Object.keys(fcBrandPredictions).length;
+  if(filterInfo) filterInfo.textContent = `Showing ${brandEntries.length} of ${totalBrands} brands (volume > 250 units)`;
+
+  brandEntries.forEach(([brand, prob, forecastedUnits, actualUnits], idx) => {
     const pctStr = (prob * 100).toFixed(1) + '%';
-    const barW = (prob / maxProb * 100).toFixed(1);
+    const barW = (forecastedUnits / maxFc * 100).toFixed(1);
     const color = OM_CAT_COLORS[idx % OM_CAT_COLORS.length];
-    const actualUnits = fcBrandActuals[brand] || 0;
+    const delta = forecastedUnits - actualUnits;
+    const deltaColor = delta >= 0 ? 'var(--green)' : 'var(--red)';
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid var(--border)';
     tr.innerHTML = `
       <td style="padding:8px 6px;font-weight:500;">${brand}</td>
       <td style="text-align:center;padding:8px 6px;color:${color};font-weight:600;">${pctStr}</td>
-      <td style="text-align:center;padding:8px 6px;">${actualUnits.toLocaleString()}</td>
+      <td style="text-align:center;padding:8px 6px;font-weight:600;">${Math.round(forecastedUnits).toLocaleString()}</td>
+      <td style="text-align:center;padding:8px 6px;">${Math.round(actualUnits).toLocaleString()} <span style="font-size:9px;color:${deltaColor};">${delta >= 0 ? '+' : ''}${Math.round(delta).toLocaleString()}</span></td>
       <td style="padding:8px 6px;"><div style="background:rgba(255,255,255,0.05);border-radius:4px;height:16px;overflow:hidden;"><div style="width:${barW}%;height:100%;background:${color};border-radius:4px;opacity:0.7;"></div></div></td>
     `;
     tbody.appendChild(tr);
@@ -6378,13 +6420,28 @@ function fcBuildBrandPredictionTable() {
 }
 
 // ─── Zone Prediction Table ──────────────────
+// Helper: compute hour-scoped fraction for zone/brand scaling
+function fcGetHourScopeFraction() {
+  if(fcFilterHours.length === 0) return 1;
+  const totalAll = Object.values(fcPredictions).reduce((s, v) => s + v, 0) || 1;
+  const totalSelected = fcFilterHours.reduce((s, h) => s + (fcPredictions[h] || 0), 0);
+  return totalSelected / totalAll;
+}
+
 function fcBuildZonePredictionTable() {
   const tbody = document.getElementById('fc-zone-pred-body');
   if(!tbody) return;
   tbody.innerHTML = '';
 
-  const totalPredicted = Object.values(fcZonePredictions).reduce((s, v) => s + v, 0) || 1;
-  const zoneEntries = Object.entries(fcZonePredictions)
+  // Scale zone predictions/actuals by the hour selection fraction
+  const hourFraction = fcGetHourScopeFraction();
+  const scaledZonePred = {};
+  const scaledZoneAct = {};
+  Object.entries(fcZonePredictions).forEach(([z, v]) => { scaledZonePred[z] = v * hourFraction; });
+  Object.entries(fcZoneActuals).forEach(([z, v]) => { scaledZoneAct[z] = v * hourFraction; });
+
+  const totalPredicted = Object.values(scaledZonePred).reduce((s, v) => s + v, 0) || 1;
+  const zoneEntries = Object.entries(scaledZonePred)
     .filter(([z, u]) => u > 0)
     .sort((a, b) => b[1] - a[1]);
 
@@ -6393,12 +6450,13 @@ function fcBuildZonePredictionTable() {
   const parts = [];
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
   if(fcFilterDay !== 'all') parts.push(fcFilterDay);
+  if(fcFilterHours.length > 0) parts.push(fcFilterHours.length + ' hour(s) selected');
   if(labelEl) labelEl.textContent = parts.length ? parts.join(' · ') : 'All Data';
 
   zoneEntries.forEach(([zone, predUnits]) => {
     const prob = predUnits / totalPredicted;
     const pctStr = (prob * 100).toFixed(1) + '%';
-    const actual = fcZoneActuals[zone] || 0;
+    const actual = scaledZoneAct[zone] || 0;
     const barW = (predUnits / maxUnits * 100).toFixed(1);
     const color = ZONE_COLORS[zone] || '#64748b';
     const tr = document.createElement('tr');
@@ -6419,16 +6477,23 @@ function fcBuildStaffingTable() {
   const tbody = document.getElementById('fc-staffing-body');
   tbody.innerHTML = '';
 
-  const totalPredicted = Object.values(fcZonePredictions).reduce((s, v) => s + v, 0);
-  const totalActual = Object.values(fcZoneActuals).reduce((s, v) => s + v, 0);
-  const maxVol = Math.max(...Object.values(fcZonePredictions), 1);
+  // Scale by hour selection
+  const hourFraction = fcGetHourScopeFraction();
+  const scaledPred = {};
+  const scaledAct = {};
+  Object.entries(fcZonePredictions).forEach(([z, v]) => { scaledPred[z] = v * hourFraction; });
+  Object.entries(fcZoneActuals).forEach(([z, v]) => { scaledAct[z] = v * hourFraction; });
+
+  const totalPredicted = Object.values(scaledPred).reduce((s, v) => s + v, 0);
+  const totalActual = Object.values(scaledAct).reduce((s, v) => s + v, 0);
+  const maxVol = Math.max(...Object.values(scaledPred), 1);
 
   const selectedHoursCount = fcFilterHours.length || 8; // default 8h shift
   let totalPick = 0;
 
   const allZones = Array.from(new Set([...Object.keys(UPH), ...Object.keys(fcZonePredictions), ...Object.keys(fcZoneActuals)]));
   const sorted = allZones
-    .map(zone => [zone, fcZonePredictions[zone] || 0, fcZoneActuals[zone] || 0])
+    .map(zone => [zone, scaledPred[zone] || 0, scaledAct[zone] || 0])
     .sort((a, b) => b[1] - a[1]);
 
   sorted.forEach(([zone, pred, actual]) => {
@@ -6663,6 +6728,9 @@ function fcBuildHandoverPlan() {
 }
 
 // ─── Hourly Volume Chart (Actual vs Forecast) ─────────────────────
+// Store chart layout for click detection
+let fcChartLayout = { padL: 50, padR: 20, padT: 30, padB: 30, barW: 0, W: 0, H: 0 };
+
 function fcBuildHourlyChart() {
   const canvas = document.getElementById('fc-hourly-canvas');
   const ctx = canvas.getContext('2d');
@@ -6681,6 +6749,9 @@ function fcBuildHourlyChart() {
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
   const barW = chartW / FC_HOURS.length;
+
+  // Store for click handler
+  fcChartLayout = { padL, padR, padT, padB, barW, W, H, chartW, chartH };
 
   // Grid lines
   ctx.strokeStyle = '#1f2d45';
@@ -6712,27 +6783,34 @@ function fcBuildHourlyChart() {
     const pred = fcPredictions[h] || 0;
     const halfW = (barW - 4) / 2;
     const x = padL + idx * barW;
+    const isSelected = fcFilterHours.includes(h);
 
-    // Actual bar (left)
+    // Dimmed background for unselected bars when there is a selection
+    if(fcFilterHours.length > 0 && !isSelected) {
+      ctx.fillStyle = 'rgba(255,255,255,0.02)';
+      ctx.fillRect(x, padT, barW, chartH);
+    }
+
+    // Actual bar (left) — brighter when selected
     const actBarH = (actual / maxV) * chartH;
-    ctx.fillStyle = 'rgba(6,182,212,0.6)';
+    ctx.fillStyle = isSelected ? 'rgba(6,182,212,0.85)' : 'rgba(6,182,212,0.5)';
     ctx.fillRect(x + 1, padT + chartH - actBarH, halfW, actBarH);
 
     // Predicted bar (right)
     const predBarH = (pred / maxV) * chartH;
-    ctx.fillStyle = 'rgba(59,130,246,0.6)';
+    ctx.fillStyle = isSelected ? 'rgba(59,130,246,0.85)' : 'rgba(59,130,246,0.5)';
     ctx.fillRect(x + 1 + halfW + 1, padT + chartH - predBarH, halfW, predBarH);
 
-    // Highlight selected hours
-    if(fcFilterHours.includes(h)) {
+    // Highlight selected hours with amber border
+    if(isSelected) {
       ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 2;
       ctx.strokeRect(x, padT, barW, chartH);
     }
 
-    // Hour label
-    ctx.fillStyle = '#475569';
-    ctx.font = '8px IBM Plex Mono';
+    // Hour label — highlight if selected
+    ctx.fillStyle = isSelected ? '#f59e0b' : '#475569';
+    ctx.font = isSelected ? 'bold 9px IBM Plex Mono' : '8px IBM Plex Mono';
     ctx.textAlign = 'center';
     const label = h === 0 ? '12a' : h < 12 ? h + 'a' : h === 12 ? '12p' : (h - 12) + 'p';
     ctx.fillText(label, x + barW / 2, H - 10);
@@ -6740,11 +6818,80 @@ function fcBuildHourlyChart() {
     // Value on top
     const topVal = Math.max(actual, pred);
     if(topVal > 0) {
-      ctx.fillStyle = '#94a3b8';
+      ctx.fillStyle = isSelected ? '#e2e8f0' : '#94a3b8';
       ctx.font = '8px IBM Plex Mono';
       ctx.fillText(Math.round(pred).toString(), x + barW / 2, padT + chartH - Math.max(actBarH, predBarH) - 4);
     }
   });
+
+  // Selection info
+  const infoEl = document.getElementById('fc-chart-selection-info');
+  if(infoEl) {
+    if(fcFilterHours.length > 0) {
+      const selVol = fcFilterHours.reduce((s, h) => s + (fcPredictions[h] || 0), 0);
+      const selAct = fcFilterHours.reduce((s, h) => s + (fcActuals[h] || 0), 0);
+      infoEl.textContent = `Selected ${fcFilterHours.length} hour(s): ${Math.round(selVol).toLocaleString()} forecasted / ${Math.round(selAct).toLocaleString()} actual units — click bar to deselect, click empty to clear`;
+    } else {
+      infoEl.textContent = '';
+    }
+  }
+
+  // Attach click handler (only once)
+  if(!canvas._fcClickAttached) {
+    canvas._fcClickAttached = true;
+    canvas.addEventListener('click', fcHandleChartClick);
+  }
+}
+
+// ─── Chart Click Handler — toggle hour selection from bar click ───
+function fcHandleChartClick(e) {
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const clickX = (e.clientX - rect.left) * scaleX;
+  const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  const { padL, padT, barW, chartH } = fcChartLayout;
+  if(!barW) return;
+
+  // Check if click is within the chart area
+  if(clickY < padT || clickY > padT + chartH) return;
+  if(clickX < padL) return;
+
+  const barIdx = Math.floor((clickX - padL) / barW);
+  if(barIdx < 0 || barIdx >= FC_HOURS.length) return;
+
+  const clickedHour = FC_HOURS[barIdx];
+
+  // Toggle the hour in fcFilterHours
+  const idx = fcFilterHours.indexOf(clickedHour);
+  if(idx >= 0) {
+    fcFilterHours.splice(idx, 1);
+  } else {
+    fcFilterHours.push(clickedHour);
+  }
+
+  // Sync the hour toggle buttons
+  const container = document.getElementById('fc-hour-btns');
+  if(container) {
+    const allBtn = container.querySelector('[data-hour="all"]');
+    if(allBtn) allBtn.classList.toggle('active', fcFilterHours.length === 0);
+    container.querySelectorAll('[data-hour]').forEach(b => {
+      const hv = b.getAttribute('data-hour');
+      if(hv === 'all') return;
+      b.classList.toggle('active', fcFilterHours.includes(parseInt(hv, 10)));
+    });
+  }
+
+  // Re-render all widgets (global filter propagation)
+  if(fcModel) {
+    fcBuildKPIs();
+    fcBuildHourlyChart();
+    fcBuildBrandPredictionTable();
+    fcBuildZonePredictionTable();
+    fcBuildStaffingTable();
+    fcBuildHandoverPlan();
+  }
 }
 
 // ═══════════════════════════════════════════════
