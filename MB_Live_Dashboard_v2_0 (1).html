@@ -1493,6 +1493,87 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </table>
   </div>
 
+  <!-- ═══ Shift Overlap Congestion Manager ═══ -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Shift Overlap — Zone Congestion Manager</div>
+    <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
+      Define the overlap period when both shifts work simultaneously. The model forecasts per-zone headcount during this window
+      and generates a Handover Plan to prevent congestion.
+    </p>
+
+    <!-- Overlap Clock-Time Inputs -->
+    <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;margin-bottom:16px;padding:10px 14px;border-radius:8px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);">
+      <div>
+        <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Shift 2 Start (Overlap Begin)</label>
+        <input type="time" id="fc-overlap-start" value="14:30" style="background:var(--card);color:var(--text1);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;font-family:'IBM Plex Mono',monospace;" onchange="fcBuildHandoverPlan()">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Shift 1 End (Overlap End)</label>
+        <input type="time" id="fc-overlap-end" value="16:00" style="background:var(--card);color:var(--text1);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;font-family:'IBM Plex Mono',monospace;" onchange="fcBuildHandoverPlan()">
+      </div>
+      <button class="mctl" type="button" onclick="fcBuildHandoverPlan()">Generate Handover Plan</button>
+      <div id="fc-overlap-window-label" style="font-size:10px;color:var(--amber);font-family:'IBM Plex Mono',monospace;"></div>
+    </div>
+
+    <!-- Zone Headcount — Forecasted vs Capacity -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text1);margin-bottom:8px;font-family:'IBM Plex Mono',monospace;">Zone Headcount During Overlap — Forecast vs Physical Capacity</div>
+      <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
+            <th style="text-align:left;padding:8px 6px;">Zone</th>
+            <th style="text-align:center;padding:8px 6px;">S1 Pickers</th>
+            <th style="text-align:center;padding:8px 6px;">S2 Pickers</th>
+            <th style="text-align:center;padding:8px 6px;">Combined</th>
+            <th style="text-align:center;padding:8px 6px;">Capacity</th>
+            <th style="text-align:center;padding:8px 6px;">Status</th>
+            <th style="text-align:center;padding:8px 6px;">Forecast Vol (Overlap)</th>
+            <th style="width:140px;padding:8px 6px;">Load</th>
+          </tr>
+        </thead>
+        <tbody id="fc-headcount-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Handover Plan -->
+    <div id="fc-handover-section" style="display:none;">
+      <div style="font-size:11px;font-weight:600;color:var(--text1);margin-bottom:8px;font-family:'IBM Plex Mono',monospace;">
+        Handover Plan — Zone Reassignment During Overlap
+      </div>
+      <div id="fc-handover-summary" style="margin-bottom:10px;padding:8px 12px;border-radius:6px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.15);font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text2);"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <!-- Shift 1 Handover -->
+        <div style="padding:10px 14px;border-radius:8px;background:rgba(6,182,212,0.06);border:1px solid rgba(6,182,212,0.15);">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--cyan);font-weight:600;margin-bottom:8px;">Shift 1 — Move Into (to finish shift)</div>
+          <table style="width:100%;font-size:11px;font-family:'IBM Plex Mono',monospace;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">
+                <th style="text-align:left;padding:4px;">Zone</th>
+                <th style="text-align:center;padding:4px;">Pickers</th>
+                <th style="text-align:center;padding:4px;">Remaining Capacity</th>
+              </tr>
+            </thead>
+            <tbody id="fc-handover-s1-body"></tbody>
+          </table>
+        </div>
+        <!-- Shift 2 Handover -->
+        <div style="padding:10px 14px;border-radius:8px;background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.15);">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--purple);font-weight:600;margin-bottom:8px;">Shift 2 — Occupy (to start shift)</div>
+          <table style="width:100%;font-size:11px;font-family:'IBM Plex Mono',monospace;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);">
+                <th style="text-align:left;padding:4px;">Zone</th>
+                <th style="text-align:center;padding:4px;">Pickers</th>
+                <th style="text-align:center;padding:4px;">Remaining Capacity</th>
+              </tr>
+            </thead>
+            <tbody id="fc-handover-s2-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- MATERIAL BANK ORDER VIEW DASHBOARD -->
@@ -1730,6 +1811,11 @@ const STEADY = {
   'ZONE 5':{s1:2,s2:3},'ZONE 3':{s1:2,s2:2},'Wolf gordon':{s1:1,s2:2},
   'Big Rack':{s1:1,s2:2},'ZONE 4':{s1:1,s2:1},'Nora':{s1:1,s2:1},
   'Promo':{s1:1,s2:1},'Samplize':{s1:1,s2:1}
+};
+// Physical max pickers a zone can hold before congestion blocks productivity
+const ZONE_CAPACITY = {
+  'ZONE 1':10,'Paint':8,'ZONE 2':5,'ZONE 5':5,'ZONE 3':4,
+  'Wolf gordon':3,'Big Rack':3,'ZONE 4':3,'Nora':2,'Promo':3,'Samplize':2
 };
   const SHIFT_WINDOWS = {
   s1:{label:'1st Shift',start:6,end:14,emoji:'🌅'},
@@ -5785,6 +5871,7 @@ function fcApplyFiltersAndPredict() {
   fcBuildBrandPredictionTable();
   fcBuildZonePredictionTable();
   fcBuildStaffingTable();
+  fcBuildHandoverPlan();
 }
 
 function fcBuildToggleButtons() {
@@ -6367,6 +6454,212 @@ function fcBuildStaffingTable() {
   document.getElementById('fc-staff-total-actual').textContent = Math.round(totalActual).toLocaleString();
   document.getElementById('fc-staff-total-vol').textContent = Math.round(totalPredicted).toLocaleString();
   document.getElementById('fc-staff-total-pickers').textContent = totalPick;
+}
+
+// ─── Shift Overlap Congestion & Handover Plan ─────────────────────
+
+function fcBuildHandoverPlan() {
+  const startEl = document.getElementById('fc-overlap-start');
+  const endEl = document.getElementById('fc-overlap-end');
+  if(!startEl || !endEl) return;
+
+  const overlapStartStr = startEl.value || '14:30';
+  const overlapEndStr = endEl.value || '16:00';
+
+  // Parse overlap window to hours
+  const [osH, osM] = overlapStartStr.split(':').map(Number);
+  const [oeH, oeM] = overlapEndStr.split(':').map(Number);
+  const overlapStartMin = osH * 60 + osM;
+  const overlapEndMin = oeH * 60 + oeM;
+
+  if(overlapEndMin <= overlapStartMin) {
+    const labelEl = document.getElementById('fc-overlap-window-label');
+    if(labelEl) labelEl.textContent = 'Invalid: end must be after start';
+    return;
+  }
+
+  const overlapHours = (overlapEndMin - overlapStartMin) / 60;
+  const labelEl = document.getElementById('fc-overlap-window-label');
+  if(labelEl) {
+    const fmt = t => { const h = Math.floor(t/60); const m = t%60; const ap = h >= 12 ? 'PM' : 'AM'; return ((h > 12 ? h-12 : h) || 12) + ':' + String(m).padStart(2,'0') + ' ' + ap; };
+    labelEl.textContent = `Overlap: ${fmt(overlapStartMin)} – ${fmt(overlapEndMin)} (${overlapHours.toFixed(1)}h)`;
+  }
+
+  // Determine which hours fall in the overlap window
+  const overlapHourList = [];
+  for(let h = Math.floor(osH); h <= Math.floor(oeH); h++) {
+    if(h >= osH && h < oeH + (oeM > 0 ? 1 : 0)) overlapHourList.push(h % 24);
+  }
+
+  // Calculate forecasted volume per zone during overlap hours only
+  // Use per-hour predictions to get overlap-specific volume
+  const totalPredAll = Object.values(fcPredictions || {}).reduce((s, v) => s + v, 0) || 1;
+  const overlapPredTotal = overlapHourList.reduce((s, h) => s + (fcPredictions[h] || 0), 0);
+  const overlapFraction = overlapPredTotal / totalPredAll || 0;
+
+  // Per-zone overlap volume = zone's predicted total * fraction of volume in overlap hours
+  const zoneOverlapVol = {};
+  const allZones = Array.from(new Set([...Object.keys(STEADY), ...Object.keys(fcZonePredictions || {}), ...Object.keys(ZONE_CAPACITY)]));
+  allZones.forEach(z => {
+    zoneOverlapVol[z] = (fcZonePredictions[z] || 0) * overlapFraction;
+  });
+
+  // Calculate required pickers per zone during overlap based on overlap volume and UPH
+  const zoneOverlapPickers = {};
+  allZones.forEach(z => {
+    const uph = UPH[z] || 150;
+    zoneOverlapPickers[z] = zoneOverlapVol[z] > 0 ? Math.max(1, Math.ceil(zoneOverlapVol[z] / (uph * overlapHours))) : 0;
+  });
+
+  // S1 and S2 baseline pickers per zone
+  const s1Pickers = {};
+  const s2Pickers = {};
+  allZones.forEach(z => {
+    s1Pickers[z] = (STEADY[z] && STEADY[z].s1) || 0;
+    s2Pickers[z] = (STEADY[z] && STEADY[z].s2) || 0;
+  });
+
+  // ─── Headcount Table ───
+  const headcountBody = document.getElementById('fc-headcount-body');
+  if(headcountBody) {
+    headcountBody.innerHTML = '';
+    const sorted = allZones
+      .map(z => ({ zone: z, s1: s1Pickers[z], s2: s2Pickers[z], combined: s1Pickers[z] + s2Pickers[z], cap: ZONE_CAPACITY[z] || 4, vol: zoneOverlapVol[z], needed: zoneOverlapPickers[z] }))
+      .sort((a, b) => (b.combined / b.cap) - (a.combined / a.cap));
+
+    sorted.forEach(row => {
+      const c = ZONE_COLORS[row.zone] || '#64748b';
+      const loadPct = Math.round((row.combined / row.cap) * 100);
+      const isOver = row.combined > row.cap;
+      const isNear = !isOver && row.combined >= row.cap * 0.8;
+      const statusColor = isOver ? '#ef4444' : isNear ? '#f59e0b' : '#22c55e';
+      const statusText = isOver ? 'CONGESTED' : isNear ? 'Near Limit' : 'OK';
+      const barW = Math.min(loadPct, 100);
+
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid var(--border)';
+      if(isOver) tr.style.background = 'rgba(239,68,68,0.06)';
+      tr.innerHTML =
+        '<td style="padding:6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + row.zone + '</span></td>' +
+        '<td style="text-align:center;padding:6px;" class="mono">' + row.s1 + '</td>' +
+        '<td style="text-align:center;padding:6px;" class="mono">' + row.s2 + '</td>' +
+        '<td style="text-align:center;padding:6px;font-weight:700;" class="mono">' + row.combined + '</td>' +
+        '<td style="text-align:center;padding:6px;" class="mono">' + row.cap + '</td>' +
+        '<td style="text-align:center;padding:6px;color:' + statusColor + ';font-weight:700;font-size:10px;">' + statusText + '</td>' +
+        '<td style="text-align:center;padding:6px;" class="mono">' + Math.round(row.vol).toLocaleString() + '</td>' +
+        '<td style="padding:6px;"><div style="background:rgba(255,255,255,0.06);border-radius:4px;height:14px;overflow:hidden;position:relative;"><div style="width:' + barW + '%;height:100%;background:' + statusColor + ';border-radius:4px;opacity:0.7;"></div><span style="position:absolute;right:4px;top:0;font-size:8px;color:var(--text3);line-height:14px;">' + loadPct + '%</span></div></td>';
+      headcountBody.appendChild(tr);
+    });
+  }
+
+  // ─── Handover Plan: Reassign pickers to avoid congestion ───
+  // Identify congested zones (combined > capacity)
+  const congested = [];
+  const hasCapacity = [];
+  allZones.forEach(z => {
+    const combined = s1Pickers[z] + s2Pickers[z];
+    const cap = ZONE_CAPACITY[z] || 4;
+    if(combined > cap) {
+      congested.push({ zone: z, combined, cap, excess: combined - cap, s1: s1Pickers[z], s2: s2Pickers[z] });
+    } else if(combined < cap) {
+      hasCapacity.push({ zone: z, combined, cap, available: cap - combined, vol: zoneOverlapVol[z], s1: s1Pickers[z], s2: s2Pickers[z] });
+    }
+  });
+
+  const handoverSection = document.getElementById('fc-handover-section');
+  const summaryEl = document.getElementById('fc-handover-summary');
+  const s1Body = document.getElementById('fc-handover-s1-body');
+  const s2Body = document.getElementById('fc-handover-s2-body');
+
+  if(!handoverSection || !s1Body || !s2Body) return;
+
+  if(congested.length === 0) {
+    handoverSection.style.display = 'block';
+    if(summaryEl) summaryEl.innerHTML = '<span style="color:var(--green);">No congestion detected.</span> All zones are within capacity during the overlap window. Both shifts can work their assigned zones.';
+    s1Body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:8px;color:var(--text3);">No reassignment needed — all zones within capacity</td></tr>';
+    s2Body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:8px;color:var(--text3);">No reassignment needed — all zones within capacity</td></tr>';
+    return;
+  }
+
+  handoverSection.style.display = 'block';
+
+  // Sort available zones by volume (highest volume zones get S2 since they need fresh pickers)
+  hasCapacity.sort((a, b) => b.vol - a.vol);
+
+  // Build reassignment plan:
+  // Strategy: S1 pickers in congested zones should MOVE to zones with spare capacity
+  //           S2 pickers should OCCUPY the high-volume congested zones (they're fresh)
+  const s1Moves = []; // S1 moves FROM congested INTO these zones
+  const s2Assignments = []; // S2 occupies these zones
+
+  let excessToRelocate = 0;
+  congested.forEach(cz => { excessToRelocate += cz.excess; });
+
+  // S2 takes over the congested zones (they need the high-volume areas)
+  congested.forEach(cz => {
+    const s2Take = Math.min(cz.s2, cz.cap); // S2 occupies up to capacity
+    s2Assignments.push({ zone: cz.zone, pickers: s2Take, remaining: cz.cap - s2Take });
+  });
+
+  // S1 excess pickers move to available zones
+  let remaining = excessToRelocate;
+  hasCapacity.forEach(az => {
+    if(remaining <= 0) return;
+    const canTake = az.available;
+    const willTake = Math.min(canTake, remaining);
+    if(willTake > 0) {
+      s1Moves.push({ zone: az.zone, pickers: willTake, remaining: az.available - willTake });
+      remaining -= willTake;
+    }
+  });
+
+  // Also add S2's normal non-congested zones
+  hasCapacity.forEach(az => {
+    if(az.s2 > 0 && !s2Assignments.find(a => a.zone === az.zone)) {
+      s2Assignments.push({ zone: az.zone, pickers: az.s2, remaining: az.available });
+    }
+  });
+
+  // Summary
+  const congestedNames = congested.map(c => c.zone).join(', ');
+  if(summaryEl) {
+    summaryEl.innerHTML =
+      '<span style="color:var(--red);font-weight:600;">' + congested.length + ' zone(s) congested:</span> ' + congestedNames + '. ' +
+      '<strong>' + excessToRelocate + '</strong> excess picker(s) from Shift 1 should relocate. ' +
+      (remaining > 0 ? '<span style="color:var(--amber);">Warning: ' + remaining + ' picker(s) could not be placed — all zones near capacity.</span>' : '<span style="color:var(--green);">All excess pickers successfully reassigned.</span>');
+  }
+
+  // Render S1 move table
+  s1Body.innerHTML = '';
+  if(s1Moves.length === 0) {
+    s1Body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:8px;color:var(--text3);">No available zones for relocation</td></tr>';
+  } else {
+    s1Moves.forEach(m => {
+      const c = ZONE_COLORS[m.zone] || '#64748b';
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid var(--border)';
+      tr.innerHTML =
+        '<td style="padding:4px 6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + m.zone + '</span></td>' +
+        '<td style="text-align:center;padding:4px 6px;font-weight:700;color:var(--cyan);">' + m.pickers + '</td>' +
+        '<td style="text-align:center;padding:4px 6px;color:var(--text3);">' + m.remaining + '</td>';
+      s1Body.appendChild(tr);
+    });
+  }
+
+  // Render S2 occupy table
+  s2Body.innerHTML = '';
+  s2Assignments.forEach(a => {
+    const c = ZONE_COLORS[a.zone] || '#64748b';
+    const isCongested = congested.find(cz => cz.zone === a.zone);
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    if(isCongested) tr.style.background = 'rgba(139,92,246,0.06)';
+    tr.innerHTML =
+      '<td style="padding:4px 6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + a.zone + '</span>' + (isCongested ? ' <span style="font-size:8px;color:var(--amber);">priority</span>' : '') + '</td>' +
+      '<td style="text-align:center;padding:4px 6px;font-weight:700;color:var(--purple);">' + a.pickers + '</td>' +
+      '<td style="text-align:center;padding:4px 6px;color:var(--text3);">' + a.remaining + '</td>';
+    s2Body.appendChild(tr);
+  });
 }
 
 // ─── Hourly Volume Chart (Actual vs Forecast) ─────────────────────
