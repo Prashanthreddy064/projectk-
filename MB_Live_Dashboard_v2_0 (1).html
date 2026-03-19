@@ -1317,11 +1317,11 @@ tr:hover td { background: rgba(255,255,255,0.015); }
       <button class="mctl" type="button" onclick="fcClearAllFilters()">Clear Filters</button>
     </div>
 
-    <!-- Date Range & Forecast Mode -->
+    <!-- Date Range & Forecast Target -->
     <div style="margin-bottom:14px;padding:10px 14px;border-radius:8px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.15);">
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
         <div>
-          <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Date Range</label>
+          <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Training Date Range</label>
           <div style="display:flex;align-items:center;gap:6px;">
             <input type="date" id="fc-date-from" style="background:var(--card);color:var(--text1);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:11px;font-family:'IBM Plex Mono',monospace;" onchange="fcApplyDateRange()">
             <span style="color:var(--text3);font-size:10px;">to</span>
@@ -1331,13 +1331,18 @@ tr:hover td { background: rgba(255,255,255,0.015); }
           <div id="fc-date-range-info" style="font-size:9px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-top:3px;"></div>
         </div>
         <div style="border-left:1px solid rgba(255,255,255,0.06);padding-left:12px;">
-          <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Forecast Mode</label>
-          <div style="display:flex;gap:6px;">
-            <button class="mctl active" id="fc-mode-avg" onclick="fcSetMode('average')">Per-Day Average</button>
-            <button class="mctl" id="fc-mode-sum" onclick="fcSetMode('sum')">Total (Sum)</button>
+          <label style="font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px;">Forecast Target Day</label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="date" id="fc-target-date" style="background:var(--card);color:var(--text1);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:11px;font-family:'IBM Plex Mono',monospace;" onchange="fcApplyFiltersAndPredict()">
+            <button class="mctl" type="button" onclick="fcAutoTargetDate()" style="font-size:9px;padding:3px 8px;">Next Day</button>
           </div>
-          <div style="font-size:9px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-top:3px;">Average = forecast for <strong style="color:var(--cyan)">one</strong> day · Sum = all days combined</div>
+          <div id="fc-target-date-info" style="font-size:9px;color:var(--text3);font-family:'IBM Plex Mono',monospace;margin-top:3px;"></div>
         </div>
+      </div>
+      <!-- Weight Breakdown -->
+      <div id="fc-weight-breakdown" style="margin-top:10px;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;font-size:10px;font-family:'IBM Plex Mono',monospace;color:var(--text3);display:none;">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text3);margin-bottom:6px;font-weight:600;">Weighted Regression Blend</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;" id="fc-weight-bars"></div>
       </div>
     </div>
 
@@ -5235,7 +5240,16 @@ let fcFilterDay = 'all';
 let fcFilterHours = [];
 let fcDateFrom = '';       // date range filter (YYYY-MM-DD or '' for all)
 let fcDateTo = '';
-let fcMode = 'average';    // 'average' = per-day forecast, 'sum' = total across all days
+let fcTargetDate = '';     // the single day to forecast (YYYY-MM-DD)
+
+// Weighted regression blend weights (must sum to 1.0)
+// Priority: last-year-same-day > prev-week-same-day > trend > TCN model
+const FC_WEIGHTS = {
+  lastYearSameDay: 0.40,   // highest: same weekday ~52 weeks ago
+  prevWeekSameDay: 0.30,   // second: same weekday 1 week ago
+  trend: 0.15,             // third: linear trend from recent same-weekday data
+  tcnModel: 0.15           // fourth: TCN neural network prediction
+};
 
 const FC_DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const FC_HOURS = [];
@@ -5633,52 +5647,43 @@ function fcApplyFiltersAndPredict() {
   if(!fcModel || !fcModel._fcMeta) return;
   const { zones, brands, maxUnits, sequences, targetMeta } = fcModel._fcMeta;
 
-  // ─── Step 1: Filter source data by date range, category, and day ───
-  // Uses source data (uploadedTxAll), NOT dashboard output cells
+  // ─── Read target date from picker ───
+  const targetEl = document.getElementById('fc-target-date');
+  fcTargetDate = targetEl ? targetEl.value : '';
+
+  // ─── Step 1: Filter source data by date range and category ───
+  // Always reads from uploadedTxAll (source), never from dashboard output
   let filtered = fcGetDateFilteredData();
   if(fcFilterCat !== 'all') filtered = filtered.filter(r => r.promoType === fcFilterCat);
   if(fcFilterDay !== 'all') filtered = filtered.filter(r => r.dayOfWeek === fcFilterDay);
 
-  // ─── Step 2: Count unique dates for averaging ───
-  // This is the key fix: instead of SUM across all days, we AVERAGE per day
-  const uniqueDatesInFiltered = new Set(filtered.map(r => r.dateValue).filter(Boolean));
-  const numDays = Math.max(uniqueDatesInFiltered.size, 1);
-  const useAverage = (fcMode === 'average');
+  // ─── Step 2: Actuals — show the most recent matching day's data as baseline ───
+  // Find the most recent date in filtered data to show as "actual" comparison
+  const sortedActualDates = [...new Set(filtered.map(r => r.dateValue).filter(Boolean))].sort();
+  const mostRecentDate = sortedActualDates.length ? sortedActualDates[sortedActualDates.length - 1] : null;
+  const actualsForDay = mostRecentDate ? filtered.filter(r => r.dateValue === mostRecentDate) : [];
 
-  // ─── Step 3: Actual hourly totals (from source data) ───
   fcActuals = {};
   FC_HOURS.forEach(h => fcActuals[h] = 0);
-  filtered.forEach(r => {
+  actualsForDay.forEach(r => {
     if(FC_HOURS.includes(r.hour)) fcActuals[r.hour] += r.units;
   });
-  // Convert to per-day average if in average mode
-  if(useAverage) {
-    FC_HOURS.forEach(h => { fcActuals[h] = fcActuals[h] / numDays; });
-  }
 
-  // Actual zone totals
   fcZoneActuals = {};
-  filtered.forEach(r => {
+  actualsForDay.forEach(r => {
     const z = r.zone || 'No Location';
     fcZoneActuals[z] = (fcZoneActuals[z] || 0) + r.units;
   });
-  if(useAverage) {
-    Object.keys(fcZoneActuals).forEach(z => { fcZoneActuals[z] /= numDays; });
-  }
 
-  // Actual brand totals
   fcBrandActuals = {};
-  const topBrands = brands.slice(0, -1); // exclude 'Other'
-  filtered.forEach(r => {
+  const topBrands = brands.slice(0, -1);
+  actualsForDay.forEach(r => {
     let b = r.productBrand || 'Other';
     if(!topBrands.includes(b)) b = 'Other';
     fcBrandActuals[b] = (fcBrandActuals[b] || 0) + r.units;
   });
-  if(useAverage) {
-    Object.keys(fcBrandActuals).forEach(b => { fcBrandActuals[b] /= numDays; });
-  }
 
-  // ─── Step 4: Select matching sequences (with date range filter) ───
+  // ─── Step 3: TCN model — get per-day averaged predictions ───
   const selectedIndices = [];
   (targetMeta || []).forEach((m, idx) => {
     if(fcDateFrom && m.date < fcDateFrom) return;
@@ -5689,15 +5694,11 @@ function fcApplyFiltersAndPredict() {
     selectedIndices.push(idx);
   });
 
-  // Count unique dates in selected sequences (for prediction averaging)
-  const predDatesSet = new Set(selectedIndices.map(i => targetMeta[i].date));
-  const numPredDays = Math.max(predDatesSet.size, 1);
-
-  // ─── Step 5: Run model predictions ───
-  fcPredictions = {};
-  FC_HOURS.forEach(h => fcPredictions[h] = 0);
-  const brandWeighted = new Array(brands.length).fill(0);
-  const zoneWeighted = new Array(zones.length).fill(0);
+  // Raw TCN predictions (summed by hour)
+  const tcnHourly = {};
+  FC_HOURS.forEach(h => tcnHourly[h] = 0);
+  const tcnBrandWeighted = new Array(brands.length).fill(0);
+  const tcnZoneWeighted = new Array(zones.length).fill(0);
 
   if(selectedIndices.length > 0) {
     const predSequences = selectedIndices.map(i => sequences[i]);
@@ -5710,16 +5711,14 @@ function fcApplyFiltersAndPredict() {
     selectedIndices.forEach((srcIdx, i) => {
       const h = targetMeta[srcIdx].hour;
       const predUnits = Math.max(0, unitPreds[i] * maxUnits);
-      fcPredictions[h] = (fcPredictions[h] || 0) + predUnits;
-
+      tcnHourly[h] = (tcnHourly[h] || 0) + predUnits;
       const bStart = i * brands.length;
       for(let bi = 0; bi < brands.length; bi++) {
-        brandWeighted[bi] += brandPreds[bStart + bi] * predUnits;
+        tcnBrandWeighted[bi] += brandPreds[bStart + bi] * predUnits;
       }
-
       const zStart = i * zones.length;
       for(let zi = 0; zi < zones.length; zi++) {
-        zoneWeighted[zi] += zonePreds[zStart + zi] * predUnits;
+        tcnZoneWeighted[zi] += zonePreds[zStart + zi] * predUnits;
       }
     });
 
@@ -5727,35 +5726,58 @@ function fcApplyFiltersAndPredict() {
     predTensor.dispose();
   }
 
-  // ─── Step 6: AVERAGE predictions per day (not SUM) ───
-  // e.g. 3 Mondays with 100, 110, 120 → average = 110, not sum = 330
-  if(useAverage) {
-    FC_HOURS.forEach(h => { fcPredictions[h] = fcPredictions[h] / numPredDays; });
-    for(let bi = 0; bi < brands.length; bi++) { brandWeighted[bi] /= numPredDays; }
-    for(let zi = 0; zi < zones.length; zi++) { zoneWeighted[zi] /= numPredDays; }
+  // Average TCN predictions per day (so TCN output = one-day forecast)
+  const tcnDatesSet = new Set(selectedIndices.map(i => targetMeta[i].date));
+  const numTcnDays = Math.max(tcnDatesSet.size, 1);
+  FC_HOURS.forEach(h => { tcnHourly[h] /= numTcnDays; });
+  for(let bi = 0; bi < brands.length; bi++) { tcnBrandWeighted[bi] /= numTcnDays; }
+  for(let zi = 0; zi < zones.length; zi++) { tcnZoneWeighted[zi] /= numTcnDays; }
+
+  // Convert TCN zone/brand arrays to objects
+  const tcnZones_ = {};
+  zones.forEach((z, zi) => { tcnZones_[z] = tcnZoneWeighted[zi]; });
+  const tcnBrands_ = {};
+  brands.forEach((b, bi) => { tcnBrands_[b] = tcnBrandWeighted[bi]; });
+
+  // ─── Step 4: Weighted regression blend for single-day forecast ───
+  if(fcTargetDate) {
+    // Use weighted regression: last-year-same-day (40%), prev-week (30%), trend (15%), TCN (15%)
+    const blend = fcBuildWeightedForecast(fcTargetDate, filtered, tcnHourly, tcnZones_, tcnBrands_);
+
+    fcPredictions = blend.hourly;
+    fcZonePredictions = blend.zones;
+
+    // Brand predictions as probabilities
+    fcBrandPredictions = {};
+    const totalBrandUnits = Object.values(blend.brands).reduce((s, v) => s + v, 0) || 1;
+    Object.entries(blend.brands).forEach(([b, v]) => {
+      fcBrandPredictions[b] = v / totalBrandUnits;
+    });
+
+    // Show weight breakdown
+    fcRenderWeightBreakdown(blend.weightInfo, blend.targetDow);
+    fcModel._fcForecastInfo = { targetDate: fcTargetDate, targetDow: blend.targetDow, weightInfo: blend.weightInfo, mostRecentActual: mostRecentDate };
+  } else {
+    // No target date: fall back to TCN-only per-day average
+    fcPredictions = tcnHourly;
+    fcZonePredictions = tcnZones_;
+
+    fcBrandPredictions = {};
+    const totalPredUnits = Object.values(tcnHourly).reduce((s, v) => s + v, 0) || 1;
+    brands.forEach((b, bi) => {
+      fcBrandPredictions[b] = tcnBrandWeighted[bi] / totalPredUnits;
+    });
+
+    const breakdownEl = document.getElementById('fc-weight-breakdown');
+    if(breakdownEl) breakdownEl.style.display = 'none';
+    fcModel._fcForecastInfo = { targetDate: null, targetDow: null, mostRecentActual: mostRecentDate };
   }
-
-  // Aggregate brand predictions (weighted by predicted units)
-  fcBrandPredictions = {};
-  const totalPredUnits = Object.values(fcPredictions).reduce((s, v) => s + v, 0) || 1;
-  brands.forEach((b, bi) => {
-    fcBrandPredictions[b] = brandWeighted[bi] / totalPredUnits;
-  });
-
-  // Aggregate zone predictions (predicted units per zone)
-  fcZonePredictions = {};
-  zones.forEach((z, zi) => {
-    fcZonePredictions[z] = zoneWeighted[zi];
-  });
 
   // Apply hour filter for display
   fcFiltered = filtered;
   if(fcFilterHours.length > 0) {
     fcFiltered = filtered.filter(r => fcFilterHours.includes(r.hour));
   }
-
-  // Store day counts for KPI display
-  fcModel._fcDayCounts = { numDays, numPredDays, useAverage };
 
   // Render everything
   fcBuildKPIs();
@@ -5815,6 +5837,8 @@ function fcBuildToggleButtons() {
 
   // Initialize date range pickers with dynamic min/max from data
   fcInitDateRange();
+  // Auto-set target date to next day after max date
+  fcAutoTargetDate();
 }
 
 function fcFormatHour(h) {
@@ -5859,6 +5883,7 @@ function fcClearAllFilters() {
   fcFilterDay = 'all';
   fcFilterHours = [];
   fcResetDateRange();
+  fcAutoTargetDate();
   // Reset UI
   ['fc-cat-btns','fc-day-btns','fc-hour-btns'].forEach(id => {
     const container = document.getElementById(id);
@@ -5905,13 +5930,20 @@ function fcResetDateRange() {
   const toEl = document.getElementById('fc-date-to');
   if(fromEl) fromEl.value = '';
   if(toEl)   toEl.value = '';
-  // Don't call fcApplyFiltersAndPredict here — caller does it
 }
 
-function fcSetMode(mode) {
-  fcMode = mode;
-  document.getElementById('fc-mode-avg').classList.toggle('active', mode === 'average');
-  document.getElementById('fc-mode-sum').classList.toggle('active', mode === 'sum');
+// Auto-set target date to the day after the max date in the data
+function fcAutoTargetDate() {
+  const dates = [...new Set(uploadedTxAll.map(r => r.dateValue).filter(Boolean))].sort();
+  if(!dates.length) return;
+  const maxDate = new Date(dates[dates.length - 1]);
+  maxDate.setDate(maxDate.getDate() + 1);
+  const yyyy = maxDate.getFullYear();
+  const mm = String(maxDate.getMonth() + 1).padStart(2, '0');
+  const dd = String(maxDate.getDate()).padStart(2, '0');
+  fcTargetDate = `${yyyy}-${mm}-${dd}`;
+  const el = document.getElementById('fc-target-date');
+  if(el) el.value = fcTargetDate;
   if(fcModel) fcApplyFiltersAndPredict();
 }
 
@@ -5921,6 +5953,242 @@ function fcGetDateFilteredData() {
   if(fcDateFrom) data = data.filter(r => r.dateValue >= fcDateFrom);
   if(fcDateTo) data = data.filter(r => r.dateValue <= fcDateTo);
   return data;
+}
+
+// ─── Weighted Regression: build per-hour volume from historical same-day data ───
+// Returns { hourly: {h -> units}, zones: {z -> units}, brands: {b -> units}, weights: {source -> {weight, found, date}} }
+function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnBrands) {
+  const target = new Date(targetDate + 'T00:00:00');
+  const targetDow = FC_DAY_ORDER[target.getDay()]; // e.g. 'Monday'
+
+  // Group filtered data by date, only same day-of-week
+  const byDate = {};
+  filtered.forEach(r => {
+    if(r.dayOfWeek !== targetDow) return;
+    if(!byDate[r.dateValue]) byDate[r.dateValue] = [];
+    byDate[r.dateValue].push(r);
+  });
+  const sortedDates = Object.keys(byDate).sort(); // ascending
+
+  // ── Find key reference dates ──
+  // Last year same day: find the same weekday closest to ~52 weeks before target
+  const oneYearAgo = new Date(target);
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  // Find the nearest same-weekday date to oneYearAgo
+  let lastYearDate = null;
+  let lastYearDist = Infinity;
+  sortedDates.forEach(d => {
+    const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - oneYearAgo.getTime());
+    if(diff < lastYearDist) { lastYearDist = diff; lastYearDate = d; }
+  });
+
+  // Previous week same day: find same weekday closest to 7 days before target
+  const oneWeekAgo = new Date(target);
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  const oneWeekAgoStr = oneWeekAgo.toISOString().slice(0, 10);
+  let prevWeekDate = null;
+  let prevWeekDist = Infinity;
+  sortedDates.forEach(d => {
+    const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - oneWeekAgo.getTime());
+    if(diff < prevWeekDist && d !== lastYearDate) { prevWeekDist = diff; prevWeekDate = d; }
+  });
+
+  // If lastYearDate and prevWeekDate are the same, clear one
+  if(lastYearDate && prevWeekDate && lastYearDate === prevWeekDate) {
+    // Keep it as lastYear, find next best for prevWeek
+    prevWeekDate = null;
+    prevWeekDist = Infinity;
+    sortedDates.forEach(d => {
+      if(d === lastYearDate) return;
+      const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - oneWeekAgo.getTime());
+      if(diff < prevWeekDist) { prevWeekDist = diff; prevWeekDate = d; }
+    });
+  }
+
+  // ── Build hourly profile for each reference date ──
+  function buildDayProfile(dateStr) {
+    if(!dateStr || !byDate[dateStr]) return null;
+    const hourly = {};
+    const zones = {};
+    const brands = {};
+    FC_HOURS.forEach(h => hourly[h] = 0);
+    byDate[dateStr].forEach(r => {
+      if(FC_HOURS.includes(r.hour)) hourly[r.hour] += r.units;
+      const z = r.zone || 'No Location';
+      zones[z] = (zones[z] || 0) + r.units;
+      const b = r.productBrand || 'Other';
+      brands[b] = (brands[b] || 0) + r.units;
+    });
+    return { hourly, zones, brands };
+  }
+
+  const lastYearProfile = buildDayProfile(lastYearDate);
+  const prevWeekProfile = buildDayProfile(prevWeekDate);
+
+  // ── Trend: linear regression on last 4+ same-weekday dates ──
+  // Use the most recent same-weekday dates for trend fitting
+  const trendDates = sortedDates.slice(-6); // last 6 same-weekday dates
+  let trendProfile = null;
+  if(trendDates.length >= 2) {
+    // Simple linear regression per hour: volume = a + b*index, extrapolate to next index
+    trendProfile = { hourly: {}, zones: {}, brands: {} };
+    FC_HOURS.forEach(h => {
+      const ys = trendDates.map(d => {
+        let sum = 0;
+        byDate[d].forEach(r => { if(r.hour === h) sum += r.units; });
+        return sum;
+      });
+      // Linear regression: y = a + b*x, extrapolate to x = trendDates.length
+      const n = ys.length;
+      const xMean = (n - 1) / 2;
+      const yMean = ys.reduce((s, v) => s + v, 0) / n;
+      let num = 0, den = 0;
+      ys.forEach((y, x) => { num += (x - xMean) * (y - yMean); den += (x - xMean) ** 2; });
+      const b = den > 0 ? num / den : 0;
+      const a = yMean - b * xMean;
+      trendProfile.hourly[h] = Math.max(0, a + b * n); // extrapolate one step ahead
+    });
+    // Trend for zones and brands: use last date's proportions scaled by trend total
+    const trendTotal = Object.values(trendProfile.hourly).reduce((s, v) => s + v, 0) || 1;
+    const lastDateProfile = buildDayProfile(trendDates[trendDates.length - 1]);
+    if(lastDateProfile) {
+      const lastTotal = Object.values(lastDateProfile.hourly).reduce((s, v) => s + v, 0) || 1;
+      const scale = trendTotal / lastTotal;
+      Object.entries(lastDateProfile.zones).forEach(([z, v]) => { trendProfile.zones[z] = v * scale; });
+      Object.entries(lastDateProfile.brands).forEach(([b, v]) => { trendProfile.brands[b] = v * scale; });
+    }
+  }
+
+  // ── Weighted blend ──
+  // Redistribute weights if a source is missing
+  const sources = {
+    lastYearSameDay: { profile: lastYearProfile, baseWeight: FC_WEIGHTS.lastYearSameDay, date: lastYearDate },
+    prevWeekSameDay: { profile: prevWeekProfile, baseWeight: FC_WEIGHTS.prevWeekSameDay, date: prevWeekDate },
+    trend:           { profile: trendProfile,    baseWeight: FC_WEIGHTS.trend, date: trendDates.length >= 2 ? trendDates.join(' → ') : null },
+    tcnModel:        { profile: { hourly: tcnHourly, zones: tcnZones, brands: tcnBrands }, baseWeight: FC_WEIGHTS.tcnModel, date: 'model' }
+  };
+
+  // Calculate effective weights (redistribute missing weights proportionally)
+  let totalAvailable = 0;
+  const available = {};
+  for(const [key, src] of Object.entries(sources)) {
+    const hasData = src.profile && Object.values(src.profile.hourly || {}).some(v => v > 0);
+    available[key] = hasData;
+    if(hasData) totalAvailable += src.baseWeight;
+  }
+
+  const effectiveWeights = {};
+  const weightInfo = {};
+  for(const [key, src] of Object.entries(sources)) {
+    if(available[key] && totalAvailable > 0) {
+      effectiveWeights[key] = src.baseWeight / totalAvailable; // normalize so weights sum to 1
+    } else {
+      effectiveWeights[key] = 0;
+    }
+    weightInfo[key] = {
+      weight: effectiveWeights[key],
+      found: available[key],
+      date: src.date,
+      baseWeight: src.baseWeight
+    };
+  }
+
+  // Blend hourly predictions
+  const blendedHourly = {};
+  FC_HOURS.forEach(h => {
+    let val = 0;
+    for(const [key, src] of Object.entries(sources)) {
+      if(effectiveWeights[key] > 0 && src.profile && src.profile.hourly) {
+        val += (src.profile.hourly[h] || 0) * effectiveWeights[key];
+      }
+    }
+    blendedHourly[h] = val;
+  });
+
+  // Blend zone predictions
+  const allZones = new Set();
+  for(const [key, src] of Object.entries(sources)) {
+    if(effectiveWeights[key] > 0 && src.profile && src.profile.zones) {
+      Object.keys(src.profile.zones).forEach(z => allZones.add(z));
+    }
+  }
+  const blendedZones = {};
+  allZones.forEach(z => {
+    let val = 0;
+    for(const [key, src] of Object.entries(sources)) {
+      if(effectiveWeights[key] > 0 && src.profile && src.profile.zones) {
+        val += (src.profile.zones[z] || 0) * effectiveWeights[key];
+      }
+    }
+    blendedZones[z] = val;
+  });
+
+  // Blend brand predictions
+  const allBrands = new Set();
+  for(const [key, src] of Object.entries(sources)) {
+    if(effectiveWeights[key] > 0 && src.profile && src.profile.brands) {
+      Object.keys(src.profile.brands).forEach(b => allBrands.add(b));
+    }
+  }
+  const blendedBrands = {};
+  allBrands.forEach(b => {
+    let val = 0;
+    for(const [key, src] of Object.entries(sources)) {
+      if(effectiveWeights[key] > 0 && src.profile && src.profile.brands) {
+        val += (src.profile.brands[b] || 0) * effectiveWeights[key];
+      }
+    }
+    blendedBrands[b] = val;
+  });
+
+  return { hourly: blendedHourly, zones: blendedZones, brands: blendedBrands, weightInfo, targetDow };
+}
+
+// ─── Render weight breakdown UI ───
+function fcRenderWeightBreakdown(weightInfo, targetDow) {
+  const container = document.getElementById('fc-weight-breakdown');
+  const bars = document.getElementById('fc-weight-bars');
+  if(!container || !bars) return;
+
+  container.style.display = 'block';
+  bars.innerHTML = '';
+
+  const labels = {
+    lastYearSameDay: 'Last Year Same Day',
+    prevWeekSameDay: 'Prev Week Same Day',
+    trend: 'Trend (Linear)',
+    tcnModel: 'TCN Model'
+  };
+  const colors = {
+    lastYearSameDay: '#f59e0b',
+    prevWeekSameDay: '#3b82f6',
+    trend: '#10b981',
+    tcnModel: '#8b5cf6'
+  };
+
+  const infoEl = document.getElementById('fc-target-date-info');
+  if(infoEl) infoEl.textContent = `Forecasting one ${targetDow} · weighted regression blend`;
+
+  for(const [key, info] of Object.entries(weightInfo)) {
+    const pct = (info.weight * 100).toFixed(0);
+    const color = colors[key] || '#64748b';
+    const label = labels[key] || key;
+    const dateStr = info.found ? (info.date || '') : 'no data';
+    const opacity = info.found ? '1' : '0.3';
+    const div = document.createElement('div');
+    div.style.cssText = `flex:1;min-width:120px;opacity:${opacity};`;
+    div.innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+        <span style="color:${color};font-weight:600;font-size:9px;">${label}</span>
+        <span style="font-weight:700;color:var(--text1);font-size:10px;">${pct}%</span>
+      </div>
+      <div style="background:rgba(255,255,255,0.06);border-radius:3px;height:6px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:${color};border-radius:3px;"></div>
+      </div>
+      <div style="font-size:8px;color:var(--text3);margin-top:1px;">${info.found ? dateStr : 'not found — weight redistributed'}</div>
+    `;
+    bars.appendChild(div);
+  }
 }
 
 // ─── KPIs ────────────────────────────────────
@@ -5978,12 +6246,13 @@ function fcBuildKPIs() {
   const parts = [];
   if(fcFilterCat !== 'all') parts.push(fcFilterCat);
   if(fcFilterDay !== 'all') parts.push(fcFilterDay);
-  const dayCounts = fcModel && fcModel._fcDayCounts ? fcModel._fcDayCounts : {};
-  if(dayCounts.useAverage) {
-    parts.push('avg of ' + dayCounts.numDays + ' day' + (dayCounts.numDays !== 1 ? 's' : ''));
+  const fInfo = fcModel && fcModel._fcForecastInfo ? fcModel._fcForecastInfo : {};
+  if(fInfo.targetDate) {
+    parts.push('forecast for ' + fInfo.targetDow + ' ' + fInfo.targetDate);
   } else {
-    parts.push('total across ' + (dayCounts.numDays || '?') + ' days');
+    parts.push('TCN per-day avg (set target date for weighted blend)');
   }
+  if(fInfo.mostRecentActual) parts.push('actual: ' + fInfo.mostRecentActual);
   document.getElementById('fc-kpi-volume-sub').textContent = parts.join(' · ');
 }
 
@@ -6138,11 +6407,12 @@ function fcBuildHourlyChart() {
   ctx.fillStyle = '#94a3b8';
   ctx.font = '10px IBM Plex Mono';
   ctx.textAlign = 'left';
-  ctx.fillText('Actual', padL + 16, 15);
+  const fInfo2 = fcModel && fcModel._fcForecastInfo ? fcModel._fcForecastInfo : {};
+  ctx.fillText('Actual' + (fInfo2.mostRecentActual ? ' (' + fInfo2.mostRecentActual + ')' : ''), padL + 16, 15);
   ctx.fillStyle = 'rgba(59,130,246,0.6)';
-  ctx.fillRect(padL + 80, 6, 12, 10);
+  ctx.fillRect(padL + 200, 6, 12, 10);
   ctx.fillStyle = '#94a3b8';
-  ctx.fillText('Forecast', padL + 96, 15);
+  ctx.fillText('Forecast' + (fInfo2.targetDate ? ' (' + fInfo2.targetDate + ')' : ''), padL + 216, 15);
 
   FC_HOURS.forEach((h, idx) => {
     const actual = fcActuals[h] || 0;
