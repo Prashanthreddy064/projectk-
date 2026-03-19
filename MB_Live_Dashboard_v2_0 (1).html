@@ -1379,7 +1379,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     <div class="kpi" style="--kpi-color:#22c55e">
       <div class="kpi-lbl">Actual Units</div>
       <div class="kpi-val mono" id="fc-kpi-zones">—</div>
-      <div class="kpi-sub">from uploaded data</div>
+      <div class="kpi-sub" id="fc-kpi-actual-sub">from uploaded data</div>
     </div>
     <div class="kpi" style="--kpi-color:#f59e0b">
       <div class="kpi-lbl">Model R²</div>
@@ -5747,29 +5747,58 @@ function fcApplyFiltersAndPredict() {
   if(fcFilterCat !== 'all') filtered = filtered.filter(r => r.promoType === fcFilterCat);
   if(fcFilterDay !== 'all') filtered = filtered.filter(r => r.dayOfWeek === fcFilterDay);
 
-  // ─── Step 2: Actuals — dynamically match target date's weekday ───
-  // When a target date is set, find the closest same-weekday date in data
-  const sortedActualDates = [...new Set(filtered.map(r => r.dateValue).filter(Boolean))].sort();
+  // ─── Step 2: Actuals — same day-of-week as target date ───
+  // Search ALL data (not category-filtered) so we always find the right day
+  const allDatesInRange = [...new Set(fcGetDateFilteredData().map(r => r.dateValue).filter(Boolean))].sort();
   let actualsDate = null;
+  let actualsDow = null;
+  let actualsIsFallback = false;
+
   if(fcTargetDate) {
     const targetDt = new Date(fcTargetDate + 'T00:00:00');
     const targetDow = FC_DAY_ORDER[targetDt.getDay()];
-    // Find all dates with the same day-of-week
-    const sameDowDates = sortedActualDates.filter(d => {
-      const dt = new Date(d + 'T00:00:00');
-      return FC_DAY_ORDER[dt.getDay()] === targetDow;
-    });
-    if(sameDowDates.length > 0) {
-      // Pick the most recent same-weekday date before the target
-      const beforeTarget = sameDowDates.filter(d => d < fcTargetDate);
-      actualsDate = beforeTarget.length ? beforeTarget[beforeTarget.length - 1] : sameDowDates[sameDowDates.length - 1];
+    actualsDow = targetDow;
+
+    // 1. Try exact target date (if it exists in data)
+    if(allDatesInRange.includes(fcTargetDate)) {
+      actualsDate = fcTargetDate;
     } else {
-      actualsDate = sortedActualDates.length ? sortedActualDates[sortedActualDates.length - 1] : null;
+      // 2. Find same-weekday dates
+      const sameDowDates = allDatesInRange.filter(d => {
+        const dt = new Date(d + 'T00:00:00');
+        return FC_DAY_ORDER[dt.getDay()] === targetDow;
+      });
+      if(sameDowDates.length > 0) {
+        // Pick the most recent same-weekday before the target
+        const beforeTarget = sameDowDates.filter(d => d < fcTargetDate);
+        actualsDate = beforeTarget.length ? beforeTarget[beforeTarget.length - 1] : sameDowDates[sameDowDates.length - 1];
+      } else {
+        // 3. Fallback: most recent date in data (different weekday)
+        actualsDate = allDatesInRange.length ? allDatesInRange[allDatesInRange.length - 1] : null;
+        actualsIsFallback = true;
+      }
     }
   } else {
-    actualsDate = sortedActualDates.length ? sortedActualDates[sortedActualDates.length - 1] : null;
+    // No target: use latest date
+    actualsDate = allDatesInRange.length ? allDatesInRange[allDatesInRange.length - 1] : null;
   }
-  const actualsForDay = actualsDate ? filtered.filter(r => r.dateValue === actualsDate) : [];
+
+  // Get the actuals day's data (unfiltered by category — we compute promo breakdown ourselves)
+  const allActualsForDay = actualsDate ? fcGetDateFilteredData().filter(r => r.dateValue === actualsDate) : [];
+  // Apply category filter for display if set, but also compute the full breakdown
+  const actualsForDay = fcFilterCat !== 'all'
+    ? allActualsForDay.filter(r => r.promoType === fcFilterCat)
+    : allActualsForDay;
+
+  // Compute promo vs non-promo breakdown for the actuals date
+  let promoUnits = 0, nonPromoUnits = 0, unknownUnits = 0;
+  allActualsForDay.forEach(r => {
+    if(r.promoType === 'Promo') promoUnits += r.units;
+    else if(r.promoType === 'Non-Promo') nonPromoUnits += r.units;
+    else unknownUnits += r.units;
+  });
+  const totalActualsDay = promoUnits + nonPromoUnits + unknownUnits;
+  const actualsDowLabel = actualsDate ? FC_DAY_ORDER[new Date(actualsDate + 'T00:00:00').getDay()] : null;
 
   fcActuals = {};
   FC_HOURS.forEach(h => fcActuals[h] = 0);
@@ -5864,7 +5893,7 @@ function fcApplyFiltersAndPredict() {
 
     // Show weight breakdown
     fcRenderWeightBreakdown(blend.weightInfo, blend.targetDow);
-    fcModel._fcForecastInfo = { targetDate: fcTargetDate, targetDow: blend.targetDow, weightInfo: blend.weightInfo, mostRecentActual: actualsDate };
+    fcModel._fcForecastInfo = { targetDate: fcTargetDate, targetDow: blend.targetDow, weightInfo: blend.weightInfo, mostRecentActual: actualsDate, actualsDow: actualsDowLabel, actualsIsFallback, promoUnits, nonPromoUnits, unknownUnits, totalActualsDay };
   } else {
     // No target date: fall back to TCN-only per-day average
     fcPredictions = tcnHourly;
@@ -5878,7 +5907,7 @@ function fcApplyFiltersAndPredict() {
 
     const breakdownEl = document.getElementById('fc-weight-breakdown');
     if(breakdownEl) breakdownEl.style.display = 'none';
-    fcModel._fcForecastInfo = { targetDate: null, targetDow: null, mostRecentActual: actualsDate };
+    fcModel._fcForecastInfo = { targetDate: null, targetDow: null, mostRecentActual: actualsDate, actualsDow: actualsDowLabel, actualsIsFallback, promoUnits, nonPromoUnits, unknownUnits, totalActualsDay };
   }
 
   // Apply hour filter for display
@@ -6361,8 +6390,31 @@ function fcBuildKPIs() {
   } else {
     parts.push('TCN per-day avg (set target date for weighted blend)');
   }
-  if(fInfo.mostRecentActual) parts.push('actual: ' + fInfo.mostRecentActual);
   document.getElementById('fc-kpi-volume-sub').textContent = parts.join(' · ');
+
+  // ─── Actual Units sub-label: show matched date, day, and promo breakdown ───
+  const actualSubEl = document.getElementById('fc-kpi-actual-sub');
+  if(actualSubEl) {
+    if(fInfo.mostRecentActual) {
+      const aParts = [];
+      // Date and day-of-week
+      aParts.push(fInfo.actualsDow + ' ' + fInfo.mostRecentActual);
+      // Fallback indicator
+      if(fInfo.actualsIsFallback) aParts.push('(fallback — no same-day data)');
+      actualSubEl.textContent = aParts.join(' ');
+
+      // Promo breakdown line — add as a second line below
+      const promoLine = [];
+      if(fInfo.promoUnits > 0) promoLine.push('Promo: ' + Math.round(fInfo.promoUnits).toLocaleString());
+      if(fInfo.nonPromoUnits > 0) promoLine.push('Non-Promo: ' + Math.round(fInfo.nonPromoUnits).toLocaleString());
+      if(fInfo.unknownUnits > 0) promoLine.push('Other: ' + Math.round(fInfo.unknownUnits).toLocaleString());
+      if(promoLine.length > 0) {
+        actualSubEl.innerHTML = aParts.join(' ') + '<br><span style="color:var(--cyan);font-size:9px;">' + promoLine.join(' · ') + '</span>';
+      }
+    } else {
+      actualSubEl.textContent = 'no data available';
+    }
+  }
 }
 
 // ─── Brand Prediction Table ─────────────────
@@ -6765,18 +6817,39 @@ function fcBuildHourlyChart() {
     ctx.fillText(Math.round(maxV * (1 - i / 4)).toLocaleString(), padL - 6, y + 3);
   }
 
-  // Legend
-  ctx.fillStyle = 'rgba(6,182,212,0.6)';
-  ctx.fillRect(padL, 6, 12, 10);
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '10px IBM Plex Mono';
-  ctx.textAlign = 'left';
+  // Legend with date, day-of-week, and promo context
   const fInfo2 = fcModel && fcModel._fcForecastInfo ? fcModel._fcForecastInfo : {};
-  ctx.fillText('Actual' + (fInfo2.mostRecentActual ? ' (' + fInfo2.mostRecentActual + ')' : ''), padL + 16, 15);
-  ctx.fillStyle = 'rgba(59,130,246,0.6)';
-  ctx.fillRect(padL + 200, 6, 12, 10);
+  const actLegend = fInfo2.mostRecentActual
+    ? 'Actual — ' + (fInfo2.actualsDow || '') + ' ' + fInfo2.mostRecentActual
+      + (fInfo2.actualsIsFallback ? ' (fallback)' : '')
+    : 'Actual';
+  const fcLegend = fInfo2.targetDate
+    ? 'Forecast — ' + fInfo2.targetDow + ' ' + fInfo2.targetDate
+    : 'Forecast';
+
+  ctx.fillStyle = 'rgba(6,182,212,0.6)';
+  ctx.fillRect(padL, 4, 10, 8);
   ctx.fillStyle = '#94a3b8';
-  ctx.fillText('Forecast' + (fInfo2.targetDate ? ' (' + fInfo2.targetDate + ')' : ''), padL + 216, 15);
+  ctx.font = '9px IBM Plex Mono';
+  ctx.textAlign = 'left';
+  ctx.fillText(actLegend, padL + 14, 12);
+
+  const actLabelW = ctx.measureText(actLegend).width;
+  const fcLegendX = padL + 14 + actLabelW + 16;
+  ctx.fillStyle = 'rgba(59,130,246,0.6)';
+  ctx.fillRect(fcLegendX, 4, 10, 8);
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText(fcLegend, fcLegendX + 14, 12);
+
+  // Promo breakdown in legend row 2
+  if(fInfo2.mostRecentActual && (fInfo2.promoUnits > 0 || fInfo2.nonPromoUnits > 0)) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '8px IBM Plex Mono';
+    const promoStr = [];
+    if(fInfo2.promoUnits > 0) promoStr.push('Promo: ' + Math.round(fInfo2.promoUnits).toLocaleString());
+    if(fInfo2.nonPromoUnits > 0) promoStr.push('Non-Promo: ' + Math.round(fInfo2.nonPromoUnits).toLocaleString());
+    ctx.fillText('Actual split: ' + promoStr.join(' | '), padL + 14, 22);
+  }
 
   FC_HOURS.forEach((h, idx) => {
     const actual = fcActuals[h] || 0;
