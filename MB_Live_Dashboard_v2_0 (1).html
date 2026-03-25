@@ -1188,7 +1188,7 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start;">
-    <div class="map-wrap" style="position:relative;">
+    <div class="map-wrap" style="position:relative;height:480px;overflow:hidden;box-sizing:border-box;">
       <canvas id="pp-canvas"></canvas>
       <div style="display:flex;align-items:center;gap:16px;margin-top:10px;font-size:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;">
         <span>● Start</span>
@@ -1197,19 +1197,31 @@ tr:hover td { background: rgba(255,255,255,0.015); }
         <span>◆ Pick location</span>
       </div>
     </div>
-    <div>
-      <div class="card" style="margin-bottom:12px;">
-        <div class="card-title" style="font-size:11px;">Zone Breakdown</div>
-        <div id="pp-zone-breakdown" style="font-size:12px;"></div>
+    <div style="height:480px;display:flex;flex-direction:column;gap:12px;overflow:hidden;box-sizing:border-box;">
+      <div class="card" style="margin-bottom:0;flex:1 1 auto;overflow:hidden;display:flex;flex-direction:column;min-height:0;">
+        <div class="card-title" style="font-size:11px;flex-shrink:0;">Zone Breakdown</div>
+        <div id="pp-zone-breakdown" style="font-size:12px;overflow-y:auto;flex:1 1 auto;min-height:0;"></div>
       </div>
-      <div class="card">
+      <div class="card" style="margin-bottom:0;flex-shrink:0;">
         <div class="card-title" style="font-size:11px;">Hourly Activity</div>
-        <canvas id="pp-hourly-chart" height="240"></canvas>
+        <canvas id="pp-hourly-chart" height="200"></canvas>
       </div>
     </div>
   </div>
   <div class="card" style="margin-top:16px;">
-    <div class="card-title">Top 30 Associates — Highest Inactive Hours</div>
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;">
+      <span>Top 30 Associates — Inactive Hours</span>
+      <select id="pp-leaderboard-sort" onchange="buildInactiveLeaderboard()" style="font-size:10px;background:#0f1a2e;border:1px solid #1e293b;border-radius:6px;color:var(--text);padding:4px 10px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
+        <option value="inactive-desc">Highest Inactive</option>
+        <option value="inactive-asc">Lowest Inactive</option>
+        <option value="uph-desc">Highest UPH</option>
+        <option value="uph-asc">Lowest UPH</option>
+        <option value="active-desc">Highest Active Hrs</option>
+        <option value="active-asc">Lowest Active Hrs</option>
+        <option value="picks-desc">Highest Picks</option>
+        <option value="picks-asc">Lowest Picks</option>
+      </select>
+    </div>
     <div id="pp-inactive-leaderboard" style="font-size:12px;color:var(--text2);">Upload live data to view associate inactivity rankings.</div>
   </div>
 </div>
@@ -5149,12 +5161,20 @@ function buildInactiveLeaderboard() {
       uph,
       zonesWorked,
     };
-  })
-  .sort((a,b) => {
-    if(b.inactiveMins !== a.inactiveMins) return b.inactiveMins - a.inactiveMins;
-    return b.picks - a.picks;
-  })
-  .slice(0, 30);
+  });
+  const sortMode = document.getElementById('pp-leaderboard-sort')?.value || 'inactive-desc';
+  const sortFns = {
+    'inactive-desc': (a,b) => b.inactiveMins - a.inactiveMins || b.picks - a.picks,
+    'inactive-asc': (a,b) => a.inactiveMins - b.inactiveMins || a.picks - b.picks,
+    'uph-desc': (a,b) => (b.uph||0) - (a.uph||0) || b.picks - a.picks,
+    'uph-asc': (a,b) => (a.uph||0) - (b.uph||0) || a.picks - b.picks,
+    'active-desc': (a,b) => b.activeMins - a.activeMins || b.picks - a.picks,
+    'active-asc': (a,b) => a.activeMins - b.activeMins || a.picks - b.picks,
+    'picks-desc': (a,b) => b.picks - a.picks,
+    'picks-asc': (a,b) => a.picks - b.picks,
+  };
+  leaderboard.sort(sortFns[sortMode] || sortFns['inactive-desc']);
+  leaderboard.splice(30);
 
   if(!leaderboard.length) {
     host.innerHTML = '<span style="color:var(--text3)">No picker-level inactivity data available.</span>';
@@ -5301,7 +5321,7 @@ function drawPickPathCanvas(rows, user) {
   if(!canvas) return;
   const parent = canvas.parentElement;
   canvas.width = parent.offsetWidth - 40;
-  canvas.height = Math.round(canvas.width * 0.3);
+  canvas.height = Math.min(Math.round(canvas.width * 0.3), parent.offsetHeight - 80);
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   ctx.fillStyle = '#040609';
@@ -5421,6 +5441,7 @@ function drawPickerHourlyChart(series, selectedHourFilter = null) {
   const canvas = document.getElementById('pp-hourly-chart');
   if(!canvas) return;
   canvas.width = canvas.parentElement.offsetWidth - 32;
+  canvas.height = 200;
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
    ctx.clearRect(0,0,W,H);
