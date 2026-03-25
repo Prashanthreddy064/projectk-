@@ -2208,7 +2208,7 @@ function setProgress(pct) {
   const bar = document.getElementById('loading-bar');
   const fill = document.getElementById('loading-fill');
   if(pct === 0) { bar.classList.add('show'); fill.style.width = '0%'; }
-  else if(pct >= 100) { fill.style.width = '100%'; setTimeout(() => bar.classList.remove('show'), 400); }
+  else if(pct >= 100) { fill.style.width = '100%'; setTimeout(() => bar.classList.remove('show'), 1500); }
   else { fill.style.width = pct + '%'; }
 }
 
@@ -2227,7 +2227,8 @@ function handleFile(file) {
   setUploadStatus(`Processing ${file.name} ...`);
   const reader = new FileReader();
   reader.onload = e => {
-    setProgress(30);
+    setProgress(10);
+    setUploadStatus(`Reading ${file.name} ...`);
     setTimeout(() => {
       try {
       const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
@@ -2235,9 +2236,8 @@ function handleFile(file) {
       setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
       const ws = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
-      setProgress(60);
-      
-      const newTx = [];
+      setProgress(30);
+
       const cellToText = v => {
         if(v == null) return '';
         if(typeof v === 'object' && v.w) return String(v.w);
@@ -2286,71 +2286,93 @@ function handleFile(file) {
         if(score === 4) break;
       }
 
-      for(let i = headerRowIdx + 1; i < rows.length; i++) {
-        const r = rows[i] || [];
-        const xRaw = r[colX];
-        const yRaw = r[colY];
-        const tRaw = r[colTime];
-        const unitsRaw = r[colUnits];
-        const orderRaw = r[colOrder];
-        const brandRaw = r[colBrand];
-        if([xRaw, yRaw, tRaw, unitsRaw, orderRaw, brandRaw].every(v => cellToText(v).trim() === '')) continue;
-        const xTxtRaw = cellToText(xRaw).trim();
-        const yTxtRaw = cellToText(yRaw).trim();
-        const xTxt = xTxtRaw.toLowerCase();
-        const yTxt = yTxtRaw.toLowerCase();
+      // Process rows in chunks to avoid browser script timeout on large files (1M+ rows)
+      const ROW_CHUNK = 50000;
+      const totalDataRows = rows.length - (headerRowIdx + 1);
+      const newTx = [];
+      let rowIdx = headerRowIdx + 1;
 
-        // Units: use value from col D; default to 1 only if column is absent
-         const rawUnits = r[colUnits];
-        const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
- 
-        const xLooksNumeric = isStrictNumeric(xTxtRaw);
-        const yLooksNumeric = isStrictNumeric(yTxtRaw);
-        const hasExplicitNA = xTxt.includes('#n/a') || yTxt.includes('#n/a');
-        const hasInvalidCoords = !xLooksNumeric || !yLooksNumeric;
+      function parseRowChunk() {
+        const chunkEnd = Math.min(rowIdx + ROW_CHUNK, rows.length);
+        for(; rowIdx < chunkEnd; rowIdx++) {
+          const r = rows[rowIdx] || [];
+          const xRaw = r[colX];
+          const yRaw = r[colY];
+          const tRaw = r[colTime];
+          const unitsRaw = r[colUnits];
+          const orderRaw = r[colOrder];
+          const brandRaw = r[colBrand];
+          if([xRaw, yRaw, tRaw, unitsRaw, orderRaw, brandRaw].every(v => cellToText(v).trim() === '')) continue;
+          const xTxtRaw = cellToText(xRaw).trim();
+          const yTxtRaw = cellToText(yRaw).trim();
+          const xTxt = xTxtRaw.toLowerCase();
+          const yTxt = yTxtRaw.toLowerCase();
 
-        // Classify records as No Location whenever coordinates are invalid/missing.
-        // This prevents rows from being dropped when coordinate cells are blank, text, or #N/A.
-        const isNA = hasExplicitNA || hasInvalidCoords;
+          // Units: use value from col D; default to 1 only if column is absent
+          const rawUnits = r[colUnits];
+          const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
 
-        const x = xLooksNumeric ? parseFloat(xTxtRaw) : NaN;
-        const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
-        if(!isNA && (isNaN(x) || isNaN(y))) continue;
+          const xLooksNumeric = isStrictNumeric(xTxtRaw);
+          const yLooksNumeric = isStrictNumeric(yTxtRaw);
+          const hasExplicitNA = xTxt.includes('#n/a') || yTxt.includes('#n/a');
+          const hasInvalidCoords = !xLooksNumeric || !yLooksNumeric;
 
-        // Parse hour AND minute from col A (handles Excel serial, 24h strings, and AM/PM strings)
-        let hour = 0, minute = 0;
-       const t = r[colTime];
-        if(typeof t === 'number') {
-          const frac = ((t % 1) + 1) % 1;
-          hour = Math.floor(frac * 24);
-          minute = Math.floor((frac * 24 - hour) * 60);
-        } else if(typeof t === 'string') {
-          const m = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
-          if(m) {
-            hour = parseInt(m[1]);
-            minute = parseInt(m[2]);
-            const ampm = (m[4] || '').toLowerCase();
-            if(ampm === 'pm' && hour < 12) hour += 12;
-            if(ampm === 'am' && hour === 12) hour = 0;
+          // Classify records as No Location whenever coordinates are invalid/missing.
+          // This prevents rows from being dropped when coordinate cells are blank, text, or #N/A.
+          const isNA = hasExplicitNA || hasInvalidCoords;
+
+          const x = xLooksNumeric ? parseFloat(xTxtRaw) : NaN;
+          const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
+          if(!isNA && (isNaN(x) || isNaN(y))) continue;
+
+          // Parse hour AND minute from col A (handles Excel serial, 24h strings, and AM/PM strings)
+          let hour = 0, minute = 0;
+          const t = r[colTime];
+          if(typeof t === 'number') {
+            const frac = ((t % 1) + 1) % 1;
+            hour = Math.floor(frac * 24);
+            minute = Math.floor((frac * 24 - hour) * 60);
+          } else if(typeof t === 'string') {
+            const m = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
+            if(m) {
+              hour = parseInt(m[1]);
+              minute = parseInt(m[2]);
+              const ampm = (m[4] || '').toLowerCase();
+              if(ampm === 'pm' && hour < 12) hour += 12;
+              if(ampm === 'am' && hour === 12) hour = 0;
+            }
+          } else if(Object.prototype.toString.call(t) === '[object Date]' && !isNaN(t.getTime())) {
+            hour = t.getHours();
+            minute = t.getMinutes();
           }
-        } else if(Object.prototype.toString.call(t) === '[object Date]' && !isNaN(t.getTime())) {
-          hour = t.getHours();
-          minute = t.getMinutes();
+          // User ID from col E
+          const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
+          const dateValue = parseOpsDateValue(r[colDate]);
+          const promoType = normalizePromoType(r[colPromo]);
+          const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
+          const productBrand = (r[colBrand] != null && r[colBrand] !== '') ? String(r[colBrand]).trim() : '';
+          const dayOfWeek = (r[colDay] != null && r[colDay] !== '') ? String(r[colDay]).trim() : '';
+          const dropOffLocation = (colDropOff >= 0 && r[colDropOff] != null && r[colDropOff] !== '') ? String(r[colDropOff]).trim() : '';
+          newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek, dropOffLocation});
         }
-        // User ID from col E
-        const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
-        const dateValue = parseOpsDateValue(r[colDate]);
-        const promoType = normalizePromoType(r[colPromo]);
-        const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
-        const productBrand = (r[colBrand] != null && r[colBrand] !== '') ? String(r[colBrand]).trim() : '';
-        const dayOfWeek = (r[colDay] != null && r[colDay] !== '') ? String(r[colDay]).trim() : '';
-        const dropOffLocation = (colDropOff >= 0 && r[colDropOff] != null && r[colDropOff] !== '') ? String(r[colDropOff]).trim() : '';
-        newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek, dropOffLocation});
+
+        const parsed = rowIdx - (headerRowIdx + 1);
+        const pctDone = totalDataRows > 0 ? (parsed / totalDataRows) : 1;
+        setProgress(30 + pctDone * 40);
+        setUploadStatus(`Parsing rows · ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`);
+        document.getElementById('row-count').textContent = `Parsing ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`;
+
+        if(rowIdx < rows.length) {
+          setTimeout(parseRowChunk, 0);
+        } else {
+          setProgress(70);
+          setUploadStatus(`Assigning zones · ${newTx.length.toLocaleString()} transactions`);
+          // Assign zones in chunks
+          assignZonesAndBuild(newTx, file.name);
+        }
       }
-      setProgress(80);
-      
-      // Assign zones in chunks
-      assignZonesAndBuild(newTx, file.name);
+      parseRowChunk();
+
       } catch(err) {
         isOpsDataProcessing = false;
         pendingShiftBreakdownCalc = false;
@@ -2359,7 +2381,7 @@ function handleFile(file) {
         showRefreshToast('⚠️ Upload parse failed. Please verify the sheet/columns and try again.');
         console.error('handleFile parse error', err);
       }
-    }, 10);
+    }, 50);
   };
   reader.onerror = () => {
     isOpsDataProcessing = false;
@@ -2372,9 +2394,9 @@ function handleFile(file) {
 }
 
 function assignZonesAndBuild(rows, filename) {
-  const CHUNK = 2000;
+  const CHUNK = 10000;
   let i = 0;
-  
+
   function processChunk() {
     const end = Math.min(i + CHUNK, rows.length);
     for(; i < end; i++) {
@@ -2382,8 +2404,9 @@ function assignZonesAndBuild(rows, filename) {
       r.zone = r.isNA ? 'No Location' : nearestZone(r.x, r.y);
     }
     const pctDone = rows.length ? (i / rows.length) : 1;
-    setProgress(80 + pctDone * 15);
-    document.getElementById('row-count').textContent = `Processed ${i.toLocaleString()} / ${rows.length.toLocaleString()}`;
+    setProgress(70 + pctDone * 25);
+    setUploadStatus(`Assigning zones · ${i.toLocaleString()} / ${rows.length.toLocaleString()}`);
+    document.getElementById('row-count').textContent = `Zones ${i.toLocaleString()} / ${rows.length.toLocaleString()}`;
     if(i < rows.length) {
       setTimeout(processChunk, 0);
     } else {
@@ -2398,6 +2421,7 @@ function assignZonesAndBuild(rows, filename) {
       updateOpsMetadataLabels();
       applyOpsFilters();
       setProgress(100);
+      setUploadStatus(`Loaded ${rows.length.toLocaleString()} rows · ${filename}`);
       isOpsDataProcessing = false;
       if(pendingShiftBreakdownCalc) {
         pendingShiftBreakdownCalc = false;
