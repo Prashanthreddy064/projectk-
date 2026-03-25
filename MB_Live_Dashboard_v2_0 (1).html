@@ -5596,12 +5596,13 @@ let fcDateTo = '';
 let fcTargetDate = '';     // the single day to forecast (YYYY-MM-DD)
 
 // Weighted regression blend weights (must sum to 1.0)
-// Priority: last-year-same-day > prev-week-same-day > trend > TCN model
+// Priority: prev-week-same-day > prev-prev-week > prev-prev-prev-week > trend > TCN model
 const FC_WEIGHTS = {
-  lastYearSameDay: 0.40,   // highest: same weekday ~52 weeks ago
-  prevWeekSameDay: 0.30,   // second: same weekday 1 week ago
-  trend: 0.15,             // third: linear trend from recent same-weekday data
-  tcnModel: 0.15           // fourth: TCN neural network prediction
+  prevWeekSameDay: 0.30,        // highest: same weekday 1 week ago
+  prevPrevWeekSameDay: 0.20,    // second: same weekday 2 weeks ago
+  prevPrevPrevWeekSameDay: 0.10,// third: same weekday 3 weeks ago
+  trend: 0.25,                  // fourth: linear trend from recent same-weekday data
+  tcnModel: 0.15                // fifth: TCN neural network prediction
 };
 
 const FC_DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -6004,6 +6005,54 @@ function fcApplyFiltersAndPredict() {
   const targetEl = document.getElementById('fc-target-date');
   fcTargetDate = targetEl ? targetEl.value : '';
 
+  // ─── Auto-select Day and Category based on target date ───
+  if(fcTargetDate) {
+    const targetDt = new Date(fcTargetDate + 'T00:00:00');
+    const targetDow = FC_DAY_ORDER[targetDt.getDay()];
+
+    // Always auto-select Day based on target date's day-of-week
+    if(targetDow) {
+      fcFilterDay = targetDow;
+      const dayDiv = document.getElementById('fc-day-btns');
+      if(dayDiv) {
+        dayDiv.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
+        const matchBtn = dayDiv.querySelector(`[data-day="${targetDow}"]`);
+        if(matchBtn) matchBtn.classList.add('active');
+        else {
+          const allBtn = dayDiv.querySelector('[data-day="all"]');
+          if(allBtn) allBtn.classList.add('active');
+          fcFilterDay = 'all';
+        }
+      }
+    }
+
+    // If target date exists in data, auto-select Category from that day's data
+    const allData = fcGetDateFilteredData();
+    const targetDayRows = allData.filter(r => r.dateValue === fcTargetDate);
+    if(targetDayRows.length > 0) {
+      // Data exists for this date — auto-select the dominant category
+      const catCounts = {};
+      targetDayRows.forEach(r => {
+        const cat = r.promoType || 'Unknown';
+        catCounts[cat] = (catCounts[cat] || 0) + (r.units || 0);
+      });
+      const cats = Object.keys(catCounts);
+      if(cats.length === 1) {
+        fcFilterCat = cats[0];
+      } else {
+        // Multiple categories — select 'all' to show full picture
+        fcFilterCat = 'all';
+      }
+      const catDiv = document.getElementById('fc-cat-btns');
+      if(catDiv) {
+        catDiv.querySelectorAll('.mctl').forEach(b => b.classList.remove('active'));
+        const matchBtn = catDiv.querySelector(`[data-category="${fcFilterCat}"]`);
+        if(matchBtn) matchBtn.classList.add('active');
+      }
+    }
+    // If future date (no data), Day is auto-selected above, Category stays as user's manual selection
+  }
+
   // ─── Step 1: Filter source data by date range and category ───
   // Always reads from uploadedTxAll (source), never from dashboard output
   let filtered = fcGetDateFilteredData();
@@ -6141,7 +6190,7 @@ function fcApplyFiltersAndPredict() {
 
   // ─── Step 4: Weighted regression blend for single-day forecast ───
   if(fcTargetDate) {
-    // Use weighted regression: last-year-same-day (40%), prev-week (30%), trend (15%), TCN (15%)
+    // Use weighted regression: prev-week (30%), prev-prev-week (20%), prev-prev-prev-week (10%), trend (25%), TCN (15%)
     const blend = fcBuildWeightedForecast(fcTargetDate, filtered, tcnHourly, tcnZones_, tcnBrands_);
 
     fcPredictions = blend.hourly;
@@ -6372,39 +6421,33 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
   const sortedDates = Object.keys(byDate).sort(); // ascending
 
   // ── Find key reference dates ──
-  // Last year same day: find the same weekday closest to ~52 weeks before target
-  const oneYearAgo = new Date(target);
-  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-  // Find the nearest same-weekday date to oneYearAgo
-  let lastYearDate = null;
-  let lastYearDist = Infinity;
-  sortedDates.forEach(d => {
-    const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - oneYearAgo.getTime());
-    if(diff < lastYearDist) { lastYearDist = diff; lastYearDate = d; }
-  });
+  // Helper: find nearest date in sortedDates to a target time, excluding certain dates
+  function findNearestDate(refTime, excludeSet) {
+    let bestDate = null, bestDist = Infinity;
+    sortedDates.forEach(d => {
+      if(excludeSet && excludeSet.has(d)) return;
+      const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - refTime);
+      if(diff < bestDist) { bestDist = diff; bestDate = d; }
+    });
+    return bestDate;
+  }
 
-  // Previous week same day: find same weekday closest to 7 days before target
+  // Previous week same day: same weekday ~7 days before target
   const oneWeekAgo = new Date(target);
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-  const oneWeekAgoStr = oneWeekAgo.toISOString().slice(0, 10);
-  let prevWeekDate = null;
-  let prevWeekDist = Infinity;
-  sortedDates.forEach(d => {
-    const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - oneWeekAgo.getTime());
-    if(diff < prevWeekDist && d !== lastYearDate) { prevWeekDist = diff; prevWeekDate = d; }
-  });
+  const prevWeekDate = findNearestDate(oneWeekAgo.getTime(), new Set());
 
-  // If lastYearDate and prevWeekDate are the same, clear one
-  if(lastYearDate && prevWeekDate && lastYearDate === prevWeekDate) {
-    // Keep it as lastYear, find next best for prevWeek
-    prevWeekDate = null;
-    prevWeekDist = Infinity;
-    sortedDates.forEach(d => {
-      if(d === lastYearDate) return;
-      const diff = Math.abs(new Date(d + 'T00:00:00').getTime() - oneWeekAgo.getTime());
-      if(diff < prevWeekDist) { prevWeekDist = diff; prevWeekDate = d; }
-    });
-  }
+  // Previous previous week same day: same weekday ~14 days before target
+  const twoWeeksAgo = new Date(target);
+  twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+  const usedDates1 = new Set(prevWeekDate ? [prevWeekDate] : []);
+  const prevPrevWeekDate = findNearestDate(twoWeeksAgo.getTime(), usedDates1);
+
+  // Previous previous previous week same day: same weekday ~21 days before target
+  const threeWeeksAgo = new Date(target);
+  threeWeeksAgo.setDate(threeWeeksAgo.getDate() - 21);
+  const usedDates2 = new Set([...(prevWeekDate ? [prevWeekDate] : []), ...(prevPrevWeekDate ? [prevPrevWeekDate] : [])]);
+  const prevPrevPrevWeekDate = findNearestDate(threeWeeksAgo.getTime(), usedDates2);
 
   // ── Build hourly profile for each reference date ──
   function buildDayProfile(dateStr) {
@@ -6423,8 +6466,9 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
     return { hourly, zones, brands };
   }
 
-  const lastYearProfile = buildDayProfile(lastYearDate);
   const prevWeekProfile = buildDayProfile(prevWeekDate);
+  const prevPrevWeekProfile = buildDayProfile(prevPrevWeekDate);
+  const prevPrevPrevWeekProfile = buildDayProfile(prevPrevPrevWeekDate);
 
   // ── Trend: linear regression on last 4+ same-weekday dates ──
   // Use the most recent same-weekday dates for trend fitting
@@ -6463,10 +6507,11 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
   // ── Weighted blend ──
   // Redistribute weights if a source is missing
   const sources = {
-    lastYearSameDay: { profile: lastYearProfile, baseWeight: FC_WEIGHTS.lastYearSameDay, date: lastYearDate },
-    prevWeekSameDay: { profile: prevWeekProfile, baseWeight: FC_WEIGHTS.prevWeekSameDay, date: prevWeekDate },
-    trend:           { profile: trendProfile,    baseWeight: FC_WEIGHTS.trend, date: trendDates.length >= 2 ? trendDates.join(' → ') : null },
-    tcnModel:        { profile: { hourly: tcnHourly, zones: tcnZones, brands: tcnBrands }, baseWeight: FC_WEIGHTS.tcnModel, date: 'model' }
+    prevWeekSameDay:         { profile: prevWeekProfile,         baseWeight: FC_WEIGHTS.prevWeekSameDay,         date: prevWeekDate },
+    prevPrevWeekSameDay:     { profile: prevPrevWeekProfile,     baseWeight: FC_WEIGHTS.prevPrevWeekSameDay,     date: prevPrevWeekDate },
+    prevPrevPrevWeekSameDay: { profile: prevPrevPrevWeekProfile, baseWeight: FC_WEIGHTS.prevPrevPrevWeekSameDay, date: prevPrevPrevWeekDate },
+    trend:                   { profile: trendProfile,            baseWeight: FC_WEIGHTS.trend, date: trendDates.length >= 2 ? trendDates.join(' → ') : null },
+    tcnModel:                { profile: { hourly: tcnHourly, zones: tcnZones, brands: tcnBrands }, baseWeight: FC_WEIGHTS.tcnModel, date: 'model' }
   };
 
   // Calculate effective weights (redistribute missing weights proportionally)
@@ -6555,14 +6600,16 @@ function fcRenderWeightBreakdown(weightInfo, targetDow) {
   bars.innerHTML = '';
 
   const labels = {
-    lastYearSameDay: 'Last Year Same Day',
     prevWeekSameDay: 'Prev Week Same Day',
+    prevPrevWeekSameDay: 'Prev Prev Week Same Day',
+    prevPrevPrevWeekSameDay: 'Prev Prev Prev Week Same Day',
     trend: 'Trend (Linear)',
     tcnModel: 'TCN Model'
   };
   const colors = {
-    lastYearSameDay: '#f59e0b',
     prevWeekSameDay: '#3b82f6',
+    prevPrevWeekSameDay: '#f59e0b',
+    prevPrevPrevWeekSameDay: '#06b6d4',
     trend: '#10b981',
     tcnModel: '#8b5cf6'
   };
