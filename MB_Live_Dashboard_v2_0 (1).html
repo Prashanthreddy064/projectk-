@@ -2225,172 +2225,350 @@ function handleFile(file) {
   pendingShiftBreakdownCalc = false;
   setProgress(0);
   setUploadStatus(`Processing ${file.name} ...`);
-  const reader = new FileReader();
-  reader.onload = e => {
-    setProgress(10);
-    setUploadStatus(`Reading ${file.name} ...`);
-    setTimeout(() => {
-      try {
-      const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
-      const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('drop')) || wb.SheetNames[0];
-      setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
-      const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
-      setProgress(30);
 
-      const cellToText = v => {
-        if(v == null) return '';
-        if(typeof v === 'object' && v.w) return String(v.w);
-        if(typeof v === 'object' && v.v != null) return String(v.v);
-        return String(v);
-      };
-      const isStrictNumeric = (txt) => /^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test((txt || '').trim());
+  const isCSV = /\.csv$/i.test(file.name);
 
-       const normalizeHeader = (value) => cellToText(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-      const findFirstMatch = (headers, patterns) => headers.findIndex(h => patterns.some(p => h === p || h.startsWith(p + ' ') || h.endsWith(' ' + p) || h.includes(' ' + p + ' ')));
-
-      // Support "complete dashboard" exports by locating the actual header row/columns
-      // instead of assuming A–E are always Time, X, Y, Units, User ID.
-      let headerRowIdx = 0;
-      let bestHeaderScore = -1;
-      let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colDay = 6, colPromo = 7, colOrder = 8, colBrand = 9, colDropOff = -1;
-      for(let i = 0; i < Math.min(rows.length, 120); i++) {
-        const hdr = (rows[i] || []).map(normalizeHeader);
-        const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'transaction timestamp', 'time']);
-        const xIdx = findFirstMatch(hdr, ['x coordinate', 'x coordinates', 'x coord', 'x location', 'x']);
-        const yIdx = findFirstMatch(hdr, ['y coordinate', 'y coordinates', 'y coord', 'y location', 'y']);
-        const unitsIdx = findFirstMatch(hdr, ['units', 'unit', 'qty', 'quantity', 'pieces']);
-        const score = [txIdx, xIdx, yIdx, unitsIdx].filter(idx => idx >= 0).length;
-        if(score < 3 || score <= bestHeaderScore) continue;
-
-        headerRowIdx = i;
-        bestHeaderScore = score;
-        if(txIdx >= 0) colTime = txIdx;
-        if(xIdx >= 0) colX = xIdx;
-        if(yIdx >= 0) colY = yIdx;
-        if(unitsIdx >= 0) colUnits = unitsIdx;
-        const userIdx = findFirstMatch(hdr, ['user id', 'user', 'associate', 'picker']);
-        if(userIdx >= 0) colUser = userIdx;
-        const dateIdx = findFirstMatch(hdr, ['date', 'transaction date']);
-        if(dateIdx >= 0) colDate = dateIdx;
-        const promoIdx = findFirstMatch(hdr, ['promo type', 'promo', 'category', 'type']);
-        if(promoIdx >= 0) colPromo = promoIdx;
-        const dayIdx = findFirstMatch(hdr, ['day', 'day of week', 'dayofweek']);
-        if(dayIdx >= 0) colDay = dayIdx;
-        const orderIdx = findFirstMatch(hdr, ['order number', 'order no', 'order', 'ordernumber']);
-        if(orderIdx >= 0) colOrder = orderIdx;
-        const brandIdx = findFirstMatch(hdr, ['product brand', 'brand', 'productbrand']);
-        if(brandIdx >= 0) colBrand = brandIdx;
-        const dropOffIdx = findFirstMatch(hdr, ['drop off location', 'dropoff location', 'drop off', 'dropofflocation']);
-        if(dropOffIdx >= 0) colDropOff = dropOffIdx;
-        if(score === 4) break;
-      }
-
-      // Process rows in chunks to avoid browser script timeout on large files (1M+ rows)
-      const ROW_CHUNK = 50000;
-      const totalDataRows = rows.length - (headerRowIdx + 1);
-      const newTx = [];
-      let rowIdx = headerRowIdx + 1;
-
-      function parseRowChunk() {
-        const chunkEnd = Math.min(rowIdx + ROW_CHUNK, rows.length);
-        for(; rowIdx < chunkEnd; rowIdx++) {
-          const r = rows[rowIdx] || [];
-          const xRaw = r[colX];
-          const yRaw = r[colY];
-          const tRaw = r[colTime];
-          const unitsRaw = r[colUnits];
-          const orderRaw = r[colOrder];
-          const brandRaw = r[colBrand];
-          if([xRaw, yRaw, tRaw, unitsRaw, orderRaw, brandRaw].every(v => cellToText(v).trim() === '')) continue;
-          const xTxtRaw = cellToText(xRaw).trim();
-          const yTxtRaw = cellToText(yRaw).trim();
-          const xTxt = xTxtRaw.toLowerCase();
-          const yTxt = yTxtRaw.toLowerCase();
-
-          // Units: use value from col D; default to 1 only if column is absent
-          const rawUnits = r[colUnits];
-          const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
-
-          const xLooksNumeric = isStrictNumeric(xTxtRaw);
-          const yLooksNumeric = isStrictNumeric(yTxtRaw);
-          const hasExplicitNA = xTxt.includes('#n/a') || yTxt.includes('#n/a');
-          const hasInvalidCoords = !xLooksNumeric || !yLooksNumeric;
-
-          // Classify records as No Location whenever coordinates are invalid/missing.
-          // This prevents rows from being dropped when coordinate cells are blank, text, or #N/A.
-          const isNA = hasExplicitNA || hasInvalidCoords;
-
-          const x = xLooksNumeric ? parseFloat(xTxtRaw) : NaN;
-          const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
-          if(!isNA && (isNaN(x) || isNaN(y))) continue;
-
-          // Parse hour AND minute from col A (handles Excel serial, 24h strings, and AM/PM strings)
-          let hour = 0, minute = 0;
-          const t = r[colTime];
-          if(typeof t === 'number') {
-            const frac = ((t % 1) + 1) % 1;
-            hour = Math.floor(frac * 24);
-            minute = Math.floor((frac * 24 - hour) * 60);
-          } else if(typeof t === 'string') {
-            const m = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
-            if(m) {
-              hour = parseInt(m[1]);
-              minute = parseInt(m[2]);
-              const ampm = (m[4] || '').toLowerCase();
-              if(ampm === 'pm' && hour < 12) hour += 12;
-              if(ampm === 'am' && hour === 12) hour = 0;
-            }
-          } else if(Object.prototype.toString.call(t) === '[object Date]' && !isNaN(t.getTime())) {
-            hour = t.getHours();
-            minute = t.getMinutes();
-          }
-          // User ID from col E
-          const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
-          const dateValue = parseOpsDateValue(r[colDate]);
-          const promoType = normalizePromoType(r[colPromo]);
-          const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
-          const productBrand = (r[colBrand] != null && r[colBrand] !== '') ? String(r[colBrand]).trim() : '';
-          const dayOfWeek = (r[colDay] != null && r[colDay] !== '') ? String(r[colDay]).trim() : '';
-          const dropOffLocation = (colDropOff >= 0 && r[colDropOff] != null && r[colDropOff] !== '') ? String(r[colDropOff]).trim() : '';
-          newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek, dropOffLocation});
+  if(isCSV) {
+    // --- CSV path: read as text and parse in chunks (handles 1M+ rows) ---
+    const reader = new FileReader();
+    reader.onload = e => {
+      setProgress(10);
+      setUploadStatus(`Splitting rows · ${file.name}`);
+      setTimeout(() => {
+        try {
+          const text = e.target.result;
+          const lines = text.split(/\r?\n/);
+          setProgress(20);
+          setUploadStatus(`Detected ${lines.length.toLocaleString()} lines · mapping columns`);
+          handleCSVLines(lines, file.name);
+        } catch(err) {
+          isOpsDataProcessing = false;
+          pendingShiftBreakdownCalc = false;
+          setProgress(100);
+          setUploadStatus('Upload failed · please verify sheet/columns');
+          showRefreshToast('⚠️ CSV parse failed. Please verify the file and try again.');
+          console.error('handleFile CSV parse error', err);
         }
+      }, 50);
+    };
+    reader.onerror = () => {
+      isOpsDataProcessing = false;
+      pendingShiftBreakdownCalc = false;
+      setProgress(100);
+      setUploadStatus('File read failed');
+      showRefreshToast('⚠️ File read failed. Please try re-uploading the file.');
+    };
+    reader.readAsText(file);
+  } else {
+    // --- XLSX/XLS path: use XLSX library with dense mode for memory efficiency ---
+    const reader = new FileReader();
+    reader.onload = e => {
+      setProgress(10);
+      setUploadStatus(`Reading ${file.name} ...`);
+      setTimeout(() => {
+        try {
+          const wb = XLSX.read(e.target.result, {type:'array', cellDates:true, dense:true});
+          const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('drop')) || wb.SheetNames[0];
+          setUploadStatus(`Parsing ${file.name} · sheet: ${sheetName}`);
+          const ws = wb.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
+          setProgress(30);
+          processRowsArray(rows, file.name);
+        } catch(err) {
+          isOpsDataProcessing = false;
+          pendingShiftBreakdownCalc = false;
+          setProgress(100);
+          setUploadStatus('Upload failed · please verify sheet/columns');
+          showRefreshToast('⚠️ Upload parse failed. Please verify the sheet/columns and try again.');
+          console.error('handleFile XLSX parse error', err);
+        }
+      }, 50);
+    };
+    reader.onerror = () => {
+      isOpsDataProcessing = false;
+      pendingShiftBreakdownCalc = false;
+      setProgress(100);
+      setUploadStatus('File read failed');
+      showRefreshToast('⚠️ File read failed. Please try re-uploading the file.');
+    };
+    reader.readAsArrayBuffer(file);
+  }
+}
 
-        const parsed = rowIdx - (headerRowIdx + 1);
-        const pctDone = totalDataRows > 0 ? (parsed / totalDataRows) : 1;
-        setProgress(30 + pctDone * 40);
-        setUploadStatus(`Parsing rows · ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`);
-        document.getElementById('row-count').textContent = `Parsing ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`;
+// --- CSV line parser (handles quoted fields with commas/newlines) ---
+function parseCSVLine(line) {
+  const fields = [];
+  let i = 0, field = '', inQuotes = false;
+  while(i < line.length) {
+    const ch = line[i];
+    if(inQuotes) {
+      if(ch === '"' && line[i+1] === '"') { field += '"'; i += 2; }
+      else if(ch === '"') { inQuotes = false; i++; }
+      else { field += ch; i++; }
+    } else {
+      if(ch === '"') { inQuotes = true; i++; }
+      else if(ch === ',') { fields.push(field); field = ''; i++; }
+      else { field += ch; i++; }
+    }
+  }
+  fields.push(field);
+  return fields;
+}
 
-        if(rowIdx < rows.length) {
-          setTimeout(parseRowChunk, 0);
-        } else {
-          setProgress(70);
-          setUploadStatus(`Assigning zones · ${newTx.length.toLocaleString()} transactions`);
-          // Assign zones in chunks
-          assignZonesAndBuild(newTx, file.name);
+// --- CSV handler: parse lines in chunks to avoid browser timeout ---
+function handleCSVLines(lines, filename) {
+  const cellToText = v => (v == null) ? '' : String(v);
+  const normalizeHeader = (value) => cellToText(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const findFirstMatch = (headers, patterns) => headers.findIndex(h => patterns.some(p => h === p || h.startsWith(p + ' ') || h.endsWith(' ' + p) || h.includes(' ' + p + ' ')));
+  const isStrictNumeric = (txt) => /^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test((txt || '').trim());
+
+  // Find header row in first 120 lines
+  let headerRowIdx = 0, bestHeaderScore = -1;
+  let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colDay = 6, colPromo = 7, colOrder = 8, colBrand = 9, colDropOff = -1;
+
+  const scanLimit = Math.min(lines.length, 120);
+  for(let i = 0; i < scanLimit; i++) {
+    if(!lines[i].trim()) continue;
+    const hdr = parseCSVLine(lines[i]).map(normalizeHeader);
+    const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'transaction timestamp', 'time']);
+    const xIdx = findFirstMatch(hdr, ['x coordinate', 'x coordinates', 'x coord', 'x location', 'x']);
+    const yIdx = findFirstMatch(hdr, ['y coordinate', 'y coordinates', 'y coord', 'y location', 'y']);
+    const unitsIdx = findFirstMatch(hdr, ['units', 'unit', 'qty', 'quantity', 'pieces']);
+    const score = [txIdx, xIdx, yIdx, unitsIdx].filter(idx => idx >= 0).length;
+    if(score < 3 || score <= bestHeaderScore) continue;
+
+    headerRowIdx = i;
+    bestHeaderScore = score;
+    if(txIdx >= 0) colTime = txIdx;
+    if(xIdx >= 0) colX = xIdx;
+    if(yIdx >= 0) colY = yIdx;
+    if(unitsIdx >= 0) colUnits = unitsIdx;
+    const userIdx = findFirstMatch(hdr, ['user id', 'user', 'associate', 'picker']);
+    if(userIdx >= 0) colUser = userIdx;
+    const dateIdx = findFirstMatch(hdr, ['date', 'transaction date']);
+    if(dateIdx >= 0) colDate = dateIdx;
+    const promoIdx = findFirstMatch(hdr, ['promo type', 'promo', 'category', 'type']);
+    if(promoIdx >= 0) colPromo = promoIdx;
+    const dayIdx = findFirstMatch(hdr, ['day', 'day of week', 'dayofweek']);
+    if(dayIdx >= 0) colDay = dayIdx;
+    const orderIdx = findFirstMatch(hdr, ['order number', 'order no', 'order', 'ordernumber']);
+    if(orderIdx >= 0) colOrder = orderIdx;
+    const brandIdx = findFirstMatch(hdr, ['product brand', 'brand', 'productbrand']);
+    if(brandIdx >= 0) colBrand = brandIdx;
+    const dropOffIdx = findFirstMatch(hdr, ['drop off location', 'dropoff location', 'drop off', 'dropofflocation']);
+    if(dropOffIdx >= 0) colDropOff = dropOffIdx;
+    if(score === 4) break;
+  }
+
+  setProgress(25);
+
+  // Chunked row parsing
+  const ROW_CHUNK = 50000;
+  const newTx = [];
+  let rowIdx = headerRowIdx + 1;
+  // Skip trailing empty lines for accurate total count
+  let lastLine = lines.length - 1;
+  while(lastLine > rowIdx && !lines[lastLine].trim()) lastLine--;
+  const totalDataRows = lastLine - headerRowIdx;
+
+  function parseChunk() {
+    const chunkEnd = Math.min(rowIdx + ROW_CHUNK, lastLine + 1);
+    for(; rowIdx < chunkEnd; rowIdx++) {
+      if(!lines[rowIdx].trim()) continue;
+      const r = parseCSVLine(lines[rowIdx]);
+      const xRaw = r[colX];
+      const yRaw = r[colY];
+      const tRaw = r[colTime];
+      const unitsRaw = r[colUnits];
+      const orderRaw = r[colOrder];
+      const brandRaw = r[colBrand];
+      if([xRaw, yRaw, tRaw, unitsRaw, orderRaw, brandRaw].every(v => (v || '').trim() === '')) continue;
+      const xTxtRaw = (xRaw || '').trim();
+      const yTxtRaw = (yRaw || '').trim();
+      const xTxt = xTxtRaw.toLowerCase();
+      const yTxt = yTxtRaw.toLowerCase();
+
+      const rawUnits = r[colUnits];
+      const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
+
+      const xLooksNumeric = isStrictNumeric(xTxtRaw);
+      const yLooksNumeric = isStrictNumeric(yTxtRaw);
+      const hasExplicitNA = xTxt.includes('#n/a') || yTxt.includes('#n/a');
+      const hasInvalidCoords = !xLooksNumeric || !yLooksNumeric;
+      const isNA = hasExplicitNA || hasInvalidCoords;
+
+      const x = xLooksNumeric ? parseFloat(xTxtRaw) : NaN;
+      const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
+      if(!isNA && (isNaN(x) || isNaN(y))) continue;
+
+      let hour = 0, minute = 0;
+      const t = (tRaw || '').trim();
+      const tNum = Number(t);
+      if(t && !isNaN(tNum) && isFinite(tNum)) {
+        const frac = ((tNum % 1) + 1) % 1;
+        hour = Math.floor(frac * 24);
+        minute = Math.floor((frac * 24 - hour) * 60);
+      } else if(t) {
+        const m = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
+        if(m) {
+          hour = parseInt(m[1]);
+          minute = parseInt(m[2]);
+          const ampm = (m[4] || '').toLowerCase();
+          if(ampm === 'pm' && hour < 12) hour += 12;
+          if(ampm === 'am' && hour === 12) hour = 0;
         }
       }
-      parseRowChunk();
 
-      } catch(err) {
-        isOpsDataProcessing = false;
-        pendingShiftBreakdownCalc = false;
-        setProgress(100);
-        setUploadStatus('Upload failed · please verify sheet/columns');
-        showRefreshToast('⚠️ Upload parse failed. Please verify the sheet/columns and try again.');
-        console.error('handleFile parse error', err);
+      const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
+      const dateValue = parseOpsDateValue(r[colDate]);
+      const promoType = normalizePromoType(r[colPromo]);
+      const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
+      const productBrand = (r[colBrand] != null && r[colBrand] !== '') ? String(r[colBrand]).trim() : '';
+      const dayOfWeek = (r[colDay] != null && r[colDay] !== '') ? String(r[colDay]).trim() : '';
+      const dropOffLocation = (colDropOff >= 0 && r[colDropOff] != null && r[colDropOff] !== '') ? String(r[colDropOff]).trim() : '';
+      newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek, dropOffLocation});
+    }
+
+    const parsed = rowIdx - (headerRowIdx + 1);
+    const pctDone = totalDataRows > 0 ? (parsed / totalDataRows) : 1;
+    setProgress(25 + pctDone * 45);
+    setUploadStatus(`Parsing rows · ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`);
+    document.getElementById('row-count').textContent = `Parsing ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`;
+
+    if(rowIdx <= lastLine) {
+      setTimeout(parseChunk, 0);
+    } else {
+      setProgress(70);
+      setUploadStatus(`Assigning zones · ${newTx.length.toLocaleString()} transactions`);
+      assignZonesAndBuild(newTx, filename);
+    }
+  }
+  parseChunk();
+}
+
+// --- XLSX row processor: processes pre-parsed rows array in chunks ---
+function processRowsArray(rows, filename) {
+  const cellToText = v => {
+    if(v == null) return '';
+    if(typeof v === 'object' && v.w) return String(v.w);
+    if(typeof v === 'object' && v.v != null) return String(v.v);
+    return String(v);
+  };
+  const isStrictNumeric = (txt) => /^[-+]?\d*\.?\d+(e[-+]?\d+)?$/i.test((txt || '').trim());
+  const normalizeHeader = (value) => cellToText(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const findFirstMatch = (headers, patterns) => headers.findIndex(h => patterns.some(p => h === p || h.startsWith(p + ' ') || h.endsWith(' ' + p) || h.includes(' ' + p + ' ')));
+
+  let headerRowIdx = 0, bestHeaderScore = -1;
+  let colTime = 0, colX = 1, colY = 2, colUnits = 3, colUser = 4, colDate = 5, colDay = 6, colPromo = 7, colOrder = 8, colBrand = 9, colDropOff = -1;
+  for(let i = 0; i < Math.min(rows.length, 120); i++) {
+    const hdr = (rows[i] || []).map(normalizeHeader);
+    const txIdx = findFirstMatch(hdr, ['time of transaction', 'transaction time', 'time transaction', 'transaction timestamp', 'time']);
+    const xIdx = findFirstMatch(hdr, ['x coordinate', 'x coordinates', 'x coord', 'x location', 'x']);
+    const yIdx = findFirstMatch(hdr, ['y coordinate', 'y coordinates', 'y coord', 'y location', 'y']);
+    const unitsIdx = findFirstMatch(hdr, ['units', 'unit', 'qty', 'quantity', 'pieces']);
+    const score = [txIdx, xIdx, yIdx, unitsIdx].filter(idx => idx >= 0).length;
+    if(score < 3 || score <= bestHeaderScore) continue;
+    headerRowIdx = i;
+    bestHeaderScore = score;
+    if(txIdx >= 0) colTime = txIdx;
+    if(xIdx >= 0) colX = xIdx;
+    if(yIdx >= 0) colY = yIdx;
+    if(unitsIdx >= 0) colUnits = unitsIdx;
+    const userIdx = findFirstMatch(hdr, ['user id', 'user', 'associate', 'picker']);
+    if(userIdx >= 0) colUser = userIdx;
+    const dateIdx = findFirstMatch(hdr, ['date', 'transaction date']);
+    if(dateIdx >= 0) colDate = dateIdx;
+    const promoIdx = findFirstMatch(hdr, ['promo type', 'promo', 'category', 'type']);
+    if(promoIdx >= 0) colPromo = promoIdx;
+    const dayIdx = findFirstMatch(hdr, ['day', 'day of week', 'dayofweek']);
+    if(dayIdx >= 0) colDay = dayIdx;
+    const orderIdx = findFirstMatch(hdr, ['order number', 'order no', 'order', 'ordernumber']);
+    if(orderIdx >= 0) colOrder = orderIdx;
+    const brandIdx = findFirstMatch(hdr, ['product brand', 'brand', 'productbrand']);
+    if(brandIdx >= 0) colBrand = brandIdx;
+    const dropOffIdx = findFirstMatch(hdr, ['drop off location', 'dropoff location', 'drop off', 'dropofflocation']);
+    if(dropOffIdx >= 0) colDropOff = dropOffIdx;
+    if(score === 4) break;
+  }
+
+  const ROW_CHUNK = 50000;
+  const totalDataRows = rows.length - (headerRowIdx + 1);
+  const newTx = [];
+  let rowIdx = headerRowIdx + 1;
+
+  function parseRowChunk() {
+    const chunkEnd = Math.min(rowIdx + ROW_CHUNK, rows.length);
+    for(; rowIdx < chunkEnd; rowIdx++) {
+      const r = rows[rowIdx] || [];
+      const xRaw = r[colX];
+      const yRaw = r[colY];
+      const tRaw = r[colTime];
+      const unitsRaw = r[colUnits];
+      const orderRaw = r[colOrder];
+      const brandRaw = r[colBrand];
+      if([xRaw, yRaw, tRaw, unitsRaw, orderRaw, brandRaw].every(v => cellToText(v).trim() === '')) continue;
+      const xTxtRaw = cellToText(xRaw).trim();
+      const yTxtRaw = cellToText(yRaw).trim();
+      const xTxt = xTxtRaw.toLowerCase();
+      const yTxt = yTxtRaw.toLowerCase();
+
+      const rawUnits = r[colUnits];
+      const units = (rawUnits != null && rawUnits !== '') ? (parseFloat(rawUnits) || 0) : 1;
+
+      const xLooksNumeric = isStrictNumeric(xTxtRaw);
+      const yLooksNumeric = isStrictNumeric(yTxtRaw);
+      const hasExplicitNA = xTxt.includes('#n/a') || yTxt.includes('#n/a');
+      const hasInvalidCoords = !xLooksNumeric || !yLooksNumeric;
+      const isNA = hasExplicitNA || hasInvalidCoords;
+
+      const x = xLooksNumeric ? parseFloat(xTxtRaw) : NaN;
+      const y = yLooksNumeric ? parseFloat(yTxtRaw) : NaN;
+      if(!isNA && (isNaN(x) || isNaN(y))) continue;
+
+      let hour = 0, minute = 0;
+      const t = r[colTime];
+      if(typeof t === 'number') {
+        const frac = ((t % 1) + 1) % 1;
+        hour = Math.floor(frac * 24);
+        minute = Math.floor((frac * 24 - hour) * 60);
+      } else if(typeof t === 'string') {
+        const m = t.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
+        if(m) {
+          hour = parseInt(m[1]);
+          minute = parseInt(m[2]);
+          const ampm = (m[4] || '').toLowerCase();
+          if(ampm === 'pm' && hour < 12) hour += 12;
+          if(ampm === 'am' && hour === 12) hour = 0;
+        }
+      } else if(Object.prototype.toString.call(t) === '[object Date]' && !isNaN(t.getTime())) {
+        hour = t.getHours();
+        minute = t.getMinutes();
       }
-    }, 50);
-  };
-  reader.onerror = () => {
-    isOpsDataProcessing = false;
-    pendingShiftBreakdownCalc = false;
-    setProgress(100);
-    setUploadStatus('File read failed');
-    showRefreshToast('⚠️ File read failed. Please try re-uploading the file.');
-  };
-  reader.readAsArrayBuffer(file);
+      const userId = (r[colUser] != null && r[colUser] !== '') ? String(r[colUser]).trim() : 'Unknown';
+      const dateValue = parseOpsDateValue(r[colDate]);
+      const promoType = normalizePromoType(r[colPromo]);
+      const orderNumber = (r[colOrder] != null && r[colOrder] !== '') ? String(r[colOrder]).trim() : '';
+      const productBrand = (r[colBrand] != null && r[colBrand] !== '') ? String(r[colBrand]).trim() : '';
+      const dayOfWeek = (r[colDay] != null && r[colDay] !== '') ? String(r[colDay]).trim() : '';
+      const dropOffLocation = (colDropOff >= 0 && r[colDropOff] != null && r[colDropOff] !== '') ? String(r[colDropOff]).trim() : '';
+      newTx.push({x: isNA ? NaN : x, y: isNA ? NaN : y, units, hour, minute, userId, isNA, dateValue, promoType, orderNumber, productBrand, dayOfWeek, dropOffLocation});
+    }
+
+    const parsed = rowIdx - (headerRowIdx + 1);
+    const pctDone = totalDataRows > 0 ? (parsed / totalDataRows) : 1;
+    setProgress(30 + pctDone * 40);
+    setUploadStatus(`Parsing rows · ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`);
+    document.getElementById('row-count').textContent = `Parsing ${parsed.toLocaleString()} / ${totalDataRows.toLocaleString()}`;
+
+    if(rowIdx < rows.length) {
+      setTimeout(parseRowChunk, 0);
+    } else {
+      setProgress(70);
+      setUploadStatus(`Assigning zones · ${newTx.length.toLocaleString()} transactions`);
+      assignZonesAndBuild(newTx, filename);
+    }
+  }
+  parseRowChunk();
 }
 
 function assignZonesAndBuild(rows, filename) {
