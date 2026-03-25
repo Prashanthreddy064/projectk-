@@ -3309,8 +3309,9 @@ function buildOvTable() {
     <th>Total Units</th>
     <th>Total Picks</th>
     <th>Avg Units/Pick</th>
-    <th>S1&S2 Independent</th>
-    <th>S1&S2</th>
+    <th>S1 Independent</th>
+    <th>S2 Independent</th>
+    <th>S1&S2 Shared</th>
     <th>Volume Share</th>
   </tr></thead><tbody>`;
 
@@ -3320,7 +3321,8 @@ function buildOvTable() {
     const dispUnits = d.totalUnits || 0;
     const dispPicks = d.totalPicks || 0;
     const avgUPP = dispPicks > 0 ? (dispUnits / dispPicks).toFixed(2) : '—';
-    const s1s2IndependentUnits = ((d.independent && d.independent.s1) || 0) + ((d.independent && d.independent.s2) || 0);
+    const s1IndependentUnits = (d.independent && d.independent.s1) || 0;
+    const s2IndependentUnits = (d.independent && d.independent.s2) || 0;
     const s1s2SharedUnits = ((d.shared && d.shared.s1) || 0) + ((d.shared && d.shared.s2) || 0);
     const pct = grand > 0 ? (dispUnits / grand * 100).toFixed(1) : '0.0';
     const bw = (dispUnits / maxU * 100).toFixed(0);
@@ -3372,7 +3374,8 @@ function buildOvTable() {
       <td class="mono">${dispUnits.toLocaleString()}</td>
       <td class="mono">${dispPicks.toLocaleString()}</td>
       <td class="mono">${avgUPP}</td>
-      <td class="mono" style="color:#93c5fd">${Math.round(s1s2IndependentUnits).toLocaleString()}</td>
+      <td class="mono" style="color:#93c5fd">${Math.round(s1IndependentUnits).toLocaleString()}</td>
+      <td class="mono" style="color:#93c5fd">${Math.round(s2IndependentUnits).toLocaleString()}</td>
       <td class="mono" style="color:#fbbf24">${Math.round(s1s2SharedUnits).toLocaleString()}</td>
       <td><span class="mono" style="font-size:10px;color:var(--text3)">${pct}%</span><div class="bar-bg"><div class="bar-fg" style="width:${bw}%;background:${c}"></div></div></td>
     </tr>`;
