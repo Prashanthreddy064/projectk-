@@ -1461,26 +1461,6 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </table>
   </div>
 
-  <!-- Zone Prediction Table -->
-  <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Predicted Zone Distribution <span id="fc-zone-pred-label" style="font-size:10px;font-weight:400;color:var(--purple);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
-    <p style="font-size:11px;color:var(--text2);font-family:'IBM Plex Mono',monospace;margin-bottom:14px;">
-      Zone probabilities predicted by the TCN softmax head. Shows which zones will have the most pick activity.
-    </p>
-    <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
-      <thead>
-        <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
-          <th style="text-align:left;padding:8px 6px;">Zone</th>
-          <th style="text-align:center;padding:8px 6px;">Predicted Probability</th>
-          <th style="text-align:center;padding:8px 6px;">Predicted Units</th>
-          <th style="text-align:center;padding:8px 6px;">Actual Units</th>
-          <th style="width:200px;padding:8px 6px;">Distribution</th>
-        </tr>
-      </thead>
-      <tbody id="fc-zone-pred-body"></tbody>
-    </table>
-  </div>
-
   <!-- Zone Forecast Staffing Table -->
   <div class="card">
     <div class="card-title">Zone Volume & Staffing — Forecast (TCN Predicted)</div>
@@ -6792,7 +6772,7 @@ function fcGetHourScopeFraction() {
 
 function fcBuildZonePredictionTable() {
   const tbody = document.getElementById('fc-zone-pred-body');
-  if(!tbody) return;
+  if(!tbody) return; // HTML removed — no-op
   tbody.innerHTML = '';
 
   // Scale zone predictions/actuals by the hour selection fraction
@@ -6912,46 +6892,68 @@ function fcBuildHandoverPlan() {
     labelEl.textContent = `Overlap: ${fmt(overlapStartMin)} – ${fmt(overlapEndMin)} (${overlapHours.toFixed(1)}h)`;
   }
 
-  // Determine which hours fall in the overlap window
+  // ── Determine S1 and S2 hour ranges ──
+  // S1: 6:00 to overlap end (when S1 leaves), S2: overlap start to end of day
+  const s1Hours = [];
+  for(let h = 6; h < Math.ceil(oeH + (oeM > 0 ? 1 : 0)); h++) s1Hours.push(h % 24);
+  const s2Hours = [];
+  for(let h = Math.floor(osH); h <= 23; h++) s2Hours.push(h % 24);
+  // Overlap hours
   const overlapHourList = [];
-  for(let h = Math.floor(osH); h <= Math.floor(oeH); h++) {
-    if(h >= osH && h < oeH + (oeM > 0 ? 1 : 0)) overlapHourList.push(h % 24);
-  }
+  for(let h = Math.floor(osH); h < Math.ceil(oeH + (oeM > 0 ? 1 : 0)); h++) overlapHourList.push(h % 24);
 
-  // Calculate forecasted volume per zone during overlap hours only
-  // Use per-hour predictions to get overlap-specific volume
+  // ── Calculate forecast volume per zone for S1 and S2 windows ──
   const totalPredAll = Object.values(fcPredictions || {}).reduce((s, v) => s + v, 0) || 1;
+  const s1PredTotal = s1Hours.reduce((s, h) => s + (fcPredictions[h] || 0), 0);
+  const s2PredTotal = s2Hours.reduce((s, h) => s + (fcPredictions[h] || 0), 0);
   const overlapPredTotal = overlapHourList.reduce((s, h) => s + (fcPredictions[h] || 0), 0);
+  const s1Fraction = s1PredTotal / totalPredAll || 0;
+  const s2Fraction = s2PredTotal / totalPredAll || 0;
   const overlapFraction = overlapPredTotal / totalPredAll || 0;
 
-  // Per-zone overlap volume = zone's predicted total * fraction of volume in overlap hours
-  const zoneOverlapVol = {};
-  const allZones = Array.from(new Set([...Object.keys(STEADY), ...Object.keys(fcZonePredictions || {}), ...Object.keys(ZONE_CAPACITY)]));
+  const allZones = Array.from(new Set([...Object.keys(UPH), ...Object.keys(fcZonePredictions || {}), ...Object.keys(ZONE_CAPACITY)]));
+
+  // Per-zone volume for S1 and S2 windows
+  const zoneS1Vol = {}, zoneS2Vol = {}, zoneOverlapVol = {};
   allZones.forEach(z => {
+    zoneS1Vol[z] = (fcZonePredictions[z] || 0) * s1Fraction;
+    zoneS2Vol[z] = (fcZonePredictions[z] || 0) * s2Fraction;
     zoneOverlapVol[z] = (fcZonePredictions[z] || 0) * overlapFraction;
   });
 
-  // Calculate required pickers per zone during overlap based on overlap volume and UPH
-  const zoneOverlapPickers = {};
+  // ── Calculate S1 pickers per zone from forecast volume ──
+  const s1ShiftHours = s1Hours.length || 8;
+  const s1Pickers = {};
   allZones.forEach(z => {
     const uph = UPH[z] || 150;
-    zoneOverlapPickers[z] = zoneOverlapVol[z] > 0 ? Math.max(1, Math.ceil(zoneOverlapVol[z] / (uph * overlapHours))) : 0;
+    s1Pickers[z] = zoneS1Vol[z] > 0 ? Math.max(1, Math.ceil(zoneS1Vol[z] / (uph * s1ShiftHours))) : 0;
   });
 
-  // S1 and S2 baseline pickers per zone
-  const s1Pickers = {};
+  // ── Calculate S2 pickers per zone: scale up from S1 based on volume trending ──
+  const s2ShiftHours = s2Hours.length || 8;
   const s2Pickers = {};
   allZones.forEach(z => {
-    s1Pickers[z] = (STEADY[z] && STEADY[z].s1) || 0;
-    s2Pickers[z] = (STEADY[z] && STEADY[z].s2) || 0;
+    const uph = UPH[z] || 150;
+    // Base S2 pickers from S2 forecast volume
+    const s2Base = zoneS2Vol[z] > 0 ? Math.max(1, Math.ceil(zoneS2Vol[z] / (uph * s2ShiftHours))) : 0;
+    // Trending increase: if S2 volume > S1 volume for this zone, add extra pickers
+    const volRatio = zoneS1Vol[z] > 0 ? (zoneS2Vol[z] / zoneS1Vol[z]) : 1;
+    if(volRatio > 1.15) {
+      // Volume is increasing — add extra picker(s) proportional to increase
+      const extra = Math.ceil((volRatio - 1) * s1Pickers[z]);
+      s2Pickers[z] = Math.max(s2Base, s1Pickers[z] + extra);
+    } else {
+      s2Pickers[z] = s2Base;
+    }
   });
 
-  // ─── Headcount Table ───
+  // ── Headcount Table ──
   const headcountBody = document.getElementById('fc-headcount-body');
   if(headcountBody) {
     headcountBody.innerHTML = '';
     const sorted = allZones
-      .map(z => ({ zone: z, s1: s1Pickers[z], s2: s2Pickers[z], combined: s1Pickers[z] + s2Pickers[z], cap: ZONE_CAPACITY[z] || 4, vol: zoneOverlapVol[z], needed: zoneOverlapPickers[z] }))
+      .filter(z => s1Pickers[z] > 0 || s2Pickers[z] > 0)
+      .map(z => ({ zone: z, s1: s1Pickers[z], s2: s2Pickers[z], combined: s1Pickers[z] + s2Pickers[z], cap: ZONE_CAPACITY[z] || 4, vol: zoneOverlapVol[z] }))
       .sort((a, b) => (b.combined / b.cap) - (a.combined / a.cap));
 
     sorted.forEach(row => {
@@ -6962,6 +6964,9 @@ function fcBuildHandoverPlan() {
       const statusColor = isOver ? '#ef4444' : isNear ? '#f59e0b' : '#22c55e';
       const statusText = isOver ? 'CONGESTED' : isNear ? 'Near Limit' : 'OK';
       const barW = Math.min(loadPct, 100);
+      const volTrend = zoneS1Vol[row.zone] > 0 ? ((zoneS2Vol[row.zone] / zoneS1Vol[row.zone] - 1) * 100).toFixed(0) : '—';
+      const trendColor = volTrend > 0 ? '#ef4444' : volTrend < 0 ? '#22c55e' : 'var(--text3)';
+      const trendStr = volTrend === '—' ? '—' : (volTrend > 0 ? '+' + volTrend + '%' : volTrend + '%');
 
       const tr = document.createElement('tr');
       tr.style.borderBottom = '1px solid var(--border)';
@@ -6969,7 +6974,7 @@ function fcBuildHandoverPlan() {
       tr.innerHTML =
         '<td style="padding:6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + row.zone + '</span></td>' +
         '<td style="text-align:center;padding:6px;" class="mono">' + row.s1 + '</td>' +
-        '<td style="text-align:center;padding:6px;" class="mono">' + row.s2 + '</td>' +
+        '<td style="text-align:center;padding:6px;" class="mono">' + row.s2 + '<span style="font-size:8px;color:' + trendColor + ';display:block;">' + trendStr + '</span></td>' +
         '<td style="text-align:center;padding:6px;font-weight:700;" class="mono">' + row.combined + '</td>' +
         '<td style="text-align:center;padding:6px;" class="mono">' + row.cap + '</td>' +
         '<td style="text-align:center;padding:6px;color:' + statusColor + ';font-weight:700;font-size:10px;">' + statusText + '</td>' +
@@ -6979,16 +6984,15 @@ function fcBuildHandoverPlan() {
     });
   }
 
-  // ─── Handover Plan: Reassign pickers to avoid congestion ───
-  // Identify congested zones (combined > capacity)
+  // ── Handover Plan: Dynamic reassignment based on forecast-derived pickers ──
   const congested = [];
   const hasCapacity = [];
   allZones.forEach(z => {
     const combined = s1Pickers[z] + s2Pickers[z];
     const cap = ZONE_CAPACITY[z] || 4;
     if(combined > cap) {
-      congested.push({ zone: z, combined, cap, excess: combined - cap, s1: s1Pickers[z], s2: s2Pickers[z] });
-    } else if(combined < cap) {
+      congested.push({ zone: z, combined, cap, excess: combined - cap, s1: s1Pickers[z], s2: s2Pickers[z], vol: zoneOverlapVol[z] });
+    } else if(combined < cap && (s1Pickers[z] > 0 || s2Pickers[z] > 0)) {
       hasCapacity.push({ zone: z, combined, cap, available: cap - combined, vol: zoneOverlapVol[z], s1: s1Pickers[z], s2: s2Pickers[z] });
     }
   });
@@ -7002,7 +7006,9 @@ function fcBuildHandoverPlan() {
 
   if(congested.length === 0) {
     handoverSection.style.display = 'block';
-    if(summaryEl) summaryEl.innerHTML = '<span style="color:var(--green);">No congestion detected.</span> All zones are within capacity during the overlap window. Both shifts can work their assigned zones.';
+    const totalS1 = Object.values(s1Pickers).reduce((s,v) => s+v, 0);
+    const totalS2 = Object.values(s2Pickers).reduce((s,v) => s+v, 0);
+    if(summaryEl) summaryEl.innerHTML = '<span style="color:var(--green);">No congestion detected.</span> All zones within capacity. S1: ' + totalS1 + ' pickers, S2: ' + totalS2 + ' pickers (forecast-based).';
     s1Body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:8px;color:var(--text3);">No reassignment needed — all zones within capacity</td></tr>';
     s2Body.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:8px;color:var(--text3);">No reassignment needed — all zones within capacity</td></tr>';
     return;
@@ -7010,49 +7016,48 @@ function fcBuildHandoverPlan() {
 
   handoverSection.style.display = 'block';
 
-  // Sort available zones by volume (highest volume zones get S2 since they need fresh pickers)
+  // Sort available zones by forecast overlap volume (highest volume zones get S2 fresh pickers)
   hasCapacity.sort((a, b) => b.vol - a.vol);
 
-  // Build reassignment plan:
-  // Strategy: S1 pickers in congested zones should MOVE to zones with spare capacity
-  //           S2 pickers should OCCUPY the high-volume congested zones (they're fresh)
-  const s1Moves = []; // S1 moves FROM congested INTO these zones
-  const s2Assignments = []; // S2 occupies these zones
+  const s1Moves = [];
+  const s2Assignments = [];
 
   let excessToRelocate = 0;
   congested.forEach(cz => { excessToRelocate += cz.excess; });
 
-  // S2 takes over the congested zones (they need the high-volume areas)
+  // S2 takes over congested zones (fresh pickers for high-volume areas)
   congested.forEach(cz => {
-    const s2Take = Math.min(cz.s2, cz.cap); // S2 occupies up to capacity
-    s2Assignments.push({ zone: cz.zone, pickers: s2Take, remaining: cz.cap - s2Take });
+    const s2Take = Math.min(cz.s2, cz.cap);
+    s2Assignments.push({ zone: cz.zone, pickers: s2Take, remaining: cz.cap - s2Take, vol: Math.round(cz.vol) });
   });
 
-  // S1 excess pickers move to available zones
+  // S1 excess pickers relocate to zones with spare capacity
   let remaining = excessToRelocate;
   hasCapacity.forEach(az => {
     if(remaining <= 0) return;
-    const canTake = az.available;
-    const willTake = Math.min(canTake, remaining);
+    const willTake = Math.min(az.available, remaining);
     if(willTake > 0) {
-      s1Moves.push({ zone: az.zone, pickers: willTake, remaining: az.available - willTake });
+      s1Moves.push({ zone: az.zone, pickers: willTake, remaining: az.available - willTake, vol: Math.round(az.vol) });
       remaining -= willTake;
     }
   });
 
-  // Also add S2's normal non-congested zones
+  // S2 also occupies non-congested zones
   hasCapacity.forEach(az => {
     if(az.s2 > 0 && !s2Assignments.find(a => a.zone === az.zone)) {
-      s2Assignments.push({ zone: az.zone, pickers: az.s2, remaining: az.available });
+      s2Assignments.push({ zone: az.zone, pickers: az.s2, remaining: az.available, vol: Math.round(az.vol) });
     }
   });
 
   // Summary
   const congestedNames = congested.map(c => c.zone).join(', ');
+  const totalS1 = Object.values(s1Pickers).reduce((s,v) => s+v, 0);
+  const totalS2 = Object.values(s2Pickers).reduce((s,v) => s+v, 0);
   if(summaryEl) {
     summaryEl.innerHTML =
       '<span style="color:var(--red);font-weight:600;">' + congested.length + ' zone(s) congested:</span> ' + congestedNames + '. ' +
-      '<strong>' + excessToRelocate + '</strong> excess picker(s) from Shift 1 should relocate. ' +
+      'Forecast-based: S1 = ' + totalS1 + ' pickers, S2 = ' + totalS2 + ' pickers. ' +
+      '<strong>' + excessToRelocate + '</strong> excess picker(s) need relocation. ' +
       (remaining > 0 ? '<span style="color:var(--amber);">Warning: ' + remaining + ' picker(s) could not be placed — all zones near capacity.</span>' : '<span style="color:var(--green);">All excess pickers successfully reassigned.</span>');
   }
 
@@ -7066,7 +7071,7 @@ function fcBuildHandoverPlan() {
       const tr = document.createElement('tr');
       tr.style.borderBottom = '1px solid var(--border)';
       tr.innerHTML =
-        '<td style="padding:4px 6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + m.zone + '</span></td>' +
+        '<td style="padding:4px 6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + m.zone + '</span> <span style="font-size:8px;color:var(--text3);">(' + m.vol + ' units)</span></td>' +
         '<td style="text-align:center;padding:4px 6px;font-weight:700;color:var(--cyan);">' + m.pickers + '</td>' +
         '<td style="text-align:center;padding:4px 6px;color:var(--text3);">' + m.remaining + '</td>';
       s1Body.appendChild(tr);
@@ -7082,7 +7087,7 @@ function fcBuildHandoverPlan() {
     tr.style.borderBottom = '1px solid var(--border)';
     if(isCongested) tr.style.background = 'rgba(139,92,246,0.06)';
     tr.innerHTML =
-      '<td style="padding:4px 6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + a.zone + '</span>' + (isCongested ? ' <span style="font-size:8px;color:var(--amber);">priority</span>' : '') + '</td>' +
+      '<td style="padding:4px 6px;"><span class="zpill" style="background:' + c + '18;color:' + c + ';border:1px solid ' + c + '40"><span class="leg-sq" style="background:' + c + '"></span> ' + a.zone + '</span>' + (isCongested ? ' <span style="font-size:8px;color:var(--amber);">priority</span>' : '') + ' <span style="font-size:8px;color:var(--text3);">(' + a.vol + ' units)</span></td>' +
       '<td style="text-align:center;padding:4px 6px;font-weight:700;color:var(--purple);">' + a.pickers + '</td>' +
       '<td style="text-align:center;padding:4px 6px;color:var(--text3);">' + a.remaining + '</td>';
     s2Body.appendChild(tr);
