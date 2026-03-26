@@ -5744,8 +5744,11 @@ function fcPrepareTrainingData() {
 
   if(sortedHours.length < FC_SEQ_LEN + 1) return null;
 
-  // Compute max units for normalization
-  const maxUnits = Math.max(...sortedHours.map(s => s.units), 1);
+  // Compute max units for normalization (safe for large arrays — no spread operator)
+  let maxUnits = 1;
+  for(let i = 0; i < sortedHours.length; i++) {
+    if(sortedHours[i].units > maxUnits) maxUnits = sortedHours[i].units;
+  }
 
   // ─── Precompute enriched features on sortedHours ───
 
@@ -5832,8 +5835,11 @@ function fcPrepareTrainingData() {
     s._lagPrevDayRatio = s._hourOfDayAvg > 0 ? lagPrevDay / s._hourOfDayAvg : 1;
   }
 
-  // Compute max log units for normalization
-  const maxLogUnits = Math.max(...sortedHours.map(s => s._logUnits), 1);
+  // Compute max log units for normalization (safe for large arrays — no spread operator)
+  let maxLogUnits = 1;
+  for(let i = 0; i < sortedHours.length; i++) {
+    if(sortedHours[i]._logUnits > maxLogUnits) maxLogUnits = sortedHours[i]._logUnits;
+  }
 
   // Feature size per timestep:
   //   units_norm + sin_hour + cos_hour + day_onehot + promo_binary  (base)
