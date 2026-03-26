@@ -7374,9 +7374,13 @@ function gatherOrderData(filterType) {
         completionMinute: r.minute,
         pickers: new Set(),
         dropOffLocation: r.dropOffLocation || 'Unknown',
-        orderType: classifyDropOffLocation(r.dropOffLocation)
+        orderType: classifyDropOffLocation(r.dropOffLocation),
+        allCategories: new Set(),
+        allBrands: new Set()
       };
     }
+    orderMap[oKey].allCategories.add(prodCat);
+    orderMap[oKey].allBrands.add(brand.toLowerCase());
     orderMap[oKey].units += r.units;
     orderMap[oKey].lines += 1;
     orderMap[oKey].pickers.add(r.userId);
@@ -7453,13 +7457,21 @@ function renderOrderView(prefix, orders, rowsWithOrders, showNonTCW) {
   }
 
   if(showNonTCW) {
-    const EXCLUDED_CATS = new Set(['Tile']);
-    const EXCLUDED_BRAND_KEYWORDS = ['carpet', 'wolf gordon', 'wolf-gordon'];
     const nonTCWCount = filteredOrders.filter(([,o]) => {
-      const cat = (o.productCategory || '').toLowerCase();
-      const brand = (o.brand || '').toLowerCase();
-      if(EXCLUDED_CATS.has(o.productCategory)) return false;
-      if(EXCLUDED_BRAND_KEYWORDS.some(kw => brand.includes(kw) || cat.includes(kw))) return false;
+      // Check ALL categories across all rows in the order
+      const cats = o.allCategories || new Set();
+      const brands = o.allBrands || new Set();
+      // Exclude if ANY row has Tile
+      if(cats.has('Tile')) return false;
+      // Exclude if ANY brand contains carpet or wolf gordon
+      for(const b of brands) {
+        if(b.includes('carpet') || b.includes('wolf gordon') || b.includes('wolf-gordon')) return false;
+      }
+      // Exclude if ANY category contains carpet or wolf gordon keywords
+      for(const c of cats) {
+        const cl = c.toLowerCase();
+        if(cl.includes('carpet') || cl.includes('wolf gordon') || cl.includes('wolf-gordon')) return false;
+      }
       return true;
     }).length;
     const el = document.getElementById(prefix + '-kpi-nontcw');
@@ -7618,13 +7630,57 @@ function drawDropOffMixTable(prefix, filteredOrders, totalOrders) {
   }
 }
 
+// Classify an order into a category for MB hourly chart
+function classifyOrderCategory(order) {
+  const cats = order.allCategories || new Set();
+  const brands = order.allBrands || new Set();
+
+  // Check for Tile, Carpet, Wolf Gordon presence
+  const hasTile = cats.has('Tile');
+  let hasCarpet = false;
+  let hasWG = false;
+  for(const b of brands) {
+    if(b.includes('carpet')) hasCarpet = true;
+    if(b.includes('wolf gordon') || b.includes('wolf-gordon')) hasWG = true;
+  }
+  // Also check category names for carpet/WG
+  for(const c of cats) {
+    const cl = c.toLowerCase();
+    if(cl.includes('carpet')) hasCarpet = true;
+    if(cl.includes('wolf gordon') || cl.includes('wolf-gordon')) hasWG = true;
+  }
+
+  // Paint Only: ALL categories must be Paint (and no Tile/Carpet/WG)
+  if(!hasTile && !hasCarpet && !hasWG) {
+    const allPaint = cats.size > 0 && [...cats].every(c => c === 'Paint');
+    if(allPaint) return 'Paint Only';
+  }
+
+  // Priority: Tile mixed > Carpet mixed > WG mixed
+  if(hasTile) return 'Tile Mixed';
+  if(hasCarpet) return 'Carpet Mixed';
+  if(hasWG) return 'WG Mixed';
+
+  return 'Other';
+}
+
+const MB_CAT_COLORS = {
+  'Paint Only': '#22c55e',
+  'Tile Mixed': '#f59e0b',
+  'Carpet Mixed': '#ef4444',
+  'WG Mixed': '#a855f7',
+  'Other': '#64748b'
+};
+const MB_CAT_ORDER = ['Paint Only', 'Tile Mixed', 'Carpet Mixed', 'WG Mixed', 'Other'];
+
 function drawOrdersHourlyChart(prefix, allOrders) {
   const canvas = document.getElementById(prefix + '-hourly-canvas');
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.parentElement.clientWidth - 40;
-  const h = 180;
+  const isMB = prefix === 'mb';
+  const h = isMB ? 220 : 180;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -7632,10 +7688,20 @@ function drawOrdersHourlyChart(prefix, allOrders) {
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
 
-  const hourData = Array.from({ length: 24 }, (_, hour) => ({ hour, orders: 0 }));
+  // Build hour data — for MB, classify each order into categories
+  const hourData = Array.from({ length: 24 }, (_, hour) => {
+    const base = { hour, orders: 0 };
+    if(isMB) { MB_CAT_ORDER.forEach(c => base[c] = 0); }
+    return base;
+  });
+
   for(const [, o] of allOrders) {
     if(Number.isInteger(o.completionHour) && o.completionHour >= 0 && o.completionHour <= 23) {
       hourData[o.completionHour].orders += 1;
+      if(isMB) {
+        const cat = classifyOrderCategory(o);
+        hourData[o.completionHour][cat] = (hourData[o.completionHour][cat] || 0) + 1;
+      }
     }
   }
 
@@ -7648,7 +7714,7 @@ function drawOrdersHourlyChart(prefix, allOrders) {
   const maxVal = Math.max(1, ...hours.map(hr => hourData[hr].orders));
   const pad = { t: 18, r: 18, b: 28, l: 42 };
   const plotW = Math.max(10, w - pad.l - pad.r);
-  const plotH = Math.max(10, h - pad.t - pad.b);
+  const plotH = Math.max(10, h - pad.t - pad.b - (isMB ? 20 : 0));
   const gap = plotW / Math.max(1, hours.length);
   const barW = Math.min(28, gap * 0.68);
 
@@ -7668,31 +7734,69 @@ function drawOrdersHourlyChart(prefix, allOrders) {
   for(let i = 0; i < hours.length; i++) {
     const hr = hours[i];
     const x = pad.l + i * gap + (gap - barW) / 2;
-    const val = hourData[hr].orders;
-    const barH = (val / maxVal) * plotH;
-    const y = pad.t + plotH - barH;
+    const totalVal = hourData[hr].orders;
     const isSelected = state.selectedHour === hr;
+    const alpha = state.selectedHour === null || isSelected ? 0.9 : 0.35;
 
-    ctx.fillStyle = isSelected ? '#06b6d4' : '#3b82f6';
-    ctx.globalAlpha = state.selectedHour === null || isSelected ? 0.9 : 0.35;
-    ctx.fillRect(x, y, barW, barH);
-    ctx.globalAlpha = 1;
+    if(isMB) {
+      // Draw stacked bar by category
+      let yOffset = pad.t + plotH;
+      for(const cat of MB_CAT_ORDER) {
+        const catVal = hourData[hr][cat] || 0;
+        if(catVal === 0) continue;
+        const segH = (catVal / maxVal) * plotH;
+        yOffset -= segH;
+        ctx.fillStyle = MB_CAT_COLORS[cat];
+        ctx.globalAlpha = alpha;
+        ctx.fillRect(x, yOffset, barW, segH);
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      // Simple bar for non-MB
+      const barH = (totalVal / maxVal) * plotH;
+      const y = pad.t + plotH - barH;
+      ctx.fillStyle = isSelected ? '#06b6d4' : '#3b82f6';
+      ctx.globalAlpha = alpha;
+      ctx.fillRect(x, y, barW, barH);
+      ctx.globalAlpha = 1;
+    }
 
-    if(val > 0) {
+    // Total count label on top
+    const totalBarH = (totalVal / maxVal) * plotH;
+    const topY = pad.t + plotH - totalBarH;
+    if(totalVal > 0) {
       ctx.fillStyle = '#cbd5e1';
       ctx.font = '500 9px "IBM Plex Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(val.toString(), x + barW / 2, y - 2);
+      ctx.fillText(totalVal.toString(), x + barW / 2, topY - 2);
     }
 
+    // Hour label
     ctx.fillStyle = '#64748b';
     ctx.font = '10px "IBM Plex Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(formatHourShort(hr), x + barW / 2, pad.t + plotH + 6);
 
-    state.hourRects.push({ hour: hr, x, y, w: barW, h: barH });
+    state.hourRects.push({ hour: hr, x, y: topY, w: barW, h: totalBarH });
+  }
+
+  // Draw legend for MB
+  if(isMB) {
+    const legendY = h - 14;
+    let legendX = pad.l;
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textBaseline = 'middle';
+    for(const cat of MB_CAT_ORDER) {
+      ctx.fillStyle = MB_CAT_COLORS[cat];
+      ctx.fillRect(legendX, legendY - 4, 10, 10);
+      legendX += 14;
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'left';
+      ctx.fillText(cat, legendX, legendY + 1);
+      legendX += ctx.measureText(cat).width + 16;
+    }
   }
 
   const label = document.getElementById(prefix + '-hour-label');
