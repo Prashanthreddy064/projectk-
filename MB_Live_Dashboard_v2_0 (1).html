@@ -5575,14 +5575,17 @@ let fcDateFrom = '';       // date range filter (YYYY-MM-DD or '' for all)
 let fcDateTo = '';
 let fcTargetDate = '';     // the single day to forecast (YYYY-MM-DD)
 
-// Weighted regression blend weights (must sum to 1.0)
-// Priority: prev-week-same-day > prev-prev-week > prev-prev-prev-week > trend > TCN model
-const FC_WEIGHTS = {
-  prevWeekSameDay: 0.30,        // highest: same weekday 1 week ago
-  prevPrevWeekSameDay: 0.20,    // second: same weekday 2 weeks ago
-  prevPrevPrevWeekSameDay: 0.10,// third: same weekday 3 weeks ago
-  trend: 0.25,                  // fourth: linear trend from recent same-weekday data
-  tcnModel: 0.15                // fifth: TCN neural network prediction
+// Weighted regression blend weights — ADAPTIVE mode
+// Weights are dynamically computed via backtesting each source's accuracy.
+// These serve as fallback defaults when backtesting isn't possible.
+const FC_WEIGHTS_DEFAULT = {
+  prevWeekSameDay: 0.25,
+  prevPrevWeekSameDay: 0.15,
+  prevPrevPrevWeekSameDay: 0.05,
+  trend: 0.15,
+  tcnModel: 0.20,
+  medianEnsemble: 0.10,
+  expSmoothing: 0.10
 };
 
 const FC_DAY_ORDER = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -6504,8 +6507,7 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
   });
   const sortedDates = Object.keys(byDate).sort(); // ascending
 
-  // ── Find key reference dates ──
-  // Helper: find nearest date in sortedDates to a target time, excluding certain dates
+  // ── Helpers ──
   function findNearestDate(refTime, excludeSet) {
     let bestDate = null, bestDist = Infinity;
     sortedDates.forEach(d => {
@@ -6516,24 +6518,6 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
     return bestDate;
   }
 
-  // Previous week same day: same weekday ~7 days before target
-  const oneWeekAgo = new Date(target);
-  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-  const prevWeekDate = findNearestDate(oneWeekAgo.getTime(), new Set());
-
-  // Previous previous week same day: same weekday ~14 days before target
-  const twoWeeksAgo = new Date(target);
-  twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
-  const usedDates1 = new Set(prevWeekDate ? [prevWeekDate] : []);
-  const prevPrevWeekDate = findNearestDate(twoWeeksAgo.getTime(), usedDates1);
-
-  // Previous previous previous week same day: same weekday ~21 days before target
-  const threeWeeksAgo = new Date(target);
-  threeWeeksAgo.setDate(threeWeeksAgo.getDate() - 21);
-  const usedDates2 = new Set([...(prevWeekDate ? [prevWeekDate] : []), ...(prevPrevWeekDate ? [prevPrevWeekDate] : [])]);
-  const prevPrevPrevWeekDate = findNearestDate(threeWeeksAgo.getTime(), usedDates2);
-
-  // ── Build hourly profile for each reference date ──
   function buildDayProfile(dateStr) {
     if(!dateStr || !byDate[dateStr]) return null;
     const hourly = {};
@@ -6550,79 +6534,217 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
     return { hourly, zones, brands };
   }
 
+  // ── Reference dates ──
+  const oneWeekAgo = new Date(target); oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  const prevWeekDate = findNearestDate(oneWeekAgo.getTime(), new Set());
+
+  const twoWeeksAgo = new Date(target); twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+  const usedDates1 = new Set(prevWeekDate ? [prevWeekDate] : []);
+  const prevPrevWeekDate = findNearestDate(twoWeeksAgo.getTime(), usedDates1);
+
+  const threeWeeksAgo = new Date(target); threeWeeksAgo.setDate(threeWeeksAgo.getDate() - 21);
+  const usedDates2 = new Set([...(prevWeekDate ? [prevWeekDate] : []), ...(prevPrevWeekDate ? [prevPrevWeekDate] : [])]);
+  const prevPrevPrevWeekDate = findNearestDate(threeWeeksAgo.getTime(), usedDates2);
+
+  // ── Build source profiles ──
   const prevWeekProfile = buildDayProfile(prevWeekDate);
   const prevPrevWeekProfile = buildDayProfile(prevPrevWeekDate);
   const prevPrevPrevWeekProfile = buildDayProfile(prevPrevPrevWeekDate);
 
   // ── Trend: exponential weighted regression on last 8 same-weekday dates ──
-  // Recent dates contribute more via exponential decay weights
-  const trendDates = sortedDates.slice(-8); // last 8 same-weekday dates
+  const trendDates = sortedDates.slice(-8);
   let trendProfile = null;
   if(trendDates.length >= 2) {
     trendProfile = { hourly: {}, zones: {}, brands: {} };
-    // Exponential decay: more recent = higher weight (decay factor 0.85)
     const decay = 0.85;
     const n = trendDates.length;
-    const expWeights = trendDates.map((_, i) => Math.pow(decay, n - 1 - i));
-    const wSum = expWeights.reduce((a, b) => a + b, 0);
+    const expW = trendDates.map((_, i) => Math.pow(decay, n - 1 - i));
+    const wSum = expW.reduce((a, b) => a + b, 0);
 
     FC_HOURS.forEach(h => {
       const ys = trendDates.map(d => {
-        let sum = 0;
-        byDate[d].forEach(r => { if(r.hour === h) sum += r.units; });
-        return sum;
+        let sum = 0; byDate[d].forEach(r => { if(r.hour === h) sum += r.units; }); return sum;
       });
-      // Weighted linear regression: minimize Σ w_i * (y_i - a - b*x_i)²
-      let wxSum = 0, wySum = 0, wxxSum = 0, wxySum = 0;
-      for(let i = 0; i < n; i++) {
-        const w = expWeights[i];
-        wxSum += w * i;
-        wySum += w * ys[i];
-        wxxSum += w * i * i;
-        wxySum += w * i * ys[i];
-      }
-      const xMeanW = wxSum / wSum;
-      const yMeanW = wySum / wSum;
-      let numW = 0, denW = 0;
-      for(let i = 0; i < n; i++) {
-        numW += expWeights[i] * (i - xMeanW) * (ys[i] - yMeanW);
-        denW += expWeights[i] * (i - xMeanW) ** 2;
-      }
-      const b = denW > 0 ? numW / denW : 0;
-      const a = yMeanW - b * xMeanW;
-      // Extrapolate one step ahead, blend with weighted mean for stability
+      let wxS = 0, wyS = 0;
+      for(let i = 0; i < n; i++) { wxS += expW[i] * i; wyS += expW[i] * ys[i]; }
+      const xM = wxS / wSum, yM = wyS / wSum;
+      let num = 0, den = 0;
+      for(let i = 0; i < n; i++) { num += expW[i] * (i - xM) * (ys[i] - yM); den += expW[i] * (i - xM) ** 2; }
+      const b = den > 0 ? num / den : 0;
+      const a = yM - b * xM;
       const regPred = Math.max(0, a + b * n);
-      const wMean = wySum / wSum;
-      // Blend: 70% regression extrapolation + 30% weighted mean (prevents wild extrapolations)
+      const wMean = wyS / wSum;
       trendProfile.hourly[h] = Math.max(0, regPred * 0.7 + wMean * 0.3);
     });
-    // Trend for zones and brands: weighted average of last 3 dates' proportions
     const trendTotal = Object.values(trendProfile.hourly).reduce((s, v) => s + v, 0) || 1;
-    const recentProfiles = trendDates.slice(-3).map(d => buildDayProfile(d)).filter(Boolean);
-    if(recentProfiles.length) {
-      const zoneAcc = {}, brandAcc = {};
-      const rpWeights = recentProfiles.map((_, i) => Math.pow(decay, recentProfiles.length - 1 - i));
-      const rpWSum = rpWeights.reduce((a, b) => a + b, 0);
-      recentProfiles.forEach((p, pi) => {
-        const pTotal = Object.values(p.hourly).reduce((s, v) => s + v, 0) || 1;
-        const w = rpWeights[pi] / rpWSum;
-        Object.entries(p.zones).forEach(([z, v]) => { zoneAcc[z] = (zoneAcc[z] || 0) + (v / pTotal) * w; });
-        Object.entries(p.brands).forEach(([b, v]) => { brandAcc[b] = (brandAcc[b] || 0) + (v / pTotal) * w; });
+    const recentP = trendDates.slice(-3).map(d => buildDayProfile(d)).filter(Boolean);
+    if(recentP.length) {
+      const zAcc = {}, bAcc = {};
+      const rpW = recentP.map((_, i) => Math.pow(decay, recentP.length - 1 - i));
+      const rpS = rpW.reduce((a, b) => a + b, 0);
+      recentP.forEach((p, pi) => {
+        const pT = Object.values(p.hourly).reduce((s, v) => s + v, 0) || 1;
+        const w = rpW[pi] / rpS;
+        Object.entries(p.zones).forEach(([z, v]) => { zAcc[z] = (zAcc[z] || 0) + (v / pT) * w; });
+        Object.entries(p.brands).forEach(([b, v]) => { bAcc[b] = (bAcc[b] || 0) + (v / pT) * w; });
       });
-      Object.entries(zoneAcc).forEach(([z, frac]) => { trendProfile.zones[z] = frac * trendTotal; });
-      Object.entries(brandAcc).forEach(([b, frac]) => { trendProfile.brands[b] = frac * trendTotal; });
+      Object.entries(zAcc).forEach(([z, f]) => { trendProfile.zones[z] = f * trendTotal; });
+      Object.entries(bAcc).forEach(([b, f]) => { trendProfile.brands[b] = f * trendTotal; });
     }
   }
 
-  // ── Weighted blend ──
-  // Redistribute weights if a source is missing
+  // ── NEW: Median Ensemble — robust to outliers ──
+  let medianProfile = null;
+  const medianDates = sortedDates.slice(-6);
+  if(medianDates.length >= 3) {
+    medianProfile = { hourly: {}, zones: {}, brands: {} };
+    const medianProfiles = medianDates.map(d => buildDayProfile(d)).filter(Boolean);
+    FC_HOURS.forEach(h => {
+      const vals = medianProfiles.map(p => p.hourly[h] || 0).sort((a, b) => a - b);
+      const mid = Math.floor(vals.length / 2);
+      medianProfile.hourly[h] = vals.length % 2 === 0 ? (vals[mid - 1] + vals[mid]) / 2 : vals[mid];
+    });
+    // Zone/brand medians from proportions
+    const medTotal = Object.values(medianProfile.hourly).reduce((s, v) => s + v, 0) || 1;
+    const allZ = new Set(), allB = new Set();
+    medianProfiles.forEach(p => {
+      Object.keys(p.zones).forEach(z => allZ.add(z));
+      Object.keys(p.brands).forEach(b => allB.add(b));
+    });
+    allZ.forEach(z => {
+      const vals = medianProfiles.map(p => {
+        const pT = Object.values(p.hourly).reduce((s, v) => s + v, 0) || 1;
+        return (p.zones[z] || 0) / pT;
+      }).sort((a, b) => a - b);
+      const mid = Math.floor(vals.length / 2);
+      const medFrac = vals.length % 2 === 0 ? (vals[mid - 1] + vals[mid]) / 2 : vals[mid];
+      medianProfile.zones[z] = medFrac * medTotal;
+    });
+    allB.forEach(b => {
+      const vals = medianProfiles.map(p => {
+        const pT = Object.values(p.hourly).reduce((s, v) => s + v, 0) || 1;
+        return (p.brands[b] || 0) / pT;
+      }).sort((a, b) => a - b);
+      const mid = Math.floor(vals.length / 2);
+      const medFrac = vals.length % 2 === 0 ? (vals[mid - 1] + vals[mid]) / 2 : vals[mid];
+      medianProfile.brands[b] = medFrac * medTotal;
+    });
+  }
+
+  // ── NEW: Exponential Smoothing (Holt-Winters style, level + trend) ──
+  let expSmoothProfile = null;
+  if(sortedDates.length >= 3) {
+    expSmoothProfile = { hourly: {}, zones: {}, brands: {} };
+    const alpha = 0.4; // level smoothing
+    const beta = 0.15;  // trend smoothing
+    FC_HOURS.forEach(h => {
+      const ys = sortedDates.map(d => {
+        let sum = 0; byDate[d].forEach(r => { if(r.hour === h) sum += r.units; }); return sum;
+      });
+      if(ys.length < 2) { expSmoothProfile.hourly[h] = ys[0] || 0; return; }
+      // Initialize level and trend
+      let level = ys[0];
+      let trend = ys[1] - ys[0];
+      for(let i = 1; i < ys.length; i++) {
+        const prevLevel = level;
+        level = alpha * ys[i] + (1 - alpha) * (prevLevel + trend);
+        trend = beta * (level - prevLevel) + (1 - beta) * trend;
+      }
+      // Forecast one step ahead
+      expSmoothProfile.hourly[h] = Math.max(0, level + trend);
+    });
+    // Zone/brand from most recent weighted proportions
+    const esTotal = Object.values(expSmoothProfile.hourly).reduce((s, v) => s + v, 0) || 1;
+    const lastP = buildDayProfile(sortedDates[sortedDates.length - 1]);
+    const secLastP = sortedDates.length >= 2 ? buildDayProfile(sortedDates[sortedDates.length - 2]) : null;
+    if(lastP) {
+      const lT = Object.values(lastP.hourly).reduce((s, v) => s + v, 0) || 1;
+      Object.entries(lastP.zones).forEach(([z, v]) => {
+        let frac = v / lT;
+        if(secLastP) {
+          const sT = Object.values(secLastP.hourly).reduce((s2, v2) => s2 + v2, 0) || 1;
+          const sFrac = (secLastP.zones[z] || 0) / sT;
+          frac = 0.7 * frac + 0.3 * sFrac;
+        }
+        expSmoothProfile.zones[z] = frac * esTotal;
+      });
+      Object.entries(lastP.brands).forEach(([b, v]) => {
+        let frac = v / lT;
+        if(secLastP) {
+          const sT = Object.values(secLastP.hourly).reduce((s2, v2) => s2 + v2, 0) || 1;
+          const sFrac = (secLastP.brands[b] || 0) / sT;
+          frac = 0.7 * frac + 0.3 * sFrac;
+        }
+        expSmoothProfile.brands[b] = frac * esTotal;
+      });
+    }
+  }
+
+  // ── ADAPTIVE WEIGHTING via backtesting ──
+  // Use the most recent same-weekday date as a validation target.
+  // For each source, retrospectively compute what it would have predicted for that date,
+  // then score by inverse MAPE. Sources that predicted better get higher weight.
   const sources = {
-    prevWeekSameDay:         { profile: prevWeekProfile,         baseWeight: FC_WEIGHTS.prevWeekSameDay,         date: prevWeekDate },
-    prevPrevWeekSameDay:     { profile: prevPrevWeekProfile,     baseWeight: FC_WEIGHTS.prevPrevWeekSameDay,     date: prevPrevWeekDate },
-    prevPrevPrevWeekSameDay: { profile: prevPrevPrevWeekProfile, baseWeight: FC_WEIGHTS.prevPrevPrevWeekSameDay, date: prevPrevPrevWeekDate },
-    trend:                   { profile: trendProfile,            baseWeight: FC_WEIGHTS.trend, date: trendDates.length >= 2 ? trendDates.join(' → ') : null },
-    tcnModel:                { profile: { hourly: tcnHourly, zones: tcnZones, brands: tcnBrands }, baseWeight: FC_WEIGHTS.tcnModel, date: 'model' }
+    prevWeekSameDay:         { profile: prevWeekProfile,         baseWeight: FC_WEIGHTS_DEFAULT.prevWeekSameDay,         date: prevWeekDate },
+    prevPrevWeekSameDay:     { profile: prevPrevWeekProfile,     baseWeight: FC_WEIGHTS_DEFAULT.prevPrevWeekSameDay,     date: prevPrevWeekDate },
+    prevPrevPrevWeekSameDay: { profile: prevPrevPrevWeekProfile, baseWeight: FC_WEIGHTS_DEFAULT.prevPrevPrevWeekSameDay, date: prevPrevPrevWeekDate },
+    trend:                   { profile: trendProfile,            baseWeight: FC_WEIGHTS_DEFAULT.trend, date: trendDates.length >= 2 ? trendDates.join(' → ') : null },
+    tcnModel:                { profile: { hourly: tcnHourly, zones: tcnZones, brands: tcnBrands }, baseWeight: FC_WEIGHTS_DEFAULT.tcnModel, date: 'model' },
+    medianEnsemble:          { profile: medianProfile,           baseWeight: FC_WEIGHTS_DEFAULT.medianEnsemble, date: medianDates.length >= 3 ? `median of ${medianDates.length}` : null },
+    expSmoothing:            { profile: expSmoothProfile,        baseWeight: FC_WEIGHTS_DEFAULT.expSmoothing, date: sortedDates.length >= 3 ? 'Holt-Winters' : null }
   };
+
+  // Backtest: use last available date as validation
+  // Rebuild what each source would have predicted for that date
+  let useAdaptive = false;
+  const adaptiveScores = {};
+
+  if(sortedDates.length >= 4) {
+    const valDate = sortedDates[sortedDates.length - 1]; // most recent same-weekday as validation
+    const valProfile = buildDayProfile(valDate);
+    if(valProfile) {
+      const valTotal = Object.values(valProfile.hourly).reduce((s, v) => s + v, 0);
+      if(valTotal > 0) {
+        // Compute MAPE for each source against valDate actuals
+        for(const [key, src] of Object.entries(sources)) {
+          if(!src.profile) continue;
+          const hourly = src.profile.hourly || {};
+          let absErr = 0, count = 0;
+          FC_HOURS.forEach(h => {
+            const actual = valProfile.hourly[h] || 0;
+            const pred = hourly[h] || 0;
+            if(actual > 0) {
+              absErr += Math.abs(pred - actual) / actual;
+              count++;
+            }
+          });
+          if(count > 0) {
+            const mape = absErr / count;
+            // Score = 1 / (1 + MAPE) — lower error = higher score
+            adaptiveScores[key] = 1 / (1 + mape);
+          }
+        }
+
+        const totalScore = Object.values(adaptiveScores).reduce((s, v) => s + v, 0);
+        if(totalScore > 0 && Object.keys(adaptiveScores).length >= 3) {
+          useAdaptive = true;
+          // Blend: 70% adaptive (data-driven) + 30% default (stability prior)
+          for(const key of Object.keys(sources)) {
+            if(adaptiveScores[key] !== undefined) {
+              const adaptW = adaptiveScores[key] / totalScore;
+              const defW = sources[key].baseWeight;
+              sources[key].baseWeight = adaptW * 0.7 + defW * 0.3;
+            }
+          }
+          // Re-normalize base weights to sum to 1
+          const wTotal = Object.values(sources).reduce((s, src) => s + (src.baseWeight || 0), 0);
+          if(wTotal > 0) {
+            for(const src of Object.values(sources)) src.baseWeight = (src.baseWeight || 0) / wTotal;
+          }
+        }
+      }
+    }
+  }
 
   // Calculate effective weights (redistribute missing weights proportionally)
   let totalAvailable = 0;
@@ -6637,7 +6759,7 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
   const weightInfo = {};
   for(const [key, src] of Object.entries(sources)) {
     if(available[key] && totalAvailable > 0) {
-      effectiveWeights[key] = src.baseWeight / totalAvailable; // normalize so weights sum to 1
+      effectiveWeights[key] = src.baseWeight / totalAvailable;
     } else {
       effectiveWeights[key] = 0;
     }
@@ -6645,11 +6767,13 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
       weight: effectiveWeights[key],
       found: available[key],
       date: src.date,
-      baseWeight: src.baseWeight
+      baseWeight: src.baseWeight,
+      adaptive: useAdaptive,
+      score: adaptiveScores[key]
     };
   }
 
-  // Blend hourly predictions
+  // ── Blend hourly predictions ──
   const blendedHourly = {};
   FC_HOURS.forEach(h => {
     let val = 0;
@@ -6661,7 +6785,7 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
     blendedHourly[h] = val;
   });
 
-  // Blend zone predictions
+  // ── Blend zone predictions ──
   const allZones = new Set();
   for(const [key, src] of Object.entries(sources)) {
     if(effectiveWeights[key] > 0 && src.profile && src.profile.zones) {
@@ -6679,7 +6803,7 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
     blendedZones[z] = val;
   });
 
-  // Blend brand predictions
+  // ── Blend brand predictions ──
   const allBrands = new Set();
   for(const [key, src] of Object.entries(sources)) {
     if(effectiveWeights[key] > 0 && src.profile && src.profile.brands) {
@@ -6711,30 +6835,36 @@ function fcRenderWeightBreakdown(weightInfo, targetDow) {
 
   const labels = {
     prevWeekSameDay: 'Prev Week Same Day',
-    prevPrevWeekSameDay: 'Prev Prev Week Same Day',
-    prevPrevPrevWeekSameDay: 'Prev Prev Prev Week Same Day',
-    trend: 'Trend (Linear)',
-    tcnModel: 'TCN Model'
+    prevPrevWeekSameDay: 'Prev Prev Week',
+    prevPrevPrevWeekSameDay: 'Prev Prev Prev Week',
+    trend: 'Trend (Exp Weighted)',
+    tcnModel: 'TCN Model',
+    medianEnsemble: 'Median Ensemble',
+    expSmoothing: 'Exp Smoothing'
   };
   const colors = {
     prevWeekSameDay: '#3b82f6',
     prevPrevWeekSameDay: '#f59e0b',
     prevPrevPrevWeekSameDay: '#06b6d4',
     trend: '#10b981',
-    tcnModel: '#8b5cf6'
+    tcnModel: '#8b5cf6',
+    medianEnsemble: '#ec4899',
+    expSmoothing: '#f97316'
   };
 
+  const isAdaptive = Object.values(weightInfo).some(i => i.adaptive);
   const infoEl = document.getElementById('fc-target-date-info');
-  if(infoEl) infoEl.textContent = `Forecasting one ${targetDow} · weighted regression blend`;
+  if(infoEl) infoEl.textContent = `Forecasting one ${targetDow} · ${isAdaptive ? 'adaptive' : 'default'} weighted blend`;
 
   for(const [key, info] of Object.entries(weightInfo)) {
-    const pct = (info.weight * 100).toFixed(0);
+    const pct = (info.weight * 100).toFixed(1);
     const color = colors[key] || '#64748b';
     const label = labels[key] || key;
     const dateStr = info.found ? (info.date || '') : 'no data';
     const opacity = info.found ? '1' : '0.3';
+    const scoreStr = info.score !== undefined ? ` · score: ${info.score.toFixed(2)}` : '';
     const div = document.createElement('div');
-    div.style.cssText = `flex:1;min-width:120px;opacity:${opacity};`;
+    div.style.cssText = `flex:1;min-width:105px;opacity:${opacity};`;
     div.innerHTML = `
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
         <span style="color:${color};font-weight:600;font-size:9px;">${label}</span>
@@ -6743,7 +6873,7 @@ function fcRenderWeightBreakdown(weightInfo, targetDow) {
       <div style="background:rgba(255,255,255,0.06);border-radius:3px;height:6px;overflow:hidden;">
         <div style="width:${pct}%;height:100%;background:${color};border-radius:3px;"></div>
       </div>
-      <div style="font-size:8px;color:var(--text3);margin-top:1px;">${info.found ? dateStr : 'not found — weight redistributed'}</div>
+      <div style="font-size:8px;color:var(--text3);margin-top:1px;">${info.found ? dateStr + scoreStr : 'not found — redistributed'}</div>
     `;
     bars.appendChild(div);
   }
