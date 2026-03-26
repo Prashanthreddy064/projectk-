@@ -5748,13 +5748,8 @@ function fcPrepareTrainingData() {
   const maxUnits = Math.max(...sortedHours.map(s => s.units), 1);
 
   // ─── Precompute enriched features on sortedHours ───
-  // 1) Rolling statistics (mean, std, min, max) over recent windows
-  // 2) Volume velocity (delta from previous step)
-  // 3) Cumulative daily volume up to current hour
-  // 4) Lag features: same-hour previous day, same-hour previous week
-  // 5) Hour-of-day proportion within daily total
 
-  // Build lookup: date+hour -> units for lag features
+  // Build lookups for lag features
   const dateHourMap = {};
   const dateTotalMap = {};
   sortedHours.forEach(s => {
@@ -5763,13 +5758,28 @@ function fcPrepareTrainingData() {
     dateTotalMap[s.date] = (dateTotalMap[s.date] || 0) + s.units;
   });
 
-  // Build lookup: date -> array of unique dates sorted
   const uniqueDates = [...new Set(sortedHours.map(s => s.date))].sort();
   const dateIndex = {};
   uniqueDates.forEach((d, idx) => dateIndex[d] = idx);
 
+  // ─── Global averages: same-hour-of-day mean, same-day+hour mean ───
+  // These are the most predictive features — the "typical" volume for a given hour/day
+  const hourAvg = {};       // hour -> { sum, count }
+  const dayHourAvg = {};    // day|hour -> { sum, count }
+  sortedHours.forEach(s => {
+    const hk = s.hour;
+    if(!hourAvg[hk]) hourAvg[hk] = { sum: 0, count: 0 };
+    hourAvg[hk].sum += s.units;
+    hourAvg[hk].count++;
+
+    const dhk = `${s.day}|${s.hour}`;
+    if(!dayHourAvg[dhk]) dayHourAvg[dhk] = { sum: 0, count: 0 };
+    dayHourAvg[dhk].sum += s.units;
+    dayHourAvg[dhk].count++;
+  });
+
   // Precompute per-step features
-  const cumDayVol = {};  // date -> running cumulative
+  const cumDayVol = {};
   for(let i = 0; i < sortedHours.length; i++) {
     const s = sortedHours[i];
     if(!cumDayVol[s.date]) cumDayVol[s.date] = 0;
@@ -5781,8 +5791,7 @@ function fcPrepareTrainingData() {
     s._delta = i > 0 ? (s.units - sortedHours[i - 1].units) / maxUnits : 0;
 
     // Rolling mean and std over last 3 and 6 steps
-    const windowSizes = [3, 6];
-    for(const ws of windowSizes) {
+    for(const ws of [3, 6]) {
       const start = Math.max(0, i - ws);
       const window = sortedHours.slice(start, i + 1).map(x => x.units);
       const mean = window.reduce((a, b) => a + b, 0) / window.length;
@@ -5791,30 +5800,47 @@ function fcPrepareTrainingData() {
       s[`_rollingStd${ws}`] = Math.sqrt(variance);
     }
 
-    // Lag: same hour, previous day (find nearest previous date with same hour)
+    // Same-hour-of-day average (historical mean for this hour across all dates)
+    const hAvg = hourAvg[s.hour];
+    s._hourOfDayAvg = hAvg ? hAvg.sum / hAvg.count : 0;
+
+    // Same-day-of-week + same-hour average (most predictive feature)
+    const dhAvg = dayHourAvg[`${s.day}|${s.hour}`];
+    s._dayHourAvg = dhAvg ? dhAvg.sum / dhAvg.count : 0;
+
+    // Ratio to hour-of-day average (relative strength: >1 means above average)
+    s._ratioToHourAvg = s._hourOfDayAvg > 0 ? s.units / s._hourOfDayAvg : 1;
+
+    // Log-transformed units (handles skewed distributions better)
+    s._logUnits = Math.log1p(s.units);
+
+    // Lag: same hour, previous day
     const di = dateIndex[s.date] || 0;
     let lagPrevDay = 0, lagPrevWeek = 0;
-    // Previous day same hour
     if(di > 0) {
-      const prevDate = uniqueDates[di - 1];
-      lagPrevDay = dateHourMap[`${prevDate}|${s.hour}`] || 0;
+      lagPrevDay = dateHourMap[`${uniqueDates[di - 1]}|${s.hour}`] || 0;
     }
-    // ~7 days ago same hour
     if(di >= 7) {
-      const weekDate = uniqueDates[di - 7] || uniqueDates[Math.max(0, di - 7)];
-      lagPrevWeek = dateHourMap[`${weekDate}|${s.hour}`] || 0;
+      lagPrevWeek = dateHourMap[`${uniqueDates[di - 7]}|${s.hour}`] || 0;
     } else if(di >= 5) {
-      const weekDate = uniqueDates[0];
-      lagPrevWeek = dateHourMap[`${weekDate}|${s.hour}`] || 0;
+      lagPrevWeek = dateHourMap[`${uniqueDates[0]}|${s.hour}`] || 0;
     }
     s._lagPrevDay = lagPrevDay;
     s._lagPrevWeek = lagPrevWeek;
+
+    // Lag ratio: prev day same hour / hour-of-day avg (trend signal)
+    s._lagPrevDayRatio = s._hourOfDayAvg > 0 ? lagPrevDay / s._hourOfDayAvg : 1;
   }
 
-  // Feature size per timestep: units_norm + sin_hour + cos_hour + day_onehot + promo_binary
-  //   + delta + rollingMean3 + rollingStd3 + rollingMean6 + rollingStd6
-  //   + cumDayRatio + lagPrevDay + lagPrevWeek + hourProgress
-  const featureSize = 1 + 2 + days.length + 1 + 8;
+  // Compute max log units for normalization
+  const maxLogUnits = Math.max(...sortedHours.map(s => s._logUnits), 1);
+
+  // Feature size per timestep:
+  //   units_norm + sin_hour + cos_hour + day_onehot + promo_binary  (base)
+  //   + delta + rollingMean3 + rollingStd3 + rollingMean6 + rollingStd6  (rolling)
+  //   + cumDayRatio + lagPrevDay + lagPrevWeek  (lag)
+  //   + hourOfDayAvg + dayHourAvg + ratioToHourAvg + logUnits + lagPrevDayRatio  (new powerful features)
+  const featureSize = 1 + 2 + days.length + 1 + 5 + 3 + 5;
 
   // Build sliding-window sequences and multi-output targets
   const sequences = [];
@@ -5829,22 +5855,27 @@ function fcPrepareTrainingData() {
     for(let j = i - FC_SEQ_LEN; j < i; j++) {
       const s = sortedHours[j];
       const hourRad = (s.hour / 24) * 2 * Math.PI;
-      // Operational hour progress: 0 at 6am, 1 at midnight (normalized position in work day)
-      const hourProgress = opHourIndex(s.hour) / 30;
       seq.push([
         s.units / maxUnits,
         Math.sin(hourRad), Math.cos(hourRad),
         ...days.map(d => d === s.day ? 1 : 0),
         s.category === 'Promo' ? 1 : 0,
-        // New engineered features
-        s._delta,                                     // volume velocity
-        s._rollingMean3 / maxUnits,                   // rolling mean (3-step)
-        s._rollingStd3 / maxUnits,                    // rolling std (3-step)
-        s._rollingMean6 / maxUnits,                   // rolling mean (6-step)
-        s._rollingStd6 / maxUnits,                    // rolling std (6-step)
-        s._cumDayVol / s._dayTotal,                   // cumulative day ratio (0→1 through day)
-        s._lagPrevDay / maxUnits,                     // same hour previous day volume
-        s._lagPrevWeek / maxUnits                     // same hour ~1 week ago volume
+        // Rolling & velocity features
+        s._delta,
+        s._rollingMean3 / maxUnits,
+        s._rollingStd3 / maxUnits,
+        s._rollingMean6 / maxUnits,
+        s._rollingStd6 / maxUnits,
+        // Lag features
+        s._cumDayVol / s._dayTotal,
+        s._lagPrevDay / maxUnits,
+        s._lagPrevWeek / maxUnits,
+        // New high-power features
+        s._hourOfDayAvg / maxUnits,         // typical volume at this hour
+        s._dayHourAvg / maxUnits,           // typical volume for this day+hour combo
+        Math.min(2, s._ratioToHourAvg),     // relative strength vs hour average (capped)
+        s._logUnits / maxLogUnits,           // log-scale volume (handles skew)
+        Math.min(2, s._lagPrevDayRatio)      // yesterday trend signal (capped)
       ]);
     }
     sequences.push(seq);
@@ -5915,65 +5946,85 @@ async function fcTrainAndForecast() {
     if(fcModel) { fcModel.dispose(); fcModel = null; }
 
     // ─── Build Enhanced Multi-Output TCN ───────────────────
-    // Deeper architecture with residual connections, wider filters,
-    // and more capacity to achieve R² > 0.95
+    // Architecture designed for R² > 0.95:
+    // - Residual blocks with low dropout (0.05)
+    // - Dual pooling (avg+max) + last-step features
+    // - Dedicated units head with skip connection from pooling
+    // - Two-phase training: joint → units-focused fine-tuning
+    // - Huber loss (robust to outliers that drag R² down)
     const input = tf.input({ shape: [FC_SEQ_LEN, featureSize] });
 
-    // Project input to match filter size for residual connections
+    // Project input for residual connections
     const inputProj = tf.layers.conv1d({ filters: 64, kernelSize: 1, padding: 'same' }).apply(input);
 
-    // Block 1: kernel=3, short-range patterns
+    // Block 1: kernel=3
     let tcn = tf.layers.conv1d({ filters: 64, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(input);
     tcn = tf.layers.batchNormalization().apply(tcn);
-    tcn = tf.layers.dropout({ rate: 0.15 }).apply(tcn);
+    tcn = tf.layers.dropout({ rate: 0.05 }).apply(tcn);
 
-    // Block 2: kernel=3, medium-range patterns + residual from Block 1
+    // Block 2: kernel=3 + residual from input
     let tcn2 = tf.layers.conv1d({ filters: 64, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(tcn);
     tcn2 = tf.layers.batchNormalization().apply(tcn2);
-    tcn2 = tf.layers.dropout({ rate: 0.15 }).apply(tcn2);
-    // Residual connection: add projected input
+    tcn2 = tf.layers.dropout({ rate: 0.05 }).apply(tcn2);
     tcn2 = tf.layers.add().apply([tcn2, inputProj]);
 
-    // Block 3: kernel=5, long-range patterns
+    // Block 3: kernel=5
     let tcn3 = tf.layers.conv1d({ filters: 64, kernelSize: 5, padding: 'same', activation: 'relu' }).apply(tcn2);
     tcn3 = tf.layers.batchNormalization().apply(tcn3);
-    tcn3 = tf.layers.dropout({ rate: 0.1 }).apply(tcn3);
+    tcn3 = tf.layers.dropout({ rate: 0.05 }).apply(tcn3);
 
-    // Block 4: kernel=7, very-long-range patterns + residual from Block 2
+    // Block 4: kernel=7 + residual from Block 2
     let tcn4 = tf.layers.conv1d({ filters: 64, kernelSize: 7, padding: 'same', activation: 'relu' }).apply(tcn3);
     tcn4 = tf.layers.batchNormalization().apply(tcn4);
-    // Residual connection: add Block 2 output
     tcn4 = tf.layers.add().apply([tcn4, tcn2]);
 
-    // Dual pooling: both average and max for richer representation
-    const avgPooled = tf.layers.globalAveragePooling1d().apply(tcn4);
-    const maxPooled = tf.layers.globalMaxPooling1d().apply(tcn4);
+    // Block 5: kernel=3 final refinement + residual from Block 3
+    let tcn5 = tf.layers.conv1d({ filters: 64, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(tcn4);
+    tcn5 = tf.layers.batchNormalization().apply(tcn5);
+    tcn5 = tf.layers.add().apply([tcn5, tcn3]);
+
+    // Dual pooling: average + max for richer representation
+    const avgPooled = tf.layers.globalAveragePooling1d().apply(tcn5);
+    const maxPooled = tf.layers.globalMaxPooling1d().apply(tcn5);
     const pooled = tf.layers.concatenate().apply([avgPooled, maxPooled]);
 
-    // Deeper shared representation
+    // Shared dense representation
     let shared = tf.layers.dense({ units: 128, activation: 'relu' }).apply(pooled);
-    shared = tf.layers.dropout({ rate: 0.15 }).apply(shared);
+    shared = tf.layers.dropout({ rate: 0.05 }).apply(shared);
     shared = tf.layers.dense({ units: 64, activation: 'relu' }).apply(shared);
 
-    // Output 1: Units regression head (deeper)
-    let unitsHead = tf.layers.dense({ units: 64, activation: 'relu' }).apply(shared);
-    unitsHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(unitsHead);
+    // Output 1: Units regression head — deeper + skip from pooled
+    let unitsHead = tf.layers.dense({ units: 64, activation: 'relu', name: 'units_h1' }).apply(shared);
+    // Skip connection: concat pooling features directly to units head
+    unitsHead = tf.layers.concatenate().apply([unitsHead, pooled]);
+    unitsHead = tf.layers.dense({ units: 32, activation: 'relu', name: 'units_h2' }).apply(unitsHead);
     const unitsOutput = tf.layers.dense({ units: 1, activation: 'linear', name: 'units_output' }).apply(unitsHead);
 
-    // Output 2: Brand classification head (softmax)
+    // Output 2: Brand classification head
     let brandHead = tf.layers.dense({ units: 48, activation: 'relu' }).apply(shared);
     const brandOutput = tf.layers.dense({ units: numBrands, activation: 'softmax', name: 'brand_output' }).apply(brandHead);
 
-    // Output 3: Zone classification head (softmax)
+    // Output 3: Zone classification head
     let zoneHead = tf.layers.dense({ units: 48, activation: 'relu' }).apply(shared);
     const zoneOutput = tf.layers.dense({ units: numZones, activation: 'softmax', name: 'zone_output' }).apply(zoneHead);
 
     const model = tf.model({ inputs: input, outputs: [unitsOutput, brandOutput, zoneOutput] });
 
+    // Custom Huber loss: less sensitive to outliers than MSE, better R²
+    function huberLoss(yTrue, yPred) {
+      const delta = 0.5;
+      const diff = tf.sub(yTrue, yPred);
+      const absDiff = tf.abs(diff);
+      const quadratic = tf.minimum(absDiff, delta);
+      const linear = tf.sub(absDiff, quadratic);
+      return tf.mean(tf.add(tf.mul(0.5, tf.square(quadratic)), tf.mul(delta, linear)));
+    }
+
+    // Phase 1: Joint training — units heavily weighted (3x) to prioritize R²
     model.compile({
       optimizer: tf.train.adam(0.001),
-      loss: ['meanSquaredError', 'categoricalCrossentropy', 'categoricalCrossentropy'],
-      lossWeights: [1.0, 0.3, 0.3]
+      loss: [huberLoss, 'categoricalCrossentropy', 'categoricalCrossentropy'],
+      lossWeights: [3.0, 0.2, 0.2]
     });
 
     // Build tensors
@@ -5982,26 +6033,25 @@ async function fcTrainAndForecast() {
     const yBrandTensor = tf.tensor2d(brandTargets);
     const yZoneTensor = tf.tensor2d(zoneTargets);
 
-    statusEl.textContent = `Training TCN on ${sequences.length} sequences...`;
+    statusEl.textContent = `Phase 1: Joint training on ${sequences.length} sequences...`;
     await new Promise(r => setTimeout(r, 50));
 
-    // Train multi-output model — more epochs and patience for better convergence
-    const epochCount = Math.min(250, Math.max(60, Math.floor(sequences.length / 3)));
+    // Phase 1 training
+    const phase1Epochs = Math.min(150, Math.max(40, Math.floor(sequences.length / 4)));
     const batchSize = Math.min(128, Math.max(16, Math.floor(sequences.length / 8)));
 
-    // Custom early stopping + learning rate reduction on plateau
     let bestValLoss = Infinity;
     let earlyStopWait = 0;
-    const earlyStopPatience = 25;
+    const earlyStopPatience = 20;
     let lrReduceWait = 0;
-    const lrReducePatience = 10;
+    const lrReducePatience = 8;
     let currentLR = 0.001;
-    const minLR = 0.00005;
+    const minLR = 0.00002;
 
-    const history = await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
-      epochs: epochCount,
+    await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
+      epochs: phase1Epochs,
       batchSize: batchSize,
-      validationSplit: 0.15,
+      validationSplit: 0.12,
       shuffle: true,
       callbacks: {
         onEpochEnd: async (epoch, logs) => {
@@ -6013,31 +6063,88 @@ async function fcTrainAndForecast() {
           } else {
             earlyStopWait++;
             lrReduceWait++;
-            // Reduce learning rate on plateau
             if(lrReduceWait >= lrReducePatience && currentLR > minLR) {
               currentLR = Math.max(minLR, currentLR * 0.5);
               model.optimizer.learningRate = currentLR;
               lrReduceWait = 0;
-              statusEl.textContent = `Epoch ${epoch + 1} — reducing LR to ${currentLR.toFixed(6)}`;
             }
             if(earlyStopWait >= earlyStopPatience) {
               model.stopTraining = true;
             }
           }
-          if(epoch % 3 === 0) {
-            statusEl.textContent = `Epoch ${epoch + 1}/${epochCount} — loss: ${logs.loss.toFixed(4)} · val_loss: ${vl.toFixed(4)} · lr: ${currentLR.toFixed(5)}`;
+          if(epoch % 5 === 0) {
+            statusEl.textContent = `Phase 1 · Epoch ${epoch + 1}/${phase1Epochs} — loss: ${logs.loss.toFixed(4)} · val: ${vl.toFixed(4)} · lr: ${currentLR.toFixed(5)}`;
           }
           await tf.nextFrame();
         }
       }
     });
 
+    // Phase 2: Fine-tune units head only — freeze conv layers, focus 100% on R²
+    statusEl.textContent = 'Phase 2: Fine-tuning units regression head...';
+    await new Promise(r => setTimeout(r, 50));
+
+    // Freeze convolutional and batch norm layers (keep dense layers trainable)
+    model.layers.forEach(layer => {
+      const n = layer.name;
+      if(n.includes('conv1d') || n.includes('batch_normalization')) {
+        layer.trainable = false;
+      }
+    });
+
+    // Re-compile with lower LR, pure Huber loss, units-only focus
+    model.compile({
+      optimizer: tf.train.adam(0.0002),
+      loss: [huberLoss, 'categoricalCrossentropy', 'categoricalCrossentropy'],
+      lossWeights: [5.0, 0.05, 0.05]
+    });
+
+    const phase2Epochs = Math.min(100, Math.max(30, Math.floor(sequences.length / 6)));
+    let bestValLoss2 = Infinity;
+    let esWait2 = 0;
+    const esPatience2 = 15;
+    let lrWait2 = 0;
+    let lr2 = 0.0002;
+
+    await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
+      epochs: phase2Epochs,
+      batchSize: batchSize,
+      validationSplit: 0.12,
+      shuffle: true,
+      callbacks: {
+        onEpochEnd: async (epoch, logs) => {
+          const vl = logs.val_loss;
+          if(vl < bestValLoss2 - 0.00005) {
+            bestValLoss2 = vl;
+            esWait2 = 0;
+            lrWait2 = 0;
+          } else {
+            esWait2++;
+            lrWait2++;
+            if(lrWait2 >= 6 && lr2 > 0.00002) {
+              lr2 = Math.max(0.00002, lr2 * 0.5);
+              model.optimizer.learningRate = lr2;
+              lrWait2 = 0;
+            }
+            if(esWait2 >= esPatience2) model.stopTraining = true;
+          }
+          if(epoch % 5 === 0) {
+            statusEl.textContent = `Phase 2 · Epoch ${epoch + 1}/${phase2Epochs} — loss: ${logs.loss.toFixed(4)} · val: ${vl.toFixed(4)}`;
+          }
+          await tf.nextFrame();
+        }
+      }
+    });
+
+    // Unfreeze all layers for future use
+    model.layers.forEach(layer => { layer.trainable = true; });
+
     fcModel = model;
-    const losses = history.history.loss;
-    fcTrainingLoss = losses[losses.length - 1];
+    const losses = [bestValLoss, bestValLoss2];
+    fcTrainingLoss = bestValLoss2;
 
     // Store metadata for predictions
-    fcModel._fcMeta = { days, categories, zones, brands, maxUnits, featureSize, sortedHours, sequences, targetMeta };
+    fcModel._fcMeta = { days, categories, zones, brands, maxUnits, maxLogUnits, featureSize, sortedHours, sequences, targetMeta };
 
     // Compute R² for units regression output
     const allPreds = model.predict(xTensor);
@@ -6059,7 +6166,7 @@ async function fcTrainAndForecast() {
     yBrandTensor.dispose();
     yZoneTensor.dispose();
 
-    statusEl.textContent = `TCN trained — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(4)} · Outputs: Units + ${numBrands} brands + ${numZones} zones`;
+    statusEl.textContent = `TCN trained (2-phase) — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(4)} · ${numBrands} brands · ${numZones} zones`;
 
     // Build toggle buttons and populate filters
     fcBuildToggleButtons();
