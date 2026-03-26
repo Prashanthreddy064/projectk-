@@ -1646,6 +1646,11 @@ tr:hover td { background: rgba(255,255,255,0.015); }
     </div>
   </div>
 
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title" style="margin-bottom:0">Hourly Pick Orders <span id="mb-hour-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <canvas id="mb-hourly-canvas" height="180"></canvas>
+  </div>
+
   <!-- Category Mix Donut + Table -->
   <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px;">
     <div class="card">
@@ -1683,16 +1688,11 @@ tr:hover td { background: rgba(255,255,255,0.015); }
   </div>
 
   <div class="card" style="margin-bottom:16px;">
-    <div class="card-title" style="margin-bottom:0">Hourly Pick Orders <span id="mb-hour-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
-    <canvas id="mb-hourly-canvas" height="180"></canvas>
-  </div>
-
-  <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">Product Category Mix <span id="mb-dropoff-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
+    <div class="card-title">Drop Off Location Mix <span id="mb-dropoff-label" style="font-size:10px;font-weight:400;color:var(--cyan);font-family:'IBM Plex Mono',monospace;margin-left:8px;"></span></div>
     <table style="width:100%;font-size:12px;font-family:'IBM Plex Mono',monospace;">
       <thead>
         <tr style="border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);">
-          <th style="text-align:left;padding:8px 6px;">Product Category</th>
+          <th style="text-align:left;padding:8px 6px;">Drop Off Location</th>
           <th style="text-align:center;padding:8px 6px;">Orders</th>
           <th style="text-align:center;padding:8px 6px;">Units</th>
           <th style="text-align:center;padding:8px 6px;">% of Orders</th>
@@ -7582,7 +7582,7 @@ function drawDropOffMixTable(prefix, filteredOrders, totalOrders) {
 
   const stats = {};
   for(const [, o] of filteredOrders) {
-    const key = prefix === 'mb' ? (o.productCategory || 'Other') : (o.dropOffLocation || 'Unknown');
+    const key = o.dropOffLocation || 'Unknown';
     if(!stats[key]) stats[key] = { orders: 0, units: 0 };
     stats[key].orders += 1;
     stats[key].units += o.units;
