@@ -5902,7 +5902,7 @@ function fcPrepareTrainingData() {
     });
   }
 
-  return { sequences, unitTargets, brandTargets, zoneTargets, targetMeta, days, categories, zones, brands, maxUnits, featureSize, sortedHours };
+  return { sequences, unitTargets, brandTargets, zoneTargets, targetMeta, days, categories, zones, brands, maxUnits, maxLogUnits, featureSize, sortedHours };
 }
 
 function fcOneHotEncode(value, classes) {
@@ -5934,7 +5934,7 @@ async function fcTrainAndForecast() {
       return;
     }
 
-    const { sequences, unitTargets, brandTargets, zoneTargets, targetMeta, days, categories, zones, brands, maxUnits, featureSize, sortedHours } = prepared;
+    const { sequences, unitTargets, brandTargets, zoneTargets, targetMeta, days, categories, zones, brands, maxUnits, maxLogUnits, featureSize, sortedHours } = prepared;
     const numBrands = brands.length;
     const numZones = zones.length;
 
@@ -6081,67 +6081,73 @@ async function fcTrainAndForecast() {
     });
 
     // Phase 2: Fine-tune units head only — freeze conv layers, focus 100% on R²
-    statusEl.textContent = 'Phase 2: Fine-tuning units regression head...';
-    await new Promise(r => setTimeout(r, 50));
+    let phase2Done = false;
+    try {
+      statusEl.textContent = 'Phase 2: Fine-tuning units regression head...';
+      await new Promise(r => setTimeout(r, 50));
 
-    // Freeze convolutional and batch norm layers (keep dense layers trainable)
-    model.layers.forEach(layer => {
-      const n = layer.name;
-      if(n.includes('conv1d') || n.includes('batch_normalization')) {
-        layer.trainable = false;
-      }
-    });
-
-    // Re-compile with lower LR, pure Huber loss, units-only focus
-    model.compile({
-      optimizer: tf.train.adam(0.0002),
-      loss: [huberLoss, 'categoricalCrossentropy', 'categoricalCrossentropy'],
-      lossWeights: [5.0, 0.05, 0.05]
-    });
-
-    const phase2Epochs = Math.min(100, Math.max(30, Math.floor(sequences.length / 6)));
-    let bestValLoss2 = Infinity;
-    let esWait2 = 0;
-    const esPatience2 = 15;
-    let lrWait2 = 0;
-    let lr2 = 0.0002;
-
-    await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
-      epochs: phase2Epochs,
-      batchSize: batchSize,
-      validationSplit: 0.12,
-      shuffle: true,
-      callbacks: {
-        onEpochEnd: async (epoch, logs) => {
-          const vl = logs.val_loss;
-          if(vl < bestValLoss2 - 0.00005) {
-            bestValLoss2 = vl;
-            esWait2 = 0;
-            lrWait2 = 0;
-          } else {
-            esWait2++;
-            lrWait2++;
-            if(lrWait2 >= 6 && lr2 > 0.00002) {
-              lr2 = Math.max(0.00002, lr2 * 0.5);
-              model.optimizer.learningRate = lr2;
-              lrWait2 = 0;
-            }
-            if(esWait2 >= esPatience2) model.stopTraining = true;
-          }
-          if(epoch % 5 === 0) {
-            statusEl.textContent = `Phase 2 · Epoch ${epoch + 1}/${phase2Epochs} — loss: ${logs.loss.toFixed(4)} · val: ${vl.toFixed(4)}`;
-          }
-          await tf.nextFrame();
+      // Freeze convolutional and batch norm layers (keep dense layers trainable)
+      model.layers.forEach(layer => {
+        const n = layer.name || '';
+        if(n.includes('conv1d') || n.includes('batch_normalization')) {
+          layer.trainable = false;
         }
-      }
-    });
+      });
+
+      // Re-compile with lower LR, pure Huber loss, units-only focus
+      model.compile({
+        optimizer: tf.train.adam(0.0002),
+        loss: [huberLoss, 'categoricalCrossentropy', 'categoricalCrossentropy'],
+        lossWeights: [5.0, 0.05, 0.05]
+      });
+
+      const phase2Epochs = Math.min(100, Math.max(30, Math.floor(sequences.length / 6)));
+      let bestValLoss2 = Infinity;
+      let esWait2 = 0;
+      const esPatience2 = 15;
+      let lrWait2 = 0;
+      let lr2 = 0.0002;
+
+      await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
+        epochs: phase2Epochs,
+        batchSize: batchSize,
+        validationSplit: 0.12,
+        shuffle: true,
+        callbacks: {
+          onEpochEnd: async (epoch, logs) => {
+            const vl = logs.val_loss;
+            if(vl < bestValLoss2 - 0.00005) {
+              bestValLoss2 = vl;
+              esWait2 = 0;
+              lrWait2 = 0;
+            } else {
+              esWait2++;
+              lrWait2++;
+              if(lrWait2 >= 6 && lr2 > 0.00002) {
+                lr2 = Math.max(0.00002, lr2 * 0.5);
+                model.optimizer.learningRate = lr2;
+                lrWait2 = 0;
+              }
+              if(esWait2 >= esPatience2) model.stopTraining = true;
+            }
+            if(epoch % 5 === 0) {
+              statusEl.textContent = `Phase 2 · Epoch ${epoch + 1}/${phase2Epochs} — loss: ${logs.loss.toFixed(4)} · val: ${vl.toFixed(4)}`;
+            }
+            await tf.nextFrame();
+          }
+        }
+      });
+      phase2Done = true;
+    } catch(phase2Err) {
+      console.warn('Phase 2 fine-tuning failed, using Phase 1 results:', phase2Err);
+      statusEl.textContent = 'Phase 2 skipped (Phase 1 results used) — computing R²...';
+    }
 
     // Unfreeze all layers for future use
-    model.layers.forEach(layer => { layer.trainable = true; });
+    try { model.layers.forEach(layer => { layer.trainable = true; }); } catch(e) {}
 
     fcModel = model;
-    const losses = [bestValLoss, bestValLoss2];
-    fcTrainingLoss = bestValLoss2;
+    fcTrainingLoss = bestValLoss;
 
     // Store metadata for predictions
     fcModel._fcMeta = { days, categories, zones, brands, maxUnits, maxLogUnits, featureSize, sortedHours, sequences, targetMeta };
@@ -6166,7 +6172,8 @@ async function fcTrainAndForecast() {
     yBrandTensor.dispose();
     yZoneTensor.dispose();
 
-    statusEl.textContent = `TCN trained (2-phase) — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(4)} · ${numBrands} brands · ${numZones} zones`;
+    const phaseLabel = phase2Done ? '2-phase' : 'Phase 1 only';
+    statusEl.textContent = `TCN trained (${phaseLabel}) — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(4)} · ${numBrands} brands · ${numZones} zones`;
 
     // Build toggle buttons and populate filters
     fcBuildToggleButtons();
