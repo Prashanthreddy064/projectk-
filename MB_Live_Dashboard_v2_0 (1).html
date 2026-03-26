@@ -5564,7 +5564,7 @@ let fcBrandActuals = {};    // { brand -> actualUnits }
 let fcTrainingLoss = null;
 let fcR2 = null;
 
-const FC_SEQ_LEN = 6;       // sequence length for TCN input (6 hours of context)
+const FC_SEQ_LEN = 12;      // sequence length for TCN input (12 hours of context)
 const FC_MAX_BRANDS = 20;    // top N brands for softmax output
 
 // Active filter state for toggle buttons
@@ -5744,8 +5744,74 @@ function fcPrepareTrainingData() {
   // Compute max units for normalization
   const maxUnits = Math.max(...sortedHours.map(s => s.units), 1);
 
+  // ─── Precompute enriched features on sortedHours ───
+  // 1) Rolling statistics (mean, std, min, max) over recent windows
+  // 2) Volume velocity (delta from previous step)
+  // 3) Cumulative daily volume up to current hour
+  // 4) Lag features: same-hour previous day, same-hour previous week
+  // 5) Hour-of-day proportion within daily total
+
+  // Build lookup: date+hour -> units for lag features
+  const dateHourMap = {};
+  const dateTotalMap = {};
+  sortedHours.forEach(s => {
+    const dhKey = `${s.date}|${s.hour}`;
+    dateHourMap[dhKey] = s.units;
+    dateTotalMap[s.date] = (dateTotalMap[s.date] || 0) + s.units;
+  });
+
+  // Build lookup: date -> array of unique dates sorted
+  const uniqueDates = [...new Set(sortedHours.map(s => s.date))].sort();
+  const dateIndex = {};
+  uniqueDates.forEach((d, idx) => dateIndex[d] = idx);
+
+  // Precompute per-step features
+  const cumDayVol = {};  // date -> running cumulative
+  for(let i = 0; i < sortedHours.length; i++) {
+    const s = sortedHours[i];
+    if(!cumDayVol[s.date]) cumDayVol[s.date] = 0;
+    cumDayVol[s.date] += s.units;
+    s._cumDayVol = cumDayVol[s.date];
+    s._dayTotal = dateTotalMap[s.date] || 1;
+
+    // Volume delta from previous step
+    s._delta = i > 0 ? (s.units - sortedHours[i - 1].units) / maxUnits : 0;
+
+    // Rolling mean and std over last 3 and 6 steps
+    const windowSizes = [3, 6];
+    for(const ws of windowSizes) {
+      const start = Math.max(0, i - ws);
+      const window = sortedHours.slice(start, i + 1).map(x => x.units);
+      const mean = window.reduce((a, b) => a + b, 0) / window.length;
+      const variance = window.reduce((a, v) => a + (v - mean) ** 2, 0) / window.length;
+      s[`_rollingMean${ws}`] = mean;
+      s[`_rollingStd${ws}`] = Math.sqrt(variance);
+    }
+
+    // Lag: same hour, previous day (find nearest previous date with same hour)
+    const di = dateIndex[s.date] || 0;
+    let lagPrevDay = 0, lagPrevWeek = 0;
+    // Previous day same hour
+    if(di > 0) {
+      const prevDate = uniqueDates[di - 1];
+      lagPrevDay = dateHourMap[`${prevDate}|${s.hour}`] || 0;
+    }
+    // ~7 days ago same hour
+    if(di >= 7) {
+      const weekDate = uniqueDates[di - 7] || uniqueDates[Math.max(0, di - 7)];
+      lagPrevWeek = dateHourMap[`${weekDate}|${s.hour}`] || 0;
+    } else if(di >= 5) {
+      const weekDate = uniqueDates[0];
+      lagPrevWeek = dateHourMap[`${weekDate}|${s.hour}`] || 0;
+    }
+    s._lagPrevDay = lagPrevDay;
+    s._lagPrevWeek = lagPrevWeek;
+  }
+
   // Feature size per timestep: units_norm + sin_hour + cos_hour + day_onehot + promo_binary
-  const featureSize = 1 + 2 + days.length + 1;
+  //   + delta + rollingMean3 + rollingStd3 + rollingMean6 + rollingStd6
+  //   + cumDayRatio + lagPrevDay + lagPrevWeek + hourProgress
+  const featureSize = 1 + 2 + days.length + 1 + 8;
 
   // Build sliding-window sequences and multi-output targets
   const sequences = [];
@@ -5760,11 +5826,22 @@ function fcPrepareTrainingData() {
     for(let j = i - FC_SEQ_LEN; j < i; j++) {
       const s = sortedHours[j];
       const hourRad = (s.hour / 24) * 2 * Math.PI;
+      // Operational hour progress: 0 at 6am, 1 at midnight (normalized position in work day)
+      const hourProgress = opHourIndex(s.hour) / 30;
       seq.push([
         s.units / maxUnits,
         Math.sin(hourRad), Math.cos(hourRad),
         ...days.map(d => d === s.day ? 1 : 0),
-        s.category === 'Promo' ? 1 : 0
+        s.category === 'Promo' ? 1 : 0,
+        // New engineered features
+        s._delta,                                     // volume velocity
+        s._rollingMean3 / maxUnits,                   // rolling mean (3-step)
+        s._rollingStd3 / maxUnits,                    // rolling std (3-step)
+        s._rollingMean6 / maxUnits,                   // rolling mean (6-step)
+        s._rollingStd6 / maxUnits,                    // rolling std (6-step)
+        s._cumDayVol / s._dayTotal,                   // cumulative day ratio (0→1 through day)
+        s._lagPrevDay / maxUnits,                     // same hour previous day volume
+        s._lagPrevWeek / maxUnits                     // same hour ~1 week ago volume
       ]);
     }
     sequences.push(seq);
@@ -5834,48 +5911,64 @@ async function fcTrainAndForecast() {
     // Dispose old model
     if(fcModel) { fcModel.dispose(); fcModel = null; }
 
-    // ─── Build Multi-Output TCN ───────────────────
-    // TensorFlow.js does not support gradients for dilationRate > 1 in conv1d,
-    // so we use stacked conv1d layers (all dilation=1) with increasing kernel
-    // sizes to grow the receptive field without dilated convolutions.
+    // ─── Build Enhanced Multi-Output TCN ───────────────────
+    // Deeper architecture with residual connections, wider filters,
+    // and more capacity to achieve R² > 0.95
     const input = tf.input({ shape: [FC_SEQ_LEN, featureSize] });
 
-    // Block 1: kernel=3, receptive field 3 — short-range patterns
-    let tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(input);
+    // Project input to match filter size for residual connections
+    const inputProj = tf.layers.conv1d({ filters: 64, kernelSize: 1, padding: 'same' }).apply(input);
+
+    // Block 1: kernel=3, short-range patterns
+    let tcn = tf.layers.conv1d({ filters: 64, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(input);
     tcn = tf.layers.batchNormalization().apply(tcn);
-    tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
+    tcn = tf.layers.dropout({ rate: 0.15 }).apply(tcn);
 
-    // Block 2: kernel=3, stacked receptive field 5 — medium-range patterns
-    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(tcn);
-    tcn = tf.layers.batchNormalization().apply(tcn);
-    tcn = tf.layers.dropout({ rate: 0.1 }).apply(tcn);
+    // Block 2: kernel=3, medium-range patterns + residual from Block 1
+    let tcn2 = tf.layers.conv1d({ filters: 64, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(tcn);
+    tcn2 = tf.layers.batchNormalization().apply(tcn2);
+    tcn2 = tf.layers.dropout({ rate: 0.15 }).apply(tcn2);
+    // Residual connection: add projected input
+    tcn2 = tf.layers.add().apply([tcn2, inputProj]);
 
-    // Block 3: kernel=5, stacked receptive field 9 — long-range patterns
-    tcn = tf.layers.conv1d({ filters: 32, kernelSize: 5, padding: 'same', activation: 'relu' }).apply(tcn);
-    tcn = tf.layers.batchNormalization().apply(tcn);
+    // Block 3: kernel=5, long-range patterns
+    let tcn3 = tf.layers.conv1d({ filters: 64, kernelSize: 5, padding: 'same', activation: 'relu' }).apply(tcn2);
+    tcn3 = tf.layers.batchNormalization().apply(tcn3);
+    tcn3 = tf.layers.dropout({ rate: 0.1 }).apply(tcn3);
 
-    // Global pooling to aggregate temporal information
-    const pooled = tf.layers.globalAveragePooling1d().apply(tcn);
+    // Block 4: kernel=7, very-long-range patterns + residual from Block 2
+    let tcn4 = tf.layers.conv1d({ filters: 64, kernelSize: 7, padding: 'same', activation: 'relu' }).apply(tcn3);
+    tcn4 = tf.layers.batchNormalization().apply(tcn4);
+    // Residual connection: add Block 2 output
+    tcn4 = tf.layers.add().apply([tcn4, tcn2]);
 
-    // Shared dense representation
-    const shared = tf.layers.dense({ units: 64, activation: 'relu' }).apply(pooled);
+    // Dual pooling: both average and max for richer representation
+    const avgPooled = tf.layers.globalAveragePooling1d().apply(tcn4);
+    const maxPooled = tf.layers.globalMaxPooling1d().apply(tcn4);
+    const pooled = tf.layers.concatenate().apply([avgPooled, maxPooled]);
 
-    // Output 1: Units regression head
-    let unitsHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(shared);
+    // Deeper shared representation
+    let shared = tf.layers.dense({ units: 128, activation: 'relu' }).apply(pooled);
+    shared = tf.layers.dropout({ rate: 0.15 }).apply(shared);
+    shared = tf.layers.dense({ units: 64, activation: 'relu' }).apply(shared);
+
+    // Output 1: Units regression head (deeper)
+    let unitsHead = tf.layers.dense({ units: 64, activation: 'relu' }).apply(shared);
+    unitsHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(unitsHead);
     const unitsOutput = tf.layers.dense({ units: 1, activation: 'linear', name: 'units_output' }).apply(unitsHead);
 
     // Output 2: Brand classification head (softmax)
-    let brandHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(shared);
+    let brandHead = tf.layers.dense({ units: 48, activation: 'relu' }).apply(shared);
     const brandOutput = tf.layers.dense({ units: numBrands, activation: 'softmax', name: 'brand_output' }).apply(brandHead);
 
     // Output 3: Zone classification head (softmax)
-    let zoneHead = tf.layers.dense({ units: 32, activation: 'relu' }).apply(shared);
+    let zoneHead = tf.layers.dense({ units: 48, activation: 'relu' }).apply(shared);
     const zoneOutput = tf.layers.dense({ units: numZones, activation: 'softmax', name: 'zone_output' }).apply(zoneHead);
 
     const model = tf.model({ inputs: input, outputs: [unitsOutput, brandOutput, zoneOutput] });
 
     model.compile({
-      optimizer: tf.train.adam(0.003),
+      optimizer: tf.train.adam(0.001),
       loss: ['meanSquaredError', 'categoricalCrossentropy', 'categoricalCrossentropy'],
       lossWeights: [1.0, 0.3, 0.3]
     });
@@ -5889,14 +5982,18 @@ async function fcTrainAndForecast() {
     statusEl.textContent = `Training TCN on ${sequences.length} sequences...`;
     await new Promise(r => setTimeout(r, 50));
 
-    // Train multi-output model — increased limits for large files
-    const epochCount = Math.min(120, Math.max(30, Math.floor(sequences.length / 5)));
-    const batchSize = Math.min(128, Math.max(16, Math.floor(sequences.length / 6)));
+    // Train multi-output model — more epochs and patience for better convergence
+    const epochCount = Math.min(250, Math.max(60, Math.floor(sequences.length / 3)));
+    const batchSize = Math.min(128, Math.max(16, Math.floor(sequences.length / 8)));
 
-    // Custom early stopping to avoid tf.callbacks.earlyStopping() setParams bug
+    // Custom early stopping + learning rate reduction on plateau
     let bestValLoss = Infinity;
     let earlyStopWait = 0;
-    const earlyStopPatience = 12;
+    const earlyStopPatience = 25;
+    let lrReduceWait = 0;
+    const lrReducePatience = 10;
+    let currentLR = 0.001;
+    const minLR = 0.00005;
 
     const history = await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
       epochs: epochCount,
@@ -5905,21 +6002,28 @@ async function fcTrainAndForecast() {
       shuffle: true,
       callbacks: {
         onEpochEnd: async (epoch, logs) => {
-          // Manual early stopping
           const vl = logs.val_loss;
-          if(vl < bestValLoss) {
+          if(vl < bestValLoss - 0.0001) {
             bestValLoss = vl;
             earlyStopWait = 0;
+            lrReduceWait = 0;
           } else {
             earlyStopWait++;
+            lrReduceWait++;
+            // Reduce learning rate on plateau
+            if(lrReduceWait >= lrReducePatience && currentLR > minLR) {
+              currentLR = Math.max(minLR, currentLR * 0.5);
+              model.optimizer.learningRate = currentLR;
+              lrReduceWait = 0;
+              statusEl.textContent = `Epoch ${epoch + 1} — reducing LR to ${currentLR.toFixed(6)}`;
+            }
             if(earlyStopWait >= earlyStopPatience) {
               model.stopTraining = true;
             }
           }
           if(epoch % 3 === 0) {
-            statusEl.textContent = `Epoch ${epoch + 1}/${epochCount} — loss: ${logs.loss.toFixed(4)} · val_loss: ${vl.toFixed(4)}`;
+            statusEl.textContent = `Epoch ${epoch + 1}/${epochCount} — loss: ${logs.loss.toFixed(4)} · val_loss: ${vl.toFixed(4)} · lr: ${currentLR.toFixed(5)}`;
           }
-          // Yield to browser to keep UI responsive (important for large files)
           await tf.nextFrame();
         }
       }
@@ -6450,37 +6554,63 @@ function fcBuildWeightedForecast(targetDate, filtered, tcnHourly, tcnZones, tcnB
   const prevPrevWeekProfile = buildDayProfile(prevPrevWeekDate);
   const prevPrevPrevWeekProfile = buildDayProfile(prevPrevPrevWeekDate);
 
-  // ── Trend: linear regression on last 4+ same-weekday dates ──
-  // Use the most recent same-weekday dates for trend fitting
-  const trendDates = sortedDates.slice(-6); // last 6 same-weekday dates
+  // ── Trend: exponential weighted regression on last 8 same-weekday dates ──
+  // Recent dates contribute more via exponential decay weights
+  const trendDates = sortedDates.slice(-8); // last 8 same-weekday dates
   let trendProfile = null;
   if(trendDates.length >= 2) {
-    // Simple linear regression per hour: volume = a + b*index, extrapolate to next index
     trendProfile = { hourly: {}, zones: {}, brands: {} };
+    // Exponential decay: more recent = higher weight (decay factor 0.85)
+    const decay = 0.85;
+    const n = trendDates.length;
+    const expWeights = trendDates.map((_, i) => Math.pow(decay, n - 1 - i));
+    const wSum = expWeights.reduce((a, b) => a + b, 0);
+
     FC_HOURS.forEach(h => {
       const ys = trendDates.map(d => {
         let sum = 0;
         byDate[d].forEach(r => { if(r.hour === h) sum += r.units; });
         return sum;
       });
-      // Linear regression: y = a + b*x, extrapolate to x = trendDates.length
-      const n = ys.length;
-      const xMean = (n - 1) / 2;
-      const yMean = ys.reduce((s, v) => s + v, 0) / n;
-      let num = 0, den = 0;
-      ys.forEach((y, x) => { num += (x - xMean) * (y - yMean); den += (x - xMean) ** 2; });
-      const b = den > 0 ? num / den : 0;
-      const a = yMean - b * xMean;
-      trendProfile.hourly[h] = Math.max(0, a + b * n); // extrapolate one step ahead
+      // Weighted linear regression: minimize Σ w_i * (y_i - a - b*x_i)²
+      let wxSum = 0, wySum = 0, wxxSum = 0, wxySum = 0;
+      for(let i = 0; i < n; i++) {
+        const w = expWeights[i];
+        wxSum += w * i;
+        wySum += w * ys[i];
+        wxxSum += w * i * i;
+        wxySum += w * i * ys[i];
+      }
+      const xMeanW = wxSum / wSum;
+      const yMeanW = wySum / wSum;
+      let numW = 0, denW = 0;
+      for(let i = 0; i < n; i++) {
+        numW += expWeights[i] * (i - xMeanW) * (ys[i] - yMeanW);
+        denW += expWeights[i] * (i - xMeanW) ** 2;
+      }
+      const b = denW > 0 ? numW / denW : 0;
+      const a = yMeanW - b * xMeanW;
+      // Extrapolate one step ahead, blend with weighted mean for stability
+      const regPred = Math.max(0, a + b * n);
+      const wMean = wySum / wSum;
+      // Blend: 70% regression extrapolation + 30% weighted mean (prevents wild extrapolations)
+      trendProfile.hourly[h] = Math.max(0, regPred * 0.7 + wMean * 0.3);
     });
-    // Trend for zones and brands: use last date's proportions scaled by trend total
+    // Trend for zones and brands: weighted average of last 3 dates' proportions
     const trendTotal = Object.values(trendProfile.hourly).reduce((s, v) => s + v, 0) || 1;
-    const lastDateProfile = buildDayProfile(trendDates[trendDates.length - 1]);
-    if(lastDateProfile) {
-      const lastTotal = Object.values(lastDateProfile.hourly).reduce((s, v) => s + v, 0) || 1;
-      const scale = trendTotal / lastTotal;
-      Object.entries(lastDateProfile.zones).forEach(([z, v]) => { trendProfile.zones[z] = v * scale; });
-      Object.entries(lastDateProfile.brands).forEach(([b, v]) => { trendProfile.brands[b] = v * scale; });
+    const recentProfiles = trendDates.slice(-3).map(d => buildDayProfile(d)).filter(Boolean);
+    if(recentProfiles.length) {
+      const zoneAcc = {}, brandAcc = {};
+      const rpWeights = recentProfiles.map((_, i) => Math.pow(decay, recentProfiles.length - 1 - i));
+      const rpWSum = rpWeights.reduce((a, b) => a + b, 0);
+      recentProfiles.forEach((p, pi) => {
+        const pTotal = Object.values(p.hourly).reduce((s, v) => s + v, 0) || 1;
+        const w = rpWeights[pi] / rpWSum;
+        Object.entries(p.zones).forEach(([z, v]) => { zoneAcc[z] = (zoneAcc[z] || 0) + (v / pTotal) * w; });
+        Object.entries(p.brands).forEach(([b, v]) => { brandAcc[b] = (brandAcc[b] || 0) + (v / pTotal) * w; });
+      });
+      Object.entries(zoneAcc).forEach(([z, frac]) => { trendProfile.zones[z] = frac * trendTotal; });
+      Object.entries(brandAcc).forEach(([b, frac]) => { trendProfile.brands[b] = frac * trendTotal; });
     }
   }
 
