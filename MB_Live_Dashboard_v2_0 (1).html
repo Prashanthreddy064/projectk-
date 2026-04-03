@@ -5833,6 +5833,17 @@ function fcPrepareTrainingData() {
 
     // Lag ratio: prev day same hour / hour-of-day avg (trend signal)
     s._lagPrevDayRatio = s._hourOfDayAvg > 0 ? lagPrevDay / s._hourOfDayAvg : 1;
+
+    // Lag ratio: prev week same hour vs hour avg
+    s._lagPrevWeekRatio = s._hourOfDayAvg > 0 ? lagPrevWeek / s._hourOfDayAvg : 1;
+  }
+
+  // Exponential moving average (EMA) with alpha=0.3 — smooth trend signal
+  let ema = sortedHours[0].units;
+  const emaAlpha = 0.3;
+  for(let i = 0; i < sortedHours.length; i++) {
+    ema = emaAlpha * sortedHours[i].units + (1 - emaAlpha) * ema;
+    sortedHours[i]._ema = ema;
   }
 
   // Compute max log units for normalization (safe for large arrays — no spread operator)
@@ -5842,11 +5853,12 @@ function fcPrepareTrainingData() {
   }
 
   // Feature size per timestep:
-  //   units_norm + sin_hour + cos_hour + day_onehot + promo_binary  (base)
-  //   + delta + rollingMean3 + rollingStd3 + rollingMean6 + rollingStd6  (rolling)
-  //   + cumDayRatio + lagPrevDay + lagPrevWeek  (lag)
-  //   + hourOfDayAvg + dayHourAvg + ratioToHourAvg + logUnits + lagPrevDayRatio  (new powerful features)
-  const featureSize = 1 + 2 + days.length + 1 + 5 + 3 + 5;
+  //   units_norm + sin_hour + cos_hour + day_onehot + promo_binary  (base=4+days)
+  //   + delta + rollingMean3 + rollingStd3 + rollingMean6 + rollingStd6  (rolling=5)
+  //   + cumDayRatio + lagPrevDay + lagPrevWeek  (lag=3)
+  //   + hourOfDayAvg + dayHourAvg + ratioToHourAvg + logUnits + lagPrevDayRatio  (power=5)
+  //   + lagPrevWeekRatio + ema  (extra=2)
+  const featureSize = 1 + 2 + days.length + 1 + 5 + 3 + 5 + 2;
 
   // Build sliding-window sequences and multi-output targets
   const sequences = [];
@@ -5881,7 +5893,9 @@ function fcPrepareTrainingData() {
         s._dayHourAvg / maxUnits,           // typical volume for this day+hour combo
         Math.min(2, s._ratioToHourAvg),     // relative strength vs hour average (capped)
         s._logUnits / maxLogUnits,           // log-scale volume (handles skew)
-        Math.min(2, s._lagPrevDayRatio)      // yesterday trend signal (capped)
+        Math.min(2, s._lagPrevDayRatio),     // yesterday trend signal (capped)
+        Math.min(2, s._lagPrevWeekRatio),    // last week trend signal (capped)
+        s._ema / maxUnits                    // exponential moving average
       ]);
     }
     sequences.push(seq);
@@ -5966,18 +5980,18 @@ async function fcTrainAndForecast() {
     // Block 1: kernel=3
     let tcn = tf.layers.conv1d({ filters: 64, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(input);
     tcn = tf.layers.batchNormalization().apply(tcn);
-    tcn = tf.layers.dropout({ rate: 0.05 }).apply(tcn);
+    tcn = tf.layers.dropout({ rate: 0.02 }).apply(tcn);
 
     // Block 2: kernel=3 + residual from input
     let tcn2 = tf.layers.conv1d({ filters: 64, kernelSize: 3, padding: 'same', activation: 'relu' }).apply(tcn);
     tcn2 = tf.layers.batchNormalization().apply(tcn2);
-    tcn2 = tf.layers.dropout({ rate: 0.05 }).apply(tcn2);
+    tcn2 = tf.layers.dropout({ rate: 0.02 }).apply(tcn2);
     tcn2 = tf.layers.add().apply([tcn2, inputProj]);
 
     // Block 3: kernel=5
     let tcn3 = tf.layers.conv1d({ filters: 64, kernelSize: 5, padding: 'same', activation: 'relu' }).apply(tcn2);
     tcn3 = tf.layers.batchNormalization().apply(tcn3);
-    tcn3 = tf.layers.dropout({ rate: 0.05 }).apply(tcn3);
+    tcn3 = tf.layers.dropout({ rate: 0.02 }).apply(tcn3);
 
     // Block 4: kernel=7 + residual from Block 2
     let tcn4 = tf.layers.conv1d({ filters: 64, kernelSize: 7, padding: 'same', activation: 'relu' }).apply(tcn3);
@@ -5996,14 +6010,15 @@ async function fcTrainAndForecast() {
 
     // Shared dense representation
     let shared = tf.layers.dense({ units: 128, activation: 'relu' }).apply(pooled);
-    shared = tf.layers.dropout({ rate: 0.05 }).apply(shared);
+    shared = tf.layers.dropout({ rate: 0.02 }).apply(shared);
     shared = tf.layers.dense({ units: 64, activation: 'relu' }).apply(shared);
 
-    // Output 1: Units regression head — deeper + skip from pooled
-    let unitsHead = tf.layers.dense({ units: 64, activation: 'relu', name: 'units_h1' }).apply(shared);
+    // Output 1: Units regression head — wider + deeper + skip from pooled
+    let unitsHead = tf.layers.dense({ units: 128, activation: 'relu', name: 'units_h1' }).apply(shared);
     // Skip connection: concat pooling features directly to units head
     unitsHead = tf.layers.concatenate().apply([unitsHead, pooled]);
-    unitsHead = tf.layers.dense({ units: 32, activation: 'relu', name: 'units_h2' }).apply(unitsHead);
+    unitsHead = tf.layers.dense({ units: 64, activation: 'relu', name: 'units_h2' }).apply(unitsHead);
+    unitsHead = tf.layers.dense({ units: 32, activation: 'relu', name: 'units_h3' }).apply(unitsHead);
     const unitsOutput = tf.layers.dense({ units: 1, activation: 'linear', name: 'units_output' }).apply(unitsHead);
 
     // Output 2: Brand classification head
@@ -6042,8 +6057,8 @@ async function fcTrainAndForecast() {
     statusEl.textContent = `Phase 1: Joint training on ${sequences.length} sequences...`;
     await new Promise(r => setTimeout(r, 50));
 
-    // Phase 1 training
-    const phase1Epochs = Math.min(150, Math.max(40, Math.floor(sequences.length / 4)));
+    // Phase 1 training — generous epochs for deep convergence
+    const phase1Epochs = Math.min(200, Math.max(60, Math.floor(sequences.length / 3)));
     const batchSize = Math.min(128, Math.max(16, Math.floor(sequences.length / 8)));
 
     let bestValLoss = Infinity;
@@ -6100,14 +6115,14 @@ async function fcTrainAndForecast() {
         }
       });
 
-      // Re-compile with lower LR, pure Huber loss, units-only focus
+      // Re-compile with lower LR, MSE loss for units (directly optimizes R²)
       model.compile({
         optimizer: tf.train.adam(0.0002),
-        loss: [huberLoss, 'categoricalCrossentropy', 'categoricalCrossentropy'],
+        loss: ['meanSquaredError', 'categoricalCrossentropy', 'categoricalCrossentropy'],
         lossWeights: [5.0, 0.05, 0.05]
       });
 
-      const phase2Epochs = Math.min(100, Math.max(30, Math.floor(sequences.length / 6)));
+      const phase2Epochs = Math.min(150, Math.max(40, Math.floor(sequences.length / 5)));
       let bestValLoss2 = Infinity;
       let esWait2 = 0;
       const esPatience2 = 15;
@@ -6149,6 +6164,59 @@ async function fcTrainAndForecast() {
       statusEl.textContent = 'Phase 2 skipped (Phase 1 results used) — computing R²...';
     }
 
+    // Phase 3: Ultra-fine-tuning — only units head trainable, pure MSE, very low LR
+    let phase3Done = false;
+    try {
+      statusEl.textContent = 'Phase 3: Ultra-fine-tuning units head with MSE...';
+      await new Promise(r => setTimeout(r, 50));
+
+      // Freeze ALL layers except units head dense layers
+      model.layers.forEach(layer => {
+        const n = layer.name || '';
+        if(n.startsWith('units_') || n === 'units_output') {
+          layer.trainable = true;
+        } else {
+          layer.trainable = false;
+        }
+      });
+
+      model.compile({
+        optimizer: tf.train.adam(0.00005),
+        loss: ['meanSquaredError', 'categoricalCrossentropy', 'categoricalCrossentropy'],
+        lossWeights: [10.0, 0.01, 0.01]
+      });
+
+      const phase3Epochs = Math.min(80, Math.max(20, Math.floor(sequences.length / 8)));
+      let bestValLoss3 = Infinity;
+      let esWait3 = 0;
+
+      await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
+        epochs: phase3Epochs,
+        batchSize: batchSize,
+        validationSplit: 0.12,
+        shuffle: true,
+        callbacks: {
+          onEpochEnd: async (epoch, logs) => {
+            const vl = logs.val_loss;
+            if(vl < bestValLoss3 - 0.00001) {
+              bestValLoss3 = vl;
+              esWait3 = 0;
+            } else {
+              esWait3++;
+              if(esWait3 >= 12) model.stopTraining = true;
+            }
+            if(epoch % 5 === 0) {
+              statusEl.textContent = `Phase 3 · Epoch ${epoch + 1}/${phase3Epochs} — loss: ${logs.loss.toFixed(5)} · val: ${vl.toFixed(5)}`;
+            }
+            await tf.nextFrame();
+          }
+        }
+      });
+      phase3Done = true;
+    } catch(phase3Err) {
+      console.warn('Phase 3 fine-tuning failed:', phase3Err);
+    }
+
     // Unfreeze all layers for future use
     try { model.layers.forEach(layer => { layer.trainable = true; }); } catch(e) {}
 
@@ -6178,7 +6246,7 @@ async function fcTrainAndForecast() {
     yBrandTensor.dispose();
     yZoneTensor.dispose();
 
-    const phaseLabel = phase2Done ? '2-phase' : 'Phase 1 only';
+    const phaseLabel = phase3Done ? '3-phase' : (phase2Done ? '2-phase' : 'Phase 1 only');
     statusEl.textContent = `TCN trained (${phaseLabel}) — R²: ${fcR2.toFixed(4)} · Loss: ${fcTrainingLoss.toFixed(4)} · ${numBrands} brands · ${numZones} zones`;
 
     // Build toggle buttons and populate filters
