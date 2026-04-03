@@ -5858,7 +5858,8 @@ function fcPrepareTrainingData() {
   //   + cumDayRatio + lagPrevDay + lagPrevWeek  (lag=3)
   //   + hourOfDayAvg + dayHourAvg + ratioToHourAvg + logUnits + lagPrevDayRatio  (power=5)
   //   + lagPrevWeekRatio + ema  (extra=2)
-  const featureSize = 1 + 2 + days.length + 1 + 5 + 3 + 5 + 2;
+  //   + targetDayHourAvg + targetHourAvg + sin/cos targetHour  (target context=4)
+  const featureSize = 1 + 2 + days.length + 1 + 5 + 3 + 5 + 2 + 4;
 
   // Build sliding-window sequences and multi-output targets
   const sequences = [];
@@ -5869,6 +5870,10 @@ function fcPrepareTrainingData() {
 
   for(let i = FC_SEQ_LEN; i < sortedHours.length; i++) {
     const target = sortedHours[i];
+    // Target step context — injected into every timestep so TCN has direct access
+    const targetHourRad = (target.hour / 24) * 2 * Math.PI;
+    const targetDayHourAvgNorm = target._dayHourAvg / maxUnits;
+    const targetHourAvgNorm = target._hourOfDayAvg / maxUnits;
     const seq = [];
     for(let j = i - FC_SEQ_LEN; j < i; j++) {
       const s = sortedHours[j];
@@ -5888,14 +5893,18 @@ function fcPrepareTrainingData() {
         s._cumDayVol / s._dayTotal,
         s._lagPrevDay / maxUnits,
         s._lagPrevWeek / maxUnits,
-        // New high-power features
+        // High-power features
         s._hourOfDayAvg / maxUnits,         // typical volume at this hour
         s._dayHourAvg / maxUnits,           // typical volume for this day+hour combo
         Math.min(2, s._ratioToHourAvg),     // relative strength vs hour average (capped)
         s._logUnits / maxLogUnits,           // log-scale volume (handles skew)
         Math.min(2, s._lagPrevDayRatio),     // yesterday trend signal (capped)
         Math.min(2, s._lagPrevWeekRatio),    // last week trend signal (capped)
-        s._ema / maxUnits                    // exponential moving average
+        s._ema / maxUnits,                   // exponential moving average
+        // Target context features (same for all steps in this sequence)
+        targetDayHourAvgNorm,                // target hour's historical day+hour average
+        targetHourAvgNorm,                   // target hour's historical hour average
+        Math.sin(targetHourRad), Math.cos(targetHourRad)  // target hour encoding
       ]);
     }
     sequences.push(seq);
@@ -6063,9 +6072,9 @@ async function fcTrainAndForecast() {
 
     let bestValLoss = Infinity;
     let earlyStopWait = 0;
-    const earlyStopPatience = 20;
+    const earlyStopPatience = 25;
     let lrReduceWait = 0;
-    const lrReducePatience = 8;
+    const lrReducePatience = 10;
     let currentLR = 0.001;
     const minLR = 0.00002;
 
@@ -6104,6 +6113,9 @@ async function fcTrainAndForecast() {
     // Phase 2: Fine-tune units head only — freeze conv layers, focus 100% on R²
     let phase2Done = false;
     try {
+      // CRITICAL: Reset stopTraining flag from Phase 1 early stopping
+      model.stopTraining = false;
+
       statusEl.textContent = 'Phase 2: Fine-tuning units regression head...';
       await new Promise(r => setTimeout(r, 50));
 
@@ -6117,42 +6129,42 @@ async function fcTrainAndForecast() {
 
       // Re-compile with lower LR, MSE loss for units (directly optimizes R²)
       model.compile({
-        optimizer: tf.train.adam(0.0002),
+        optimizer: tf.train.adam(0.0003),
         loss: ['meanSquaredError', 'categoricalCrossentropy', 'categoricalCrossentropy'],
-        lossWeights: [5.0, 0.05, 0.05]
+        lossWeights: [8.0, 0.05, 0.05]
       });
 
-      const phase2Epochs = Math.min(150, Math.max(40, Math.floor(sequences.length / 5)));
+      const phase2Epochs = Math.min(200, Math.max(60, Math.floor(sequences.length / 4)));
       let bestValLoss2 = Infinity;
       let esWait2 = 0;
-      const esPatience2 = 15;
+      const esPatience2 = 25;
       let lrWait2 = 0;
-      let lr2 = 0.0002;
+      let lr2 = 0.0003;
 
       await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
         epochs: phase2Epochs,
         batchSize: batchSize,
-        validationSplit: 0.12,
+        validationSplit: 0.10,
         shuffle: true,
         callbacks: {
           onEpochEnd: async (epoch, logs) => {
             const vl = logs.val_loss;
-            if(vl < bestValLoss2 - 0.00005) {
+            if(vl < bestValLoss2 - 0.00001) {
               bestValLoss2 = vl;
               esWait2 = 0;
               lrWait2 = 0;
             } else {
               esWait2++;
               lrWait2++;
-              if(lrWait2 >= 6 && lr2 > 0.00002) {
-                lr2 = Math.max(0.00002, lr2 * 0.5);
+              if(lrWait2 >= 10 && lr2 > 0.00001) {
+                lr2 = Math.max(0.00001, lr2 * 0.5);
                 model.optimizer.learningRate = lr2;
                 lrWait2 = 0;
               }
               if(esWait2 >= esPatience2) model.stopTraining = true;
             }
             if(epoch % 5 === 0) {
-              statusEl.textContent = `Phase 2 · Epoch ${epoch + 1}/${phase2Epochs} — loss: ${logs.loss.toFixed(4)} · val: ${vl.toFixed(4)}`;
+              statusEl.textContent = `Phase 2 · Epoch ${epoch + 1}/${phase2Epochs} — loss: ${logs.loss.toFixed(4)} · val: ${vl.toFixed(4)} · lr: ${lr2.toFixed(6)}`;
             }
             await tf.nextFrame();
           }
@@ -6167,6 +6179,9 @@ async function fcTrainAndForecast() {
     // Phase 3: Ultra-fine-tuning — only units head trainable, pure MSE, very low LR
     let phase3Done = false;
     try {
+      // CRITICAL: Reset stopTraining flag from Phase 2 early stopping
+      model.stopTraining = false;
+
       statusEl.textContent = 'Phase 3: Ultra-fine-tuning units head with MSE...';
       await new Promise(r => setTimeout(r, 50));
 
@@ -6181,32 +6196,41 @@ async function fcTrainAndForecast() {
       });
 
       model.compile({
-        optimizer: tf.train.adam(0.00005),
+        optimizer: tf.train.adam(0.00008),
         loss: ['meanSquaredError', 'categoricalCrossentropy', 'categoricalCrossentropy'],
-        lossWeights: [10.0, 0.01, 0.01]
+        lossWeights: [15.0, 0.01, 0.01]
       });
 
-      const phase3Epochs = Math.min(80, Math.max(20, Math.floor(sequences.length / 8)));
+      const phase3Epochs = Math.min(120, Math.max(30, Math.floor(sequences.length / 6)));
       let bestValLoss3 = Infinity;
       let esWait3 = 0;
+      let lrWait3 = 0;
+      let lr3 = 0.00008;
 
       await model.fit(xTensor, [yUnitsTensor, yBrandTensor, yZoneTensor], {
         epochs: phase3Epochs,
-        batchSize: batchSize,
-        validationSplit: 0.12,
+        batchSize: Math.max(8, Math.floor(batchSize / 2)),
+        validationSplit: 0.10,
         shuffle: true,
         callbacks: {
           onEpochEnd: async (epoch, logs) => {
             const vl = logs.val_loss;
-            if(vl < bestValLoss3 - 0.00001) {
+            if(vl < bestValLoss3 - 0.000005) {
               bestValLoss3 = vl;
               esWait3 = 0;
+              lrWait3 = 0;
             } else {
               esWait3++;
-              if(esWait3 >= 12) model.stopTraining = true;
+              lrWait3++;
+              if(lrWait3 >= 8 && lr3 > 0.000005) {
+                lr3 = Math.max(0.000005, lr3 * 0.5);
+                model.optimizer.learningRate = lr3;
+                lrWait3 = 0;
+              }
+              if(esWait3 >= 20) model.stopTraining = true;
             }
             if(epoch % 5 === 0) {
-              statusEl.textContent = `Phase 3 · Epoch ${epoch + 1}/${phase3Epochs} — loss: ${logs.loss.toFixed(5)} · val: ${vl.toFixed(5)}`;
+              statusEl.textContent = `Phase 3 · Epoch ${epoch + 1}/${phase3Epochs} — loss: ${logs.loss.toFixed(5)} · val: ${vl.toFixed(5)} · lr: ${lr3.toFixed(6)}`;
             }
             await tf.nextFrame();
           }
